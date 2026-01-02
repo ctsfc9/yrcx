@@ -1,16 +1,19 @@
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, reactive, watch } from 'vue';
+import { showToast, showSuccessToast, showFailToast } from 'vant';
+import 'vant/lib/index.css'; // 引入全局样式
 
-// 状态
-const currentTab = ref('index') // index: 首页列表, post: 发布页
-const filterType = ref('all')   // all: 全部, driver: 车找人, passenger: 人找车
-const rides = ref([])
-const loading = ref(false)
-const submitting = ref(false)
+// --- 状态管理 ---
+const activeTab = ref(0); // 底部导航：0首页, 1发布
+const filterType = ref('all'); // 顶部筛选
+const list = ref([]);
+const loading = ref(false);
+const refreshing = ref(false); // 下拉刷新状态
+const finished = ref(false);   // 是否加载完毕
 
-// 发布表单
-const form = ref({
-  type: 'passenger', // 默认人找车
+// --- 发布表单数据 ---
+const postForm = reactive({
+  type: 'passenger', // driver 或 passenger
   origin: '',
   destination: '',
   date: '',
@@ -18,191 +21,256 @@ const form = ref({
   price: '',
   remark: '',
   contact: ''
-})
+});
 
-// 获取列表 (带筛选)
-const fetchRides = async () => {
-  loading.value = true
-  try {
-    const url = filterType.value === 'all' ? '/api/rides' : `/api/rides?type=${filterType.value}`
-    const res = await fetch(url)
-    const data = await res.json()
-    rides.value = data.results || []
-  } catch (e) {
-    console.error(e)
-  } finally {
-    loading.value = false
-  }
-}
-
-// 监听筛选变化，自动刷新
-watch(filterType, () => {
-  if (currentTab.value === 'index') fetchRides()
-})
-
-// 提交发布
-const handlePublish = async () => {
-  if (!form.value.origin || !form.value.destination || !form.value.contact) {
-    alert('请填写完整 出发/到达/电话')
-    return
+// --- 核心功能：获取列表 ---
+const onLoad = async () => {
+  if (refreshing.value) {
+    list.value = [];
+    refreshing.value = false;
   }
   
-  submitting.value = true
+  loading.value = true;
+  try {
+    const url = filterType.value === 'all' ? '/api/rides' : `/api/rides?type=${filterType.value}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    
+    // 模拟数据追加（实际应分页，这里简化为一次性替换）
+    list.value = data.results || [];
+    finished.value = true; // 假设没有更多数据了
+  } catch (err) {
+    showFailToast('加载失败');
+    finished.value = true;
+  } finally {
+    loading.value = false;
+  }
+};
+
+// 监听筛选切换
+const onFilterChange = (name) => {
+  filterType.value = name;
+  onRefresh();
+};
+
+// 下拉刷新
+const onRefresh = () => {
+  finished.value = false;
+  loading.value = true;
+  refreshing.value = true;
+  onLoad();
+};
+
+// --- 核心功能：提交发布 ---
+const onSubmit = async () => {
+  showToast({ message: '提交中...', type: 'loading', duration: 0 });
+  
   try {
     const res = await fetch('/api/rides', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form.value)
-    })
+      body: JSON.stringify(postForm)
+    });
+    
     if (res.ok) {
-      alert('发布成功！')
-      currentTab.value = 'index'
-      filterType.value = 'all' // 回到全部
-      fetchRides()
+      showSuccessToast('发布成功');
+      // 重置表单
+      postForm.origin = '';
+      postForm.destination = '';
+      postForm.price = '';
+      postForm.contact = '';
+      // 切换回首页
+      activeTab.value = 0;
+      onRefresh();
+    } else {
+      showFailToast('发布失败');
     }
   } catch (e) {
-    alert('网络错误')
-  } finally {
-    submitting.value = false
+    showFailToast('网络错误');
   }
-}
+};
 
-// 格式化时间显示
-const formatTime = (timeStr) => {
-  if (!timeStr) return '随时出发';
-  const date = new Date(timeStr);
-  return `${date.getMonth()+1}月${date.getDate()}日 ${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}`;
-}
-
-onMounted(fetchRides)
+// 辅助：日期格式化
+const formatDate = (str) => {
+  if (!str) return '随时出发';
+  const d = new Date(str);
+  return `${d.getMonth()+1}月${d.getDate()}日 ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+};
 </script>
 
 <template>
-  <div class="container">
-    <header class="header">
-      <div class="logo">同城拼车平台</div>
-      <div class="city-switch">当前: 重庆</div>
-    </header>
+  <div class="app-container">
+    
+    <div v-if="activeTab === 0" class="page-home">
+      <van-nav-bar title="同城拼车" fixed placeholder z-index="99" style="--van-nav-bar-background: #ededed;" />
+      
+      <van-tabs v-model:active="filterType" sticky offset-top="46px" @click-tab="({ name }) => onFilterChange(name)">
+        <van-tab title="全部" name="all"></van-tab>
+        <van-tab title="我是乘客(找车)" name="driver"></van-tab>
+        <van-tab title="我是司机(找人)" name="passenger"></van-tab>
+      </van-tabs>
 
-    <div v-if="currentTab === 'index'">
-      <div class="filter-tabs">
-        <div class="tab" :class="{ active: filterType === 'all' }" @click="filterType = 'all'">全部信息</div>
-        <div class="tab driver" :class="{ active: filterType === 'driver' }" @click="filterType = 'driver'">车找人</div>
-        <div class="tab passenger" :class="{ active: filterType === 'passenger' }" @click="filterType = 'passenger'">人找车</div>
-      </div>
-
-      <div class="list-container">
-        <div v-if="loading" class="status-box">加载中...</div>
-        
-        <div v-else v-for="item in rides" :key="item.id" class="list-item">
-          <div class="item-top">
-            <span class="tag" :class="item.type">
-              {{ item.type === 'driver' ? '车找人' : '人找车' }}
-            </span>
-            <span class="route">{{ item.origin }} <span class="arrow">→</span> {{ item.destination }}</span>
-            <span class="time">{{ formatTime(item.date) }}</span>
-          </div>
-          
-          <div class="item-middle">
-            <div class="detail-row">
-              <span class="seats" v-if="item.type==='driver'">空位: <b>{{ item.seats }}</b>个</span>
-              <span class="seats" v-else>人数: <b>{{ item.seats }}</b>人</span>
-              <span class="price" v-if="item.price">¥{{ item.price }}</span>
+      <van-pull-refresh v-model="refreshing" @refresh="onRefresh">
+        <van-list
+          v-model:loading="loading"
+          :finished="finished"
+          finished-text="没有更多了"
+          @load="onLoad"
+          class="ride-list"
+        >
+          <div v-for="item in list" :key="item.id" class="ride-card">
+            <div class="card-header">
+              <van-tag :type="item.type === 'driver' ? 'primary' : 'success'" size="medium">
+                {{ item.type === 'driver' ? '车找人' : '人找车' }}
+              </van-tag>
+              <span class="time">{{ formatDate(item.date) }}</span>
             </div>
+            
+            <div class="route-line">
+              <div class="place from">{{ item.origin }}</div>
+              <van-icon name="exchange" color="#999" />
+              <div class="place to">{{ item.destination }}</div>
+            </div>
+
+            <div class="info-grid">
+              <div class="info-item">
+                <van-icon name="friends-o" />
+                <span>{{ item.type==='driver'?'空位':'人数' }}: {{ item.seats }}</span>
+              </div>
+              <div class="info-item price">
+                <van-icon name="gold-coin-o" />
+                <span>¥{{ item.price }}</span>
+              </div>
+            </div>
+
             <div class="remark" v-if="item.remark">备注: {{ item.remark }}</div>
+
+            <div class="action-bar">
+              <a :href="'tel:' + item.contact" style="width: 100%">
+                <van-button type="primary" plain block round size="small" icon="phone-o">
+                  联系: {{ item.contact }}
+                </van-button>
+              </a>
+            </div>
           </div>
-
-          <div class="item-bottom">
-            <a :href="'tel:' + item.contact" class="call-btn">拨打电话: {{ item.contact }}</a>
-          </div>
-        </div>
-
-        <div v-if="!loading && rides.length === 0" class="status-box">暂无相关拼车信息</div>
-      </div>
+        </van-list>
+      </van-pull-refresh>
     </div>
 
-    <div v-else class="post-page">
-      <div class="post-header">免费发布拼车信息</div>
-      <div class="form-box">
-        <div class="form-row type-select">
-          <label><input type="radio" v-model="form.type" value="passenger"> 人找车</label>
-          <label><input type="radio" v-model="form.type" value="driver"> 车找人</label>
+    <div v-if="activeTab === 1" class="page-post">
+      <van-nav-bar title="发布行程" fixed placeholder />
+      
+      <van-form @submit="onSubmit">
+        <van-cell-group inset title="基本信息">
+          <van-field name="radio" label="我是">
+            <template #input>
+              <van-radio-group v-model="postForm.type" direction="horizontal">
+                <van-radio name="passenger">乘客 (找车)</van-radio>
+                <van-radio name="driver">司机 (找人)</van-radio>
+              </van-radio-group>
+            </template>
+          </van-field>
+
+          <van-field
+            v-model="postForm.origin"
+            name="origin"
+            label="出发地"
+            placeholder="例如：万达广场"
+            :rules="[{ required: true, message: '请填写出发地' }]"
+          />
+          <van-field
+            v-model="postForm.destination"
+            name="destination"
+            label="目的地"
+            placeholder="例如：重庆北站"
+            :rules="[{ required: true, message: '请填写目的地' }]"
+          />
+          <van-field
+            v-model="postForm.date"
+            type="datetime-local"
+            name="date"
+            label="出发时间"
+            :rules="[{ required: true, message: '请选择时间' }]"
+          />
+        </van-cell-group>
+
+        <van-cell-group inset title="详细信息" style="margin-top: 10px;">
+          <van-field
+            v-model="postForm.seats"
+            type="digit"
+            name="seats"
+            label="人数/空位"
+            placeholder="1"
+          />
+          <van-field
+            v-model="postForm.price"
+            type="number"
+            name="price"
+            label="费用(元)"
+            placeholder="例如：50"
+          />
+          <van-field
+            v-model="postForm.contact"
+            name="contact"
+            label="手机号"
+            placeholder="方便对方联系您"
+            :rules="[{ required: true, message: '请填写联系方式' }]"
+          />
+          <van-field
+            v-model="postForm.remark"
+            rows="2"
+            autosize
+            label="备注"
+            type="textarea"
+            placeholder="选填：有行李、宠物等"
+          />
+        </van-cell-group>
+
+        <div style="margin: 30px 16px;">
+          <van-button round block type="primary" native-type="submit">
+            立即发布
+          </van-button>
         </div>
-        <input v-model="form.origin" placeholder="出发地 (如: 万达广场)" class="input-line">
-        <input v-model="form.destination" placeholder="目的地 (如: 重庆北站)" class="input-line">
-        <input type="datetime-local" v-model="form.date" class="input-line">
-        <div class="flex-row">
-          <input type="number" v-model="form.seats" placeholder="人数/空位" class="input-line half">
-          <input type="number" v-model="form.price" placeholder="费用 (元)" class="input-line half">
-        </div>
-        <textarea v-model="form.remark" placeholder="备注 (选填: 行李、宠物等)" class="input-area"></textarea>
-        <input v-model="form.contact" placeholder="联系电话 (必填)" class="input-line">
-        
-        <div class="btn-group">
-          <button @click="currentTab = 'index'" class="btn-cancel">取消</button>
-          <button @click="handlePublish" class="btn-submit" :disabled="submitting">立即发布</button>
-        </div>
-      </div>
+      </van-form>
     </div>
 
-    <div class="bottom-fab" v-if="currentTab === 'index'" @click="currentTab = 'post'">
-      + 免费发布行程
-    </div>
+    <van-tabbar v-model="activeTab" active-color="#1989fa">
+      <van-tabbar-item icon="search">找车/找人</van-tabbar-item>
+      <van-tabbar-item icon="add-o">免费发布</van-tabbar-item>
+    </van-tabbar>
+    
   </div>
 </template>
 
 <style>
-/* 全局重置 */
-body { margin: 0; background: #f2f2f2; font-family: sans-serif; -webkit-font-smoothing: antialiased; }
-.container { max-width: 600px; margin: 0 auto; padding-bottom: 80px; }
+/* 覆盖 vant 默认字体，更贴近原生 */
+:root {
+  --van-primary-color: #1989fa;
+  --van-success-color: #07c160;
+}
+body { background-color: #f7f8fa; font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Helvetica, Segoe UI, Arial, Roboto, 'PingFang SC', 'miui', 'Hiragino Sans GB', 'Microsoft Yahei', sans-serif; }
+.app-container { padding-bottom: 50px; }
 
-/* 头部 */
-.header { background: #333; color: #fff; padding: 12px 15px; display: flex; justify-content: space-between; align-items: center; }
-.logo { font-size: 18px; font-weight: bold; }
-.city-switch { font-size: 14px; color: #aaa; }
+/* 列表卡片样式优化 */
+.ride-list { padding: 10px; }
+.ride-card {
+  background: white;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 12px;
+  box-shadow: 0 2px 12px rgba(100, 101, 102, 0.05);
+}
+.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.card-header .time { color: #969799; font-size: 13px; }
 
-/* 筛选 Tabs */
-.filter-tabs { display: flex; background: #fff; padding: 10px; border-bottom: 1px solid #ddd; position: sticky; top: 0; z-index: 100; }
-.tab { flex: 1; text-align: center; padding: 8px 0; font-size: 14px; border: 1px solid #ddd; margin: 0 5px; border-radius: 4px; cursor: pointer; }
-.tab.active { background: #333; color: #fff; border-color: #333; }
-.tab.driver.active { background: #ff6600; border-color: #ff6600; } /* 司机橙色 */
-.tab.passenger.active { background: #1aad19; border-color: #1aad19; } /* 乘客绿色 */
+.route-line { display: flex; align-items: center; justify-content: space-between; font-size: 18px; font-weight: bold; margin-bottom: 12px; color: #323233; }
+.place { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.place.from { text-align: left; }
+.place.to { text-align: right; }
 
-/* 列表项 - 仿门户风格 */
-.list-item { background: #fff; margin-bottom: 10px; padding: 12px; border-bottom: 1px solid #e0e0e0; }
-.item-top { display: flex; align-items: center; margin-bottom: 8px; font-size: 16px; }
-.tag { padding: 2px 6px; font-size: 12px; color: #fff; border-radius: 3px; margin-right: 8px; }
-.tag.driver { background: #ff6600; }
-.tag.passenger { background: #1aad19; }
-.route { font-weight: bold; flex: 1; }
-.arrow { color: #ccc; margin: 0 4px; }
-.time { font-size: 12px; color: #999; }
+.info-grid { display: flex; gap: 20px; color: #646566; font-size: 14px; margin-bottom: 10px; }
+.info-item { display: flex; align-items: center; gap: 4px; }
+.info-item.price { color: #ff976a; font-weight: bold; }
 
-.item-middle { font-size: 14px; color: #666; margin-bottom: 10px; line-height: 1.6; }
-.seats b { color: #333; margin: 0 2px; }
-.price { color: #f00; font-weight: bold; margin-left: 10px; }
-.remark { font-size: 12px; color: #888; margin-top: 4px; }
-
-.item-bottom { border-top: 1px dotted #eee; padding-top: 10px; }
-.call-btn { display: block; text-align: center; background: #f8f8f8; color: #333; text-decoration: none; padding: 8px; border-radius: 4px; border: 1px solid #ddd; font-weight: bold; }
-
-/* 发布页表单 */
-.post-page { background: #fff; min-height: 100vh; }
-.post-header { background: #f8f8f8; padding: 15px; text-align: center; font-weight: bold; border-bottom: 1px solid #eee; }
-.form-box { padding: 20px; }
-.input-line { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
-.input-area { width: 100%; padding: 10px; height: 80px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
-.flex-row { display: flex; gap: 10px; }
-.half { flex: 1; }
-.type-select { display: flex; gap: 20px; justify-content: center; margin-bottom: 20px; }
-.type-select label { font-size: 16px; font-weight: bold; }
-
-.btn-group { display: flex; gap: 10px; margin-top: 10px; }
-.btn-submit { flex: 2; background: #1aad19; color: #fff; border: none; padding: 12px; border-radius: 4px; font-size: 16px; }
-.btn-cancel { flex: 1; background: #f8f8f8; border: 1px solid #ddd; border-radius: 4px; }
-
-/* 底部悬浮按钮 */
-.bottom-fab { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #1aad19; color: #fff; padding: 12px 30px; border-radius: 50px; font-weight: bold; box-shadow: 0 4px 10px rgba(26, 173, 25, 0.4); cursor: pointer; z-index: 200; }
-
-.status-box { text-align: center; padding: 30px; color: #999; }
+.remark { background: #f7f8fa; color: #969799; font-size: 12px; padding: 6px; border-radius: 4px; margin-bottom: 12px; }
 </style>
