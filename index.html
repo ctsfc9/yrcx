@@ -2,9 +2,17 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>拼车平台</title>
-  </head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, viewport-fit=cover" />
+    <title>宜人出行</title>
+    
+    <script type="text/javascript">
+      // ⚠️⚠️⚠️ 必须填写：请去高德控制台复制你的【安全密钥】填在下面 ⚠️⚠️⚠️
+      window._AMapSecurityConfig = {
+        securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08', 
+      }
+    </script>
+    <script type="text/javascript" src="https://webapi.amap.com/maps?v=2.0&key=a4f6e1e5da68bc9fe5f984d69a3f6b2e&plugin=AMap.Geolocation,AMap.AutoComplete,AMap.PlaceSearch,AMap.Geocoder"></script>
+    </head>
   <body>
     <div id="app"></div>
     <script type="module" src="/src/main.js"></script>
