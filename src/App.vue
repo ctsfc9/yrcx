@@ -445,7 +445,7 @@ const formatDate = (str) => {
         </van-cell-group>
         
         <div style="margin: 30px 16px;">
-          <van-button round block type="primary" native-type="submit">立即发布 (去支付)</van-button>
+          <van-button round block type="primary" native-type="submit">立即发布 </van-button>
         </div>
       </van-form>
     </div>
