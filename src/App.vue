@@ -10,32 +10,44 @@ const loading = ref(false);
 const refreshing = ref(false);
 const finished = ref(false);
 
-// --- 管理员状态 (点击顶部标题5次) ---
+// --- 管理员状态 ---
 const isAdminMode = ref(false);
 const adminPassword = ref('');
 const debugClicks = ref(0);
 
-// --- 搜索与快捷筛选 ---
-const searchForm = reactive({
-  origin: '',
-  destination: ''
+// --- 个人中心状态 (仿图3) ---
+const userProfile = reactive({
+  id: '15224',
+  balance: '0.00',
+  rideCount: 0,
+  isVerified: false
 });
+const meActiveTab = ref(0); // 个人中心里的子Tab
 
-// --- 模拟广告图数据 ---
+// --- 搜索与快捷筛选 ---
+const searchForm = reactive({ origin: '', destination: '' });
+
+// --- 广告图 (Banner) ---
 const banners = [
-  'https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg',
+  'https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg', 
   'https://fastly.jsdelivr.net/npm/@vant/assets/apple-2.jpeg'
 ];
 
-// --- 模拟快捷路线数据 (参考图片) ---
-const quickRoutes = [
+// --- 快捷路线逻辑 (优先展示历史，没有则展示热门) ---
+const historyRoutes = ref([]); // 本地存储的用户历史路线
+const defaultHotRoutes = [
   { from: '巫溪', to: '万州' },
   { from: '巫溪', to: '重庆' },
-  { from: '巫溪', to: '奉节' },
-  { from: '巫溪', to: '成都' },
-  { from: '巫溪', to: '惠州' },
-  { from: '巫溪', to: '宜昌' },
+  { from: '巫溪', to: '奉节' }
 ];
+
+// 计算属性：决定显示哪些快捷路线
+const displayQuickRoutes = computed(() => {
+  if (historyRoutes.value.length > 0) {
+    return historyRoutes.value;
+  }
+  return defaultHotRoutes;
+});
 
 // --- 弹窗控制 ---
 const showRoleSheet = ref(false);
@@ -45,24 +57,41 @@ const showPaymentDialog = ref(false);
 const mapSearchKeyword = ref('');
 const mapSearchResults = ref([]);
 let mapInstance = null;
-let markerInstance = null;
 
 // --- 费用配置 ---
 const CONFIG = { publishFee: 2.00, topFee: 5.00 };
 const isTop = ref(false);
 
-// --- 发布表单数据 ---
-const postForm = reactive({
-  type: '', origin: '', destination: '', date: '', seats: 1, price: '', remark: [], contact: ''
-});
+// --- 发布表单 ---
+const postForm = reactive({ type: '', origin: '', destination: '', date: '', seats: 1, price: '', remark: [], contact: '' });
 const remarkOptions = ['有行李', '走高速', '可吸烟', '拒吸烟', '可带宠', '线下支付'];
 const seatColumns = [1,2,3,4,5,6].map(n => ({ text: `${n}人/空位`, value: n }));
 
 // =======================
-// 核心逻辑区域 (保持原有逻辑不变)
+// 逻辑区域
 // =======================
 
-// 1. 获取列表 (增加搜索过滤)
+// 初始化：加载本地历史路线
+onMounted(() => {
+  const saved = localStorage.getItem('my_routes');
+  if (saved) {
+    historyRoutes.value = JSON.parse(saved);
+  }
+});
+
+// 保存路线到本地历史
+const saveRouteToHistory = (from, to) => {
+  const newRoute = { from, to };
+  // 避免重复
+  const exists = historyRoutes.value.some(r => r.from === from && r.to === to);
+  if (!exists) {
+    historyRoutes.value.unshift(newRoute); // 加到最前面
+    if (historyRoutes.value.length > 6) historyRoutes.value.pop(); // 最多存6个
+    localStorage.setItem('my_routes', JSON.stringify(historyRoutes.value));
+  }
+};
+
+// 1. 获取列表
 const onLoad = async () => {
   if (refreshing.value) { list.value = []; refreshing.value = false; }
   loading.value = true;
@@ -73,15 +102,11 @@ const onLoad = async () => {
     
     const res = await fetch(url);
     const data = await res.json();
-    
-    // 前端简单的关键词过滤 (模拟搜索功能)
     let results = data.results || [];
-    if (searchForm.origin) {
-      results = results.filter(item => item.origin.includes(searchForm.origin));
-    }
-    if (searchForm.destination) {
-      results = results.filter(item => item.destination.includes(searchForm.destination));
-    }
+    
+    // 前端搜索过滤
+    if (searchForm.origin) results = results.filter(item => item.origin.includes(searchForm.origin));
+    if (searchForm.destination) results = results.filter(item => item.destination.includes(searchForm.destination));
     
     list.value = results;
     finished.value = true;
@@ -89,39 +114,37 @@ const onLoad = async () => {
   loading.value = false;
 };
 
+// 2. 导航点击逻辑 (修复：点击首页重置状态)
+const switchTab = (index) => {
+  activeTab.value = index;
+  if (index === 0) {
+    filterType.value = 'all'; // 重置筛选
+    searchForm.origin = '';   // 重置搜索
+    searchForm.destination = '';
+    onRefresh();              // 刷新列表
+  }
+};
+
 const onRefresh = () => { finished.value = false; loading.value = true; refreshing.value = true; onLoad(); };
 
-// 2. 快捷筛选点击
+// 3. 快捷路线点击
 const handleQuickRoute = (route) => {
   searchForm.origin = route.from;
   searchForm.destination = route.to;
   onRefresh();
 };
 
-const handleSearch = () => {
-  onRefresh();
-};
+const handleSearch = () => { onRefresh(); };
+const swapLocation = () => { const t = searchForm.origin; searchForm.origin = searchForm.destination; searchForm.destination = t; };
 
-const swapLocation = () => {
-  const temp = searchForm.origin;
-  searchForm.origin = searchForm.destination;
-  searchForm.destination = temp;
-};
-
-// 3. 分类点击 (车找人/人找车)
+// 4. 分类点击
 const handleCategoryClick = (type) => {
-  if (type === 'cargo') {
-    showToast('货运功能开发中...');
-    return;
-  }
   filterType.value = type;
-  // 清空搜索条件并刷新
-  searchForm.origin = '';
-  searchForm.destination = '';
+  searchForm.origin = ''; searchForm.destination = '';
   onRefresh();
 };
 
-// 4. 地图与发布相关逻辑 (复用之前代码)
+// 5. 地图与发布 (简化)
 const autoLocate = () => {
   if (!window.AMap) { showFailToast('地图未加载'); return; }
   showLoadingToast({ message: '定位中...', forbidClick: true });
@@ -139,17 +162,15 @@ const openMapSelector = () => { showMapPopup.value = true; nextTick(() => initMa
 const initMap = () => {
   if (!window.AMap || mapInstance) return;
   mapInstance = new AMap.Map('map-container', { zoom: 13, center: [116.39, 39.90] });
-  mapInstance.on('click', (e) => { /* 简化: 仅作为展示 */ });
 };
-const onMapSearch = () => { /* 简化逻辑 */ };
 const selectLocation = (item) => { postForm.destination = item.name; showMapPopup.value = false; };
 
-// 5. 发布流程
+// 6. 发布流程
 const handlePublishClick = () => { showRoleSheet.value = true; };
 const onSelectRole = (action) => {
   postForm.type = action.value;
   showRoleSheet.value = false;
-  activeTab.value = 1;
+  activeTab.value = 1; // 跳转发布页
   if (!postForm.origin) autoLocate();
 };
 const onPreSubmit = () => {
@@ -164,13 +185,15 @@ const handleRealPublish = async () => {
     const res = await fetch('/api/rides', { method: 'POST', body: JSON.stringify(payload) });
     if (res.ok) {
       showSuccessToast('发布成功');
-      activeTab.value = 0;
-      onRefresh();
+      // 保存到快捷路线历史
+      saveRouteToHistory(postForm.origin, postForm.destination);
+      // 重置并回首页
+      switchTab(0);
     }
   } catch(e) { showFailToast('网络错误'); }
 };
 
-// 6. 管理员逻辑
+// 7. 管理员
 const handleLogoClick = () => {
   debugClicks.value++;
   if (debugClicks.value >= 5) {
@@ -216,7 +239,7 @@ const formatDate = (str) => {
 
       <van-notice-bar left-icon="volume-o" text="出行跑得快，巫溪拼车网找顺风车带货。" background="#fff" color="#333" />
 
-      <div class="nav-grid">
+      <div class="nav-grid two-cols">
         <div class="nav-btn btn-blue" @click="handleCategoryClick('driver')">
           <van-icon name="logistics" size="24" />
           <span>车找人</span>
@@ -224,14 +247,6 @@ const formatDate = (str) => {
         <div class="nav-btn btn-green" @click="handleCategoryClick('passenger')">
           <van-icon name="friends" size="24" />
           <span>人找车</span>
-        </div>
-        <div class="nav-btn btn-yellow" @click="handleCategoryClick('cargo')">
-          <van-icon name="bag" size="24" />
-          <span>车找货</span>
-        </div>
-        <div class="nav-btn btn-red" @click="handleCategoryClick('cargo')">
-          <van-icon name="truck" size="24" />
-          <span>货找车</span>
         </div>
       </div>
 
@@ -245,8 +260,8 @@ const formatDate = (str) => {
       </div>
 
       <div class="quick-routes">
-        <div class="route-tag" v-for="(route, i) in quickRoutes" :key="i" @click="handleQuickRoute(route)">
-          {{ route.from }}→{{ route.to }} <span class="tag-label">长途</span>
+        <div class="route-tag" v-for="(route, i) in displayQuickRoutes" :key="i" @click="handleQuickRoute(route)">
+          {{ route.from }}→{{ route.to }} <span class="tag-label">快捷</span>
         </div>
       </div>
 
@@ -259,26 +274,27 @@ const formatDate = (str) => {
 
       <van-pull-refresh v-model="refreshing" @refresh="onRefresh">
         <van-list v-model:loading="loading" :finished="finished" finished-text="没有更多了" @load="onLoad" class="ride-list">
-          
           <div v-for="item in list" :key="item.id" class="ride-card">
             <div class="card-row-1">
               <span class="badge-top" v-if="item.is_top">顶</span>
               <span class="badge-type" :class="item.type">{{ item.type === 'driver' ? '车找人' : '人找车' }}</span>
               <span class="route-text">{{ item.origin }} → {{ item.destination }}</span>
-              
-              <span class="seat-badge">{{ item.seats }}{{ item.type==='driver'?'座':'人' }}</span>
             </div>
 
             <div class="card-row-2">
               <span class="time-text">{{ formatDate(item.date) }} 出发</span>
-              <span class="car-type">车型: 商务车</span> </div>
-
-            <div class="card-row-3" v-if="item.remark">
-              备注: {{ item.remark }}
+              <span class="car-type">车型: 商务车</span>
             </div>
 
-            <div class="card-row-4">
-              发布: 长期拼车 {{ item.created_at ? item.created_at.split(' ')[0] : '刚刚' }}
+            <div class="card-row-3">
+               <span class="seat-info" :class="item.type">
+                 {{ item.type==='driver' ? '剩余空位:' : '出行人数:' }} 
+                 <b>{{ item.seats }}</b>
+               </span>
+             </div>
+
+            <div class="card-row-4" v-if="item.remark">
+              备注: {{ item.remark }}
             </div>
 
             <a :href="'tel:'+item.contact" class="call-btn-large">
@@ -287,13 +303,12 @@ const formatDate = (str) => {
 
             <div v-if="isAdminMode" class="admin-del" @click.stop="handleDelete(item.id)">删除</div>
           </div>
-
         </van-list>
       </van-pull-refresh>
     </div>
 
     <div v-if="activeTab === 1" class="page-post">
-      <van-nav-bar title="发布行程" left-arrow @click-left="activeTab=0" fixed placeholder />
+      <van-nav-bar title="发布行程" left-arrow @click-left="switchTab(0)" fixed placeholder />
       <van-form @submit="onPreSubmit">
         <van-cell-group inset title="行程信息">
           <van-field v-model="postForm.origin" label="出发地" right-icon="aim" @click-right-icon="autoLocate" required />
@@ -316,8 +331,52 @@ const formatDate = (str) => {
       </van-form>
     </div>
 
+    <div v-if="activeTab === 2" class="page-me">
+      <van-nav-bar title="个人中心" left-arrow @click-left="switchTab(0)" fixed placeholder style="--van-nav-bar-background: #ff6600; --van-nav-bar-title-text-color: #fff; --van-nav-bar-icon-color: #fff;" />
+      
+      <van-notice-bar mode="link" text="使用说明：" color="#1989fa" background="#ecf9ff" right-icon="arrow-down" />
+
+      <div class="user-card">
+        <div class="user-header">
+          <div class="avatar-circle">用</div>
+          <div class="user-info">
+            <div class="nickname">未设置</div>
+            <div class="userid">会员ID: {{ userProfile.id }}</div>
+          </div>
+        </div>
+        <div class="user-stats">
+          <div class="stat-item">
+            <div class="stat-val blue">¥{{ userProfile.balance }}</div>
+            <div class="stat-label">账户余额</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-val blue">{{ userProfile.rideCount }}</div>
+            <div class="stat-label">拼车信息</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-val blue">{{ userProfile.isVerified ? '已认证' : '未认证' }}</div>
+            <div class="stat-label">认证状态</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="me-actions">
+        <van-button type="primary" color="#0099ff" block class="mb-10">充值</van-button>
+        <van-button type="default" color="#666" block>完善资料</van-button>
+      </div>
+
+      <van-tabs v-model:active="meActiveTab" color="#0099ff" line-width="50%">
+        <van-tab title="拼车信息"></van-tab>
+        <van-tab title="快捷发布线路"></van-tab>
+      </van-tabs>
+
+      <div class="empty-state">
+        暂无拼车信息
+      </div>
+    </div>
+
     <div class="custom-tabbar">
-      <div class="tab-item" :class="{active: activeTab===0}" @click="activeTab=0">
+      <div class="tab-item" :class="{active: activeTab===0}" @click="switchTab(0)">
         <van-icon name="wap-home-o" size="22" />
         <span>首页</span>
       </div>
@@ -327,7 +386,7 @@ const formatDate = (str) => {
           <span class="pub-text">发布</span>
         </div>
       </div>
-      <div class="tab-item" @click="showToast('个人中心开发中')">
+      <div class="tab-item" :class="{active: activeTab===2}" @click="switchTab(2)">
         <van-icon name="user-o" size="22" />
         <span>我的</span>
       </div>
@@ -345,125 +404,88 @@ const formatDate = (str) => {
 </template>
 
 <style>
-/* -----------------------
-  全局重置与布局
-  -----------------------
-*/
-:root {
-  --primary-color: #ff6600; /* 拼车网常用的橙色 */
-  --blue-btn: #4fc1e9;
-  --green-btn: #a0d468;
-  --yellow-btn: #ffce54;
-  --red-btn: #fc6e51;
-}
-body { background-color: #f2f2f2; font-family: sans-serif; margin: 0; padding-bottom: 70px; } /* padding-bottom 防止遮挡底部 */
+/* 样式重置 */
+:root { --blue-btn: #4fc1e9; --green-btn: #a0d468; }
+body { background-color: #f2f2f2; font-family: sans-serif; margin: 0; padding-bottom: 70px; }
 
-/* 顶部管理员入口 */
+/* 顶部栏 */
 .top-bar { text-align: center; padding: 10px; background: #fff; font-weight: bold; color: #333; }
-
-/* 轮播图 */
 .home-banner { height: 160px; }
 
-/* -----------------------
-  四大金刚导航 (仿图1)
-  -----------------------
-*/
-.nav-grid { display: flex; padding: 10px; gap: 5px; background: #fff; }
-.nav-btn { flex: 1; height: 50px; display: flex; align-items: center; justify-content: center; color: white; border-radius: 4px; font-weight: bold; font-size: 16px; cursor: pointer; gap: 5px; }
+/* 导航区 (修改为两列) */
+.nav-grid { display: grid; grid-template-columns: 1fr 1fr; padding: 10px; gap: 10px; background: #fff; }
+.nav-btn { height: 60px; display: flex; align-items: center; justify-content: center; color: white; border-radius: 4px; font-weight: bold; font-size: 18px; cursor: pointer; gap: 8px; }
 .btn-blue { background-color: var(--blue-btn); }
 .btn-green { background-color: var(--green-btn); }
-.btn-yellow { background-color: var(--yellow-btn); }
-.btn-red { background-color: var(--red-btn); }
 
-/* -----------------------
-  搜索框区域 (仿图1)
-  -----------------------
-*/
+/* 搜索区 */
 .search-box { display: flex; padding: 10px; background: #fff; align-items: center; margin-top: 1px; }
 .search-inputs { flex: 1; display: flex; align-items: center; border: 1px solid #ff9800; border-radius: 2px; height: 40px; }
 .search-inputs input { border: none; outline: none; flex: 1; padding: 0 10px; font-size: 14px; text-align: center; width: 30%; }
 .swap-icon { font-size: 20px; color: #4fc1e9; padding: 0 5px; }
 .search-btn { background: #ff6600; color: white; border: none; height: 40px; padding: 0 20px; font-size: 16px; margin-left: 10px; border-radius: 2px; }
 
-/* -----------------------
-  快捷路线 (仿图1)
-  -----------------------
-*/
+/* 快捷路线 */
 .quick-routes { padding: 10px; background: #fff; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 1px; }
-.route-tag { background: #4fc1e9; color: white; padding: 6px 12px; border-radius: 4px; font-size: 14px; width: 40%; text-align: center; display: flex; justify-content: space-between; align-items: center; }
-.tag-label { background: #fff; color: #4fc1e9; font-size: 10px; padding: 0 2px; border-radius: 2px; }
+.route-tag { background: #4fc1e9; color: white; padding: 6px 12px; border-radius: 4px; font-size: 14px; width: auto; min-width: 80px; text-align: center; }
 
 /* 列表状态栏 */
 .list-status { background: #fff; padding: 10px; margin-top: 10px; border-bottom: 1px solid #eee; font-size: 14px; color: #666; }
 .red-badge { background: #ff4444; color: white; padding: 2px 4px; font-size: 12px; border-radius: 2px; margin-right: 5px; }
 
-/* -----------------------
-  列表卡片 (仿图2 - 核心样式)
-  -----------------------
-*/
+/* 列表卡片 (修复遮挡) */
 .ride-list { padding: 0; background: #fff; }
-.ride-card { padding: 15px; border-bottom: 1px solid #e0e0e0; position: relative; }
+.ride-card { padding: 15px; padding-right: 70px; /* 关键修复：给右侧留出电话按钮空间 */ border-bottom: 1px solid #e0e0e0; position: relative; }
 
-/* 行1 */
-.card-row-1 { display: flex; align-items: center; margin-bottom: 8px; }
+.card-row-1 { display: flex; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
 .badge-top { background: #ff4444; color: white; font-size: 12px; padding: 1px 3px; border-radius: 2px; margin-right: 5px; }
 .badge-type { font-size: 14px; font-weight: bold; color: white; padding: 1px 4px; border-radius: 2px; margin-right: 8px; }
-.badge-type.driver { background: #07c160; } /* 车找人-绿 */
-.badge-type.passenger { background: #ff6600; } /* 人找车-橙/红 */
+.badge-type.driver { background: #07c160; }
+.badge-type.passenger { background: #ff6600; }
 .route-text { font-size: 16px; font-weight: bold; color: #333; }
-.seat-badge { margin-left: auto; border: 1px solid #ff9800; color: #ff9800; font-size: 12px; padding: 1px 4px; border-radius: 2px; }
 
-/* 行2 */
 .card-row-2 { font-size: 14px; margin-bottom: 6px; }
 .time-text { color: #ff0000; font-weight: bold; margin-right: 10px; }
 .car-type { color: #666; }
 
-/* 行3 */
-.card-row-3 { font-size: 13px; color: #666; margin-bottom: 6px; }
+.card-row-3 { margin-bottom: 6px; font-size: 14px; }
+.seat-info.driver { color: #ff6600; }
+.seat-info.passenger { color: #07c160; }
 
-/* 行4 */
 .card-row-4 { font-size: 12px; color: #999; }
 
-/* 拨号按钮 (绝对定位在右侧) */
+/* 电话按钮 */
 .call-btn-large {
   position: absolute;
-  right: 15px;
-  top: 50%;
-  transform: translateY(-50%);
-  background: orange; /* 图中是纯橙色背景 */
-  width: 100px; /* 拉长条 */
-  height: 40px;
-  border-radius: 20px 0 0 20px; /* 左圆角，右直角(贴边) - 仿图 */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: white;
-  font-size: 24px;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-  right: -10px; /* 贴边 */
+  right: 0; top: 50%; transform: translateY(-50%);
+  background: orange; width: 60px; height: 40px;
+  border-radius: 20px 0 0 20px;
+  display: flex; align-items: center; justify-content: center;
+  color: white; font-size: 24px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);
 }
-/* 管理员删除按钮 */
-.admin-del { position: absolute; right: 100px; bottom: 10px; color: red; font-size: 12px; padding: 5px; border: 1px solid red; border-radius: 4px; }
+.admin-del { position: absolute; right: 80px; bottom: 10px; color: red; font-size: 12px; border: 1px solid red; padding: 2px 5px; border-radius: 4px; }
 
-/* -----------------------
-  底部导航 (仿图2 底部中间大圆)
-  -----------------------
-*/
-.custom-tabbar {
-  position: fixed; bottom: 0; left: 0; width: 100%; height: 50px; background: #fff; 
-  display: flex; border-top: 1px solid #eee; z-index: 999;
-}
+/* 个人中心 (仿图3) */
+.page-me { background: #f2f2f2; min-height: 100vh; }
+.user-card { background: #fff; margin: 15px; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+.user-header { display: flex; align-items: center; margin-bottom: 20px; }
+.avatar-circle { width: 60px; height: 60px; background: #0099ff; border-radius: 50%; color: white; font-size: 24px; display: flex; align-items: center; justify-content: center; margin-right: 15px; }
+.user-info .nickname { font-weight: bold; font-size: 18px; margin-bottom: 5px; }
+.user-info .userid { color: #999; font-size: 14px; }
+.user-stats { display: flex; justify-content: space-between; text-align: center; border-top: 1px dashed #eee; padding-top: 15px; }
+.stat-val { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
+.stat-val.blue { color: #0099ff; }
+.stat-label { font-size: 12px; color: #666; }
+
+.me-actions { padding: 0 15px; margin-bottom: 15px; display: flex; gap: 10px; }
+.mb-10 { margin-bottom: 0; }
+.empty-state { text-align: center; padding: 50px; color: #999; font-size: 14px; }
+
+/* 底部导航 */
+.custom-tabbar { position: fixed; bottom: 0; width: 100%; height: 50px; background: #fff; display: flex; border-top: 1px solid #eee; z-index: 999; }
 .tab-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 12px; color: #666; }
 .tab-item.active { color: #ff6600; }
-.publish-wrap { position: relative; overflow: visible; }
-.publish-circle {
-  position: absolute; top: -20px; 
-  width: 50px; height: 50px; 
-  background: #ff6666; /* 浅红/粉红 */
-  border-radius: 50%; 
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  box-shadow: 0 -2px 5px rgba(0,0,0,0.1);
-  border: 4px solid #fff;
-}
-.pub-text { color: white; font-size: 10px; margin-top: -2px; }
+.publish-wrap { position: relative; }
+.publish-circle { position: absolute; top: -20px; width: 50px; height: 50px; background: #ff6666; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: 0 -2px 5px rgba(0,0,0,0.1); border: 4px solid #fff; }
+.pub-text { color: white; font-size: 10px; }
 </style>
