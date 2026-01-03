@@ -5,12 +5,12 @@ import wx from 'weixin-js-sdk';
 
 // --- 基础配置 ---
 const SITE_DOMAIN = 'https://yrcx.ctsfc.top'; 
-// 确保图片路径绝对正确，不要有双斜杠
-const LOGO_URL = `${SITE_DOMAIN}/logo.png`; 
+// 给 Logo 加随机参数，强迫微信刷新缓存
+const LOGO_URL = `${SITE_DOMAIN}/logo.png?v=${new Date().getTime()}`; 
 
 const DEFAULT_SHARE = {
-  title: '长途顺风合乘平台', // 修正标题
-  desc: '一个专注长途顺风拼车的合乘平台，老乡互助，共享出行！', // 修正描述
+  title: '宜人出行：长途顺风合乘平台',
+  desc: '一个专注长途顺风拼车的合乘平台，老乡互助，共享出行！',
   link: SITE_DOMAIN,
   imgUrl: LOGO_URL
 };
@@ -114,6 +114,7 @@ onMounted(async () => {
   if (isWeixin || isWindowsWechat) {
     isWeChatEnv.value = true;
     checkUserStatus(); 
+    // 初始化微信签名
     await initWxConfig(window.location.href.split('#')[0]);
   } else {
     isWeChatEnv.value = false; 
@@ -132,7 +133,7 @@ const pushHistoryState = (pageName) => { window.history.pushState({ page: pageNa
 const handlePopState = (event) => {
   if (selectedRide.value) { 
     selectedRide.value = null; 
-    setShareData(DEFAULT_SHARE); 
+    updateWxShare(DEFAULT_SHARE); 
     return; 
   }
   if (currentSubPage.value) { currentSubPage.value = null; return; }
@@ -161,28 +162,26 @@ const initWxConfig = async (signUrl) => {
       });
       
       wx.ready(() => { 
-        setShareData(DEFAULT_SHARE); 
+        updateWxShare(DEFAULT_SHARE); 
       });
     }
   } catch (e) { console.log('WX Init Failed', e); }
 };
 
-const setShareData = (data) => {
-  document.title = data.title;
-  // 核心修复：确保link是首页且带随机参，防止微信缓存
-  const shareLink = `${SITE_DOMAIN}/?t=${Date.now()}`;
-  
+const updateWxShare = (shareData) => {
   const config = {
-    title: data.title,
-    desc: data.desc,
-    link: shareLink,
-    imgUrl: data.imgUrl,
+    title: shareData.title,
+    desc: shareData.desc,
+    link: SITE_DOMAIN, 
+    imgUrl: shareData.imgUrl,
     success: () => { }
   };
 
-  wx.ready(() => {
-    if(wx.updateAppMessageShareData) wx.updateAppMessageShareData(config);
-    if(wx.updateTimelineShareData) wx.updateTimelineShareData(config);
+  wx.ready(function () {
+    if(wx.updateAppMessageShareData) {
+        wx.updateAppMessageShareData(config);
+        wx.updateTimelineShareData(config);
+    }
     wx.onMenuShareAppMessage(config);
     wx.onMenuShareTimeline(config);
   });
@@ -191,19 +190,16 @@ const setShareData = (data) => {
 const getDetailShareData = (item) => {
   const typeStr = item.type === 'driver' ? '【车找人】' : '【人找车】';
   const cleanRemark = (item.remark || '无备注');
+  // 核心修正：移除电话号码，格式参考截图
   return {
     title: `${typeStr} ${item.origin} → ${item.destination}`,
-    desc: `${item.contact}, ${item.date.slice(5,16)}, ${cleanRemark}`, // 仿照截图样式
-    link: SITE_DOMAIN, 
-    imgUrl: LOGO_URL
+    desc: `出发:${formatDate(item.date)}。备注:${cleanRemark}。\n\n宜宾出行公众号，海量信息任你选！`,
+    link: SITE_DOMAIN,
+    imgUrl: LOGO_URL 
   };
 };
 
-// 核心修复：JS 唤起拨号
-const handleCall = (phone) => {
-  window.location.href = `tel:${phone}`;
-};
-
+const handleCall = (phone) => { window.location.href = `tel:${phone}`; };
 const handleShareClick = () => { showShareGuide.value = true; };
 
 // --- 用户状态 ---
@@ -284,7 +280,7 @@ const onRefresh = () => { finished.value = false; loading.value = true; refreshi
 
 const switchTab = (index) => {
   if (activeTab.value !== index) { pushHistoryState(`tab-${index}`); activeTab.value = index; }
-  if (index === 0) { filterType.value = 'all'; searchForm.origin = ''; searchForm.destination = ''; onRefresh(); setShareData(DEFAULT_SHARE); }
+  if (index === 0) { filterType.value = 'all'; searchForm.origin = ''; searchForm.destination = ''; onRefresh(); updateWxShare(DEFAULT_SHARE); }
   if (index === 2) { fetchMyRides(); }
 };
 
@@ -292,7 +288,7 @@ const switchTab = (index) => {
 const openDetail = (item) => {
   selectedRide.value = item; 
   pushHistoryState('detail'); 
-  setShareData(getDetailShareData(item));
+  updateWxShare(getDetailShareData(item));
 };
 const closeDetail = () => { window.history.back(); };
 
@@ -378,6 +374,8 @@ const formatDate = (str) => { if(!str) return ''; const d=new Date(str); const t
 
 <template>
   <div class="app-container">
+    <div style="display:none;"><img :src="LOGO_URL" /></div>
+
     <div v-if="isBannedUser" class="wechat-mask"><div class="mask-content"><van-icon name="clear" size="64" color="#ee0a24" /><h3>账号已被封禁</h3><p>如有疑问请联系客服。</p></div></div>
     <div v-else-if="!isWeChatEnv" class="wechat-mask"><div class="mask-content"><van-icon name="wechat" size="64" color="#07c160" /><h3>请在微信客户端打开</h3><p>仅支持微信访问</p><van-button type="primary" block round @click="()=>window.location.href='weixin://'">尝试唤起微信</van-button></div></div>
     <van-popup v-model:show="showAuthModal" :close-on-click-overlay="false" :closeable="false" class="auth-popup" style="width: 80%; border-radius: 12px; padding: 20px;">
@@ -457,17 +455,7 @@ const formatDate = (str) => { if(!str) return ''; const d=new Date(str); const t
       <div v-if="currentSubPage === 'settings'" class="sub-page"><van-nav-bar title="系统设置" left-text="返回" left-arrow @click-left="closeSubPage" fixed placeholder /><div style="padding:20px"><van-button block color="#ee0a24" @click="() => { localStorage.removeItem('user_info'); location.reload(); }">退出登录</van-button></div></div>
     </div>
 
-    <van-popup v-if="selectedRide" v-model:show="selectedRide" position="right" :style="{ width: '100%', height: '100%' }">
-      <div class="detail-page">
-        <van-nav-bar title="拼车详情" left-arrow @click-left="closeDetail" fixed placeholder />
-        <div class="detail-content"><div class="detail-card"><div class="detail-header"><span class="badge-type" :class="selectedRide.type">{{ selectedRide.type === 'driver' ? '车找人' : '人找车' }}</span><span class="detail-route">{{ selectedRide.origin }} → {{ selectedRide.destination }}</span></div><van-divider /><div class="detail-item"><van-icon name="clock-o" /> 出发时间：<span class="highlight">{{ selectedRide.date.replace('T', ' ') }}</span></div><div class="detail-item"><van-icon name="friends-o" /> 数量：<span class="highlight">{{ selectedRide.seats }}</span></div><div class="detail-item"><van-icon name="gold-coin-o" /> 费用：<span class="price-big">¥{{ selectedRide.price || '面议' }}</span></div><div class="detail-item" v-if="selectedRide.remark"><van-icon name="label-o" /> 备注：{{ selectedRide.remark }}</div></div>
-        <div class="detail-actions">
-          <van-button type="primary" block round icon="phone-o" color="#ff6600" @click="handleCall(selectedRide.contact)">拨打联系电话</van-button>
-          <van-button plain type="primary" block round icon="share-o" @click="handleShareClick">分享给好友</van-button>
-        </div></div>
-      </div>
-    </van-popup>
-
+    <van-popup v-if="selectedRide" v-model:show="selectedRide" position="right" :style="{ width: '100%', height: '100%' }"><div class="detail-page"><van-nav-bar title="拼车详情" left-arrow @click-left="closeDetail" fixed placeholder /><div class="detail-content"><div class="detail-card"><div class="detail-header"><span class="badge-type" :class="selectedRide.type">{{ selectedRide.type === 'driver' ? '车找人' : '人找车' }}</span><span class="detail-route">{{ selectedRide.origin }} → {{ selectedRide.destination }}</span></div><van-divider /><div class="detail-item"><van-icon name="clock-o" /> 出发时间：<span class="highlight">{{ selectedRide.date.replace('T', ' ') }}</span></div><div class="detail-item"><van-icon name="friends-o" /> 数量：<span class="highlight">{{ selectedRide.seats }}</span></div><div class="detail-item"><van-icon name="gold-coin-o" /> 费用：<span class="price-big">¥{{ selectedRide.price || '面议' }}</span></div><div class="detail-item" v-if="selectedRide.remark"><van-icon name="label-o" /> 备注：{{ selectedRide.remark }}</div></div><div class="detail-actions"><van-button type="primary" block round icon="phone-o" color="#ff6600" @click="handleCall(selectedRide.contact)">拨打联系电话</van-button><van-button plain type="primary" block round icon="share-o" @click="handleShareClick">分享给好友</van-button></div></div></div></van-popup>
     <van-dialog v-model:show="showEditDialog" title="修改行程" show-cancel-button @confirm="submitEdit">
        <van-form>
          <van-field v-model="editForm.origin" label="起点"/>
@@ -478,25 +466,19 @@ const formatDate = (str) => { if(!str) return ''; const d=new Date(str); const t
          <van-field v-model="editForm.price" label="费用"/>
        </van-form>
     </van-dialog>
-
     <div v-if="showShareGuide" class="share-guide" @click="showShareGuide=false">
       <div class="share-arrow"><img src="https://fastly.jsdelivr.net/npm/@vant/assets/arrow.png" style="width:50px;transform:rotate(-90deg);" /><p>点击右上角 [...]</p><p>发送给朋友或分享到朋友圈</p></div>
       <div class="share-preview" style="margin-top:100px;padding:20px;">
         <div style="background:#fff;border-radius:8px;padding:15px;color:#333;display:flex;align-items:center;">
            <div style="flex:1;">
-             <div style="font-weight:bold;margin-bottom:5px;">
-               {{ selectedRide ? (selectedRide.type==='driver'?'【车找人】':'【人找车】') + ' ' + selectedRide.origin + ' → ' + selectedRide.destination : DEFAULT_SHARE.title }}
-             </div>
-             <div style="font-size:12px;color:#999;">
-               {{ selectedRide ? selectedRide.contact + ', ' + formatDate(selectedRide.date).replace(/<[^>]+>/g,'') : DEFAULT_SHARE.desc }}
-             </div>
+             <div style="font-weight:bold;margin-bottom:5px;">{{ selectedRide ? (selectedRide.type==='driver'?'【车找人】':'【人找车】') + ' ' + selectedRide.origin + ' → ' + selectedRide.destination : DEFAULT_SHARE.title }}</div>
+             <div style="font-size:12px;color:#999;">{{ selectedRide ? '出发:' + formatDate(selectedRide.date).replace(/<[^>]+>/g,'') + ' 备注:' + (selectedRide.remark || '') : DEFAULT_SHARE.desc }}</div>
            </div>
            <img :src="DEFAULT_SHARE.imgUrl" style="width:50px;height:50px;margin-left:10px;object-fit:cover;">
         </div>
         <div style="text-align:center;margin-top:10px;font-size:12px;color:#ccc;">(分享卡片预览)</div>
       </div>
     </div>
-
     <van-action-sheet v-model:show="showRoleSheet" :actions="[{name:'乘客',value:'passenger'},{name:'司机',value:'driver'}]" @select="onSelectRole" />
     <van-popup v-model:show="showMapPopup" position="bottom" :style="{height:'90%'}" round @opened="initMap"><div class="map-popup-content"><van-search v-model="mapSearchKeyword" show-action placeholder="搜索..." @search="onMapSearch" @update:model-value="onMapSearch"><template #action><div @click="showMapPopup=false">关闭</div></template></van-search><div id="map-container" style="width:100%;height:300px;"></div><van-list class="search-list"><van-cell v-for="(item, i) in mapSearchResults" :key="i" :title="item.name" :label="item.district" @click="selectLocation(item)" /></van-list></div></van-popup>
     <van-dialog v-model:show="showPaymentDialog" title="确认发布" show-cancel-button @confirm="handleRealPublish"><div style="padding:20px;text-align:center"><div>基础费: ¥{{CONFIG.publishFee}}</div><div style="margin-top:10px">置顶 <van-switch v-model="isTop" size="16px"/> (+¥{{CONFIG.topFee}})</div></div></van-dialog>
