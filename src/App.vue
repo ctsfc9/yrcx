@@ -20,7 +20,7 @@ const selectedRide = ref(null);
 const exitClickCount = ref(0);    
 let exitTimer = null;             
 
-// --- 分享配置 (你指定的内容) ---
+// --- 分享配置 ---
 const SHARE_CONFIG = {
   title: '欢迎进入长途顺风车平台',
   desc: '宜宾出行公众号，长途顺风车超市，海量信息任你选！',
@@ -34,7 +34,7 @@ const authStep = ref(1);
 const showShareGuide = ref(false);
 const showEditDialog = ref(false); 
 
-// --- 个人中心 (新增 wechatId) ---
+// --- 个人中心 ---
 const userProfile = reactive({ id: '', nickname: '', avatar: '', wechatId: '', phone: '', balance: '0.00', isVerified: false, isLogin: false });
 const registerForm = reactive({ phone: '', code: '' });
 
@@ -102,7 +102,7 @@ const seatColumns = [1,2,3,4,5,6].map(n => ({ text: `${n}人/空位`, value: n }
 // 逻辑区域
 // =======================
 
-onMounted(() => {
+onMounted(async () => {
   const ua = navigator.userAgent.toLowerCase();
   const isWeixin = ua.indexOf('micromessenger') !== -1;
   const isWindowsWechat = ua.indexOf('windowswechat') !== -1;
@@ -110,7 +110,8 @@ onMounted(() => {
   if (isWeixin || isWindowsWechat) {
     isWeChatEnv.value = true;
     checkUserStatus(); 
-    initWxShare(); // 初始化分享
+    // 尝试获取后端签名 (需后续配置)
+    await initWxConfig();
   } else {
     isWeChatEnv.value = false; 
   }
@@ -136,43 +137,59 @@ const handlePopState = (event) => {
   if (exitClickCount.value >= 3) { wx.closeWindow(); } else { showToast(`再按 ${3 - exitClickCount.value} 次退出平台`); }
 };
 
-// --- 分享逻辑 (核心优化) ---
+// --- 分享逻辑 (调用后端签名) ---
+const initWxConfig = async () => {
+  try {
+    // 1. 请求后端获取签名 (需要你部署好后端 api/wx_sign)
+    const currentUrl = window.location.href.split('#')[0];
+    const res = await fetch(`/api/wx_sign?url=${encodeURIComponent(currentUrl)}`);
+    const data = await res.json();
+
+    if (data.appId) {
+      wx.config({
+        debug: false, // 开启调试模式
+        appId: data.appId,
+        timestamp: data.timestamp,
+        nonceStr: data.nonceStr,
+        signature: data.signature,
+        jsApiList: ['updateAppMessageShareData', 'updateTimelineShareData', 'onMenuShareAppMessage', 'onMenuShareTimeline']
+      });
+      
+      wx.ready(() => { updateWxShare(); });
+      wx.error((res) => { console.error("WX Config Error:", res); });
+    }
+  } catch (e) {
+    console.log('未配置后端签名，使用默认分享或引导模式');
+  }
+};
+
 const updateWxShare = (customData = null) => {
   const shareData = customData || SHARE_CONFIG;
-  try {
-    wx.ready(function () { 
-      // 新版API
-      if (wx.updateAppMessageShareData) {
-        wx.updateAppMessageShareData({ 
-          title: shareData.title, 
-          desc: shareData.desc, 
-          link: shareData.link, 
-          imgUrl: shareData.imgUrl,
-          success: function () { }
-        });
-        wx.updateTimelineShareData({ 
-          title: shareData.title + ' ' + shareData.desc, 
-          link: shareData.link, 
-          imgUrl: shareData.imgUrl,
-          success: function () { }
-        });
-      }
-      // 兼容旧版API
-      wx.onMenuShareAppMessage({ 
-        title: shareData.title, desc: shareData.desc, link: shareData.link, imgUrl: shareData.imgUrl 
+  wx.ready(function () { 
+    // 新版API
+    if (wx.updateAppMessageShareData) {
+      wx.updateAppMessageShareData({ 
+        title: shareData.title, desc: shareData.desc, link: shareData.link, imgUrl: shareData.imgUrl,
+        success: function () { }
       });
-      wx.onMenuShareTimeline({ 
-        title: shareData.title + ' ' + shareData.desc, link: shareData.link, imgUrl: shareData.imgUrl 
+      wx.updateTimelineShareData({ 
+        title: shareData.title + ' ' + shareData.desc, link: shareData.link, imgUrl: shareData.imgUrl,
+        success: function () { }
       });
+    }
+    // 兼容旧版API
+    wx.onMenuShareAppMessage({ 
+      title: shareData.title, desc: shareData.desc, link: shareData.link, imgUrl: shareData.imgUrl 
     });
-  } catch(e) {}
+    wx.onMenuShareTimeline({ 
+      title: shareData.title + ' ' + shareData.desc, link: shareData.link, imgUrl: shareData.imgUrl 
+    });
+  });
 };
-const initWxShare = () => { try { wx.ready(function () { updateWxShare(); }); } catch (e) {} };
 
 const getDetailShareData = (item) => {
   const typeStr = item.type === 'driver' ? '【车找人】' : '【人找车】';
   const cleanRemark = (item.remark || '无备注');
-  // 详情页分享不展示电话，但包含广告语
   return {
     title: `${typeStr} ${item.origin}→${item.destination}`,
     desc: `时间:${formatDate(item.date)}。备注:${cleanRemark}。${SHARE_CONFIG.desc}`,
@@ -211,7 +228,6 @@ const handleWeChatAuth = () => {
     const randomId = Math.floor(10000 + Math.random() * 90000);
     userProfile.id = String(randomId);
     userProfile.nickname = '微信用户_' + randomId;
-    // 自动获取微信号 (模拟)
     userProfile.wechatId = 'wx_id_' + randomId; 
     userProfile.avatar = 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg';
     userProfile.isLogin = true;
@@ -326,10 +342,7 @@ const handleBanUser = (targetId) => {
 const handlePublishClick = () => { showRoleSheet.value = true; };
 const onSelectRole = (action) => { 
   postForm.type = action.value; 
-  // 核心更新：自动填充用户电话
-  if (userProfile.phone) {
-    postForm.contact = userProfile.phone;
-  }
+  if (userProfile.phone) { postForm.contact = userProfile.phone; }
   showRoleSheet.value = false; 
   pushHistoryState('post'); 
   activeTab.value = 1; 
@@ -478,5 +491,5 @@ const formatDate = (str) => { if(!str) return ''; const d=new Date(str); const t
 <style>
 /* CSS */
 :root { --blue-btn: #4fc1e9; --green-btn: #a0d468; } body { background-color: #f2f2f2; font-family: sans-serif; margin: 0; padding-bottom: 70px; }
-.top-bar { text-align: center; padding: 10px; background: #fff; font-weight: bold; color: #333; } .home-banner { height: 160px; } .wechat-mask { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #fff; z-index: 9999; display: flex; align-items: center; justify-content: center; text-align: center; } .mask-content { padding: 40px; } .auth-popup { text-align: center; } .auth-step { padding: 10px; } .auth-icon { margin-bottom: 20px; } .auth-desc { color: #666; font-size: 14px; margin-bottom: 30px; line-height: 1.5; } .input-wrap { margin-bottom: 20px; } .nav-grid { display: grid; grid-template-columns: 1fr 1fr; padding: 10px; gap: 10px; background: #fff; } .nav-btn { height: 60px; display: flex; align-items: center; justify-content: center; color: white; border-radius: 4px; font-weight: bold; font-size: 18px; cursor: pointer; gap: 8px; } .btn-blue { background-color: var(--blue-btn); } .btn-green { background-color: var(--green-btn); } .search-box { display: flex; padding: 10px; background: #fff; align-items: center; margin-top: 1px; } .search-inputs { flex: 1; display: flex; align-items: center; border: 1px solid #ff9800; border-radius: 2px; height: 40px; } .search-inputs input { border: none; outline: none; flex: 1; padding: 0 10px; font-size: 14px; text-align: center; width: 30%; } .swap-icon { font-size: 20px; color: #4fc1e9; padding: 0 5px; } .search-btn { background: #ff6600; color: white; border: none; height: 40px; padding: 0 20px; font-size: 16px; margin-left: 10px; border-radius: 2px; } .quick-routes { padding: 10px; background: #fff; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 1px; } .route-tag { background: #4fc1e9; color: white; padding: 6px 12px; border-radius: 4px; font-size: 14px; width: auto; min-width: 80px; text-align: center; } .list-status { background: #fff; padding: 10px; margin-top: 10px; border-bottom: 1px solid #eee; font-size: 14px; color: #666; } .red-badge { background: #ff4444; color: white; padding: 2px 4px; font-size: 12px; border-radius: 2px; margin-right: 5px; } .ride-list { padding: 0; background: #fff; } .ride-card { padding: 15px; padding-right: 70px; border-bottom: 1px solid #e0e0e0; position: relative; } .card-row-1 { display: flex; align-items: center; margin-bottom: 8px; flex-wrap: wrap; } .badge-top { background: #ff4444; color: white; font-size: 12px; padding: 1px 3px; border-radius: 2px; margin-right: 5px; } .badge-type { font-size: 14px; font-weight: bold; color: white; padding: 1px 4px; border-radius: 2px; margin-right: 8px; } .badge-type.driver { background: #07c160; } .badge-type.passenger { background: #ff6600; } .route-text { font-size: 16px; font-weight: bold; color: #333; margin-left: 5px; } .card-row-2 { font-size: 14px; margin-bottom: 6px; } .time-text { color: #ff0000; font-weight: bold; margin-right: 10px; } .car-type { color: #666; } .card-row-3 { margin-bottom: 6px; font-size: 14px; } .seat-label { color: #333; } .seat-val { font-weight: bold; margin-left: 5px; } .seat-val.driver { color: #07c160; } .seat-val.passenger { color: #ff6600; } .card-row-4 { font-size: 12px; color: #999; } .call-btn-large { position: absolute; right: 0; top: 50%; transform: translateY(-50%); background: orange; width: 60px; height: 40px; border-radius: 20px 0 0 20px; display: flex; align-items: center; justify-content: center; color: white; font-size: 24px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); } .admin-btns { position: absolute; right: 80px; bottom: 10px; display: flex; gap: 5px; } .admin-btns button { padding: 0 5px; height: 22px; font-size: 10px; } .page-me { background: #f2f2f2; min-height: 100vh; } .sub-page { background: #f2f2f2; min-height: 100vh; padding-bottom: 20px; z-index: 10; position: relative; } .user-card { background: #fff; margin: 15px; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); } .user-header { display: flex; align-items: center; margin-bottom: 20px; } .avatar-circle { width: 60px; height: 60px; background: #eee; border-radius: 50%; color: #999; font-size: 24px; display: flex; align-items: center; justify-content: center; margin-right: 15px; overflow: hidden; } .user-info .nickname { font-weight: bold; font-size: 18px; margin-bottom: 5px; } .user-info .userid { color: #999; font-size: 14px; } .user-stats { display: flex; justify-content: space-between; text-align: center; border-top: 1px dashed #eee; padding-top: 15px; } .stat-val { font-size: 18px; font-weight: bold; margin-bottom: 5px; } .stat-val.blue { color: #0099ff; } .stat-label { font-size: 12px; color: #666; } .me-menu-grid { background: #fff; margin: 15px; border-radius: 8px; overflow: hidden; } .empty-state { text-align: center; padding: 50px; color: #999; font-size: 14px; } .custom-tabbar { position: fixed; bottom: 0; width: 100%; height: 50px; background: #fff; display: flex; border-top: 1px solid #eee; z-index: 999; } .tab-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 12px; color: #666; } .tab-item.active { color: #ff6600; } .publish-wrap { position: relative; } .publish-circle { position: absolute; top: -20px; width: 50px; height: 50px; background: #ff6666; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: 0 -2px 5px rgba(0,0,0,0.1); border: 4px solid #fff; } .pub-text { color: white; font-size: 10px; } .map-popup-content { height: 100%; display: flex; flex-direction: column; } .search-list { flex: 1; overflow-y: auto; } .detail-page { background: #f2f2f2; height: 100%; display: flex; flex-direction: column; } .detail-content { padding: 15px; flex: 1; overflow-y: auto; } .detail-card { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 20px; } .detail-header { display: flex; align-items: center; margin-bottom: 10px; } .detail-route { font-size: 20px; font-weight: bold; margin-left: 10px; color: #333; } .detail-item { font-size: 16px; margin-bottom: 12px; color: #666; display: flex; align-items: center; } .detail-item .van-icon { margin-right: 8px; font-size: 18px; } .detail-item .highlight { color: #333; font-weight: bold; } .price-big { color: #ff6600; font-size: 20px; font-weight: bold; } .share-guide { position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.8); z-index: 10000; color: #fff; } .share-arrow { position: absolute; top: 20px; right: 30px; text-align: right; }
+.top-bar { text-align: center; padding: 10px; background: #fff; font-weight: bold; color: #333; } .home-banner { height: 160px; } .wechat-mask { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #fff; z-index: 9999; display: flex; align-items: center; justify-content: center; text-align: center; } .mask-content { padding: 40px; } .auth-popup { text-align: center; } .auth-step { padding: 10px; } .auth-icon { margin-bottom: 20px; } .auth-desc { color: #666; font-size: 14px; margin-bottom: 30px; line-height: 1.5; } .input-wrap { margin-bottom: 20px; } .nav-grid { display: grid; grid-template-columns: 1fr 1fr; padding: 10px; gap: 10px; background: #fff; } .nav-btn { height: 60px; display: flex; align-items: center; justify-content: center; color: white; border-radius: 4px; font-weight: bold; font-size: 18px; cursor: pointer; gap: 8px; } .btn-blue { background-color: var(--blue-btn); } .btn-green { background-color: var(--green-btn); } .search-box { display: flex; padding: 10px; background: #fff; align-items: center; margin-top: 1px; } .search-inputs { flex: 1; display: flex; align-items: center; border: 1px solid #ff9800; border-radius: 2px; height: 40px; } .search-inputs input { border: none; outline: none; flex: 1; padding: 0 10px; font-size: 14px; text-align: center; width: 30%; } .swap-icon { font-size: 20px; color: #4fc1e9; padding: 0 5px; } .search-btn { background: #ff6600; color: white; border: none; height: 40px; padding: 0 20px; font-size: 16px; margin-left: 10px; border-radius: 2px; } .quick-routes { padding: 10px; background: #fff; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 1px; } .route-tag { background: #4fc1e9; color: white; padding: 6px 12px; border-radius: 4px; font-size: 14px; width: auto; min-width: 80px; text-align: center; } .list-status { background: #fff; padding: 10px; margin-top: 10px; border-bottom: 1px solid #eee; font-size: 14px; color: #666; } .red-badge { background: #ff4444; color: white; padding: 2px 4px; font-size: 12px; border-radius: 2px; margin-right: 5px; } .ride-list { padding: 0; background: #fff; } .ride-card { padding: 15px; padding-right: 70px; border-bottom: 1px solid #e0e0e0; position: relative; } .card-row-1 { display: flex; align-items: center; margin-bottom: 8px; flex-wrap: wrap; } .badge-top { background: #ff4444; color: white; font-size: 12px; padding: 1px 3px; border-radius: 2px; margin-right: 5px; } .badge-type { font-size: 14px; font-weight: bold; color: white; padding: 1px 4px; border-radius: 2px; margin-right: 8px; } .badge-type.driver { background: #07c160; } .badge-type.passenger { background: #ff6600; } .route-text { font-size: 16px; font-weight: bold; color: #333; margin-left: 5px; } .card-row-2 { font-size: 14px; margin-bottom: 6px; } .time-text { color: #ff0000; font-weight: bold; margin-right: 10px; } .car-type { color: #666; } .card-row-3 { margin-bottom: 6px; font-size: 14px; } .seat-label { color: #333; } .seat-val { font-weight: bold; margin-left: 5px; } .seat-val.driver { color: #07c160; } .seat-val.passenger { color: #ff6600; } .card-row-4 { font-size: 12px; color: #999; } .call-btn-large { position: absolute; right: 0; top: 50%; transform: translateY(-50%); background: orange; width: 60px; height: 40px; border-radius: 20px 0 0 20px; display: flex; align-items: center; justify-content: center; color: white; font-size: 24px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); } .admin-btns { position: absolute; right: 80px; bottom: 10px; display: flex; gap: 5px; } .admin-btns button { padding: 0 5px; height: 22px; font-size: 10px; } .page-me { background: #f2f2f2; min-height: 100vh; } .sub-page { background: #f2f2f2; min-height: 100vh; padding-bottom: 20px; z-index: 10; position: relative; } .user-card { background: #fff; margin: 15px; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); } .user-header { display: flex; align-items: center; margin-bottom: 20px; } .avatar-circle { width: 60px; height: 60px; background: #eee; border-radius: 50%; color: #999; font-size: 24px; display: flex; align-items: center; justify-content: center; margin-right: 15px; overflow: hidden; } .user-info .nickname { font-weight: bold; font-size: 18px; margin-bottom: 5px; } .user-info .userid { color: #999; font-size: 14px; } .user-stats { display: flex; justify-content: space-between; text-align: center; border-top: 1px dashed #eee; padding-top: 15px; } .stat-val { font-size: 18px; font-weight: bold; margin-bottom: 5px; } .stat-val.blue { color: #0099ff; } .stat-label { font-size: 12px; color: #666; } .me-menu-grid { background: #fff; margin: 15px; border-radius: 8px; overflow: hidden; } .empty-state { text-align: center; padding: 50px; color: #999; font-size: 14px; } .custom-tabbar { position: fixed; bottom: 0; width: 100%; height: 50px; background: #fff; display: flex; border-top: 1px solid #eee; z-index: 999; } .tab-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 12px; color: #666; } .tab-item.active { color: #ff6600; } .publish-wrap { position: relative; } .publish-circle { position: absolute; top: -20px; width: 50px; height: 50px; background: #ff6666; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: 0 -2px 5px rgba(0,0,0,0.1); border: 4px solid #fff; } .pub-text { color: white; font-size: 10px; } .map-popup-content { height: 100%; display: flex; flex-direction: column; } .search-list { flex: 1; overflow-y: auto; } .detail-page { background: #f2f2f2; height: 100%; display: flex; flex-direction: column; } .detail-content { padding: 15px; flex: 1; overflow-y: auto; } .detail-card { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 20px; } .detail-header { display: flex; align-items: center; margin-bottom: 10px; } .detail-route { font-size: 20px; font-weight: bold; margin-left: 10px; color: #333; } .detail-item { font-size: 16px; margin-bottom: 12px; color: #666; display: flex; align-items: center; } .detail-item .van-icon { margin-right: 8px; font-size: 18px; } .detail-item .highlight { color: #333; font-weight: bold; } .price-big { color: #ff6600; font-size: 20px; font-weight: bold; } .share-guide { position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.8); z-index: 10000; color: #fff; } .share-arrow { position: absolute; top: 20px; right: 30px; text-align: right; } .share-preview { margin-top: 150px; padding: 0 40px; } .share-card-preview { background: #fff; color: #333; padding: 15px; border-radius: 8px; } .share-body { display: flex; margin-top: 10px; } .share-body img { width: 50px; height: 50px; margin-left: 10px; } .share-body p { flex: 1; font-size: 13px; color: #666; }
 </style>
