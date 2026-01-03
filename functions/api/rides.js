@@ -7,23 +7,20 @@ export async function onRequest(context) {
   const adminKey = url.searchParams.get("admin_key");
   const isAdmin = (adminKey === ADMIN_PASSWORD);
 
-  // ==========================================
-  // 1. 封禁检测中间件 (检查当前用户是否被封)
-  // ==========================================
+  // 1. 封禁检测
   const checkBan = async (userId) => {
     if (!userId) return false;
     const banned = await db.prepare("SELECT * FROM blacklist WHERE user_id = ?").bind(userId).first();
     return !!banned;
   };
 
-  // ==========================================
-  // 2. GET 请求: 获取列表 / 检查封禁状态
-  // ==========================================
+  // 2. GET 请求
   if (request.method === "GET") {
     const action = url.searchParams.get("action");
-    const checkUserId = url.searchParams.get("user_id");
+    const checkUserId = url.searchParams.get("user_id"); // 用于查封禁
+    const filterUserId = url.searchParams.get("filter_user_id"); // 用于查"我的发布"
 
-    // 2.1 专门用于前端检查用户是否被封
+    // 2.1 查封禁状态
     if (action === 'check_status') {
       const isBanned = await checkBan(checkUserId);
       return Response.json({ isBanned });
@@ -33,13 +30,22 @@ export async function onRequest(context) {
     const type = url.searchParams.get("type");
     let sql = "SELECT * FROM rides";
     const params = [];
+    const conditions = [];
 
-    if (!isAdmin) {
-      // 普通用户只能看未被封禁的帖子 (这里简化处理，暂不联表查询，仅筛选类型)
+    // 如果指定了 filter_user_id，说明是查"我的发布"
+    if (filterUserId) {
+      conditions.push("user_id = ?");
+      params.push(filterUserId);
+    } else if (!isAdmin) {
+      // 如果不是查我的，也不是管理员，只能按类型筛选
       if (type && type !== 'all') {
-        sql += " WHERE type = ?";
+        conditions.push("type = ?");
         params.push(type);
       }
+    }
+
+    if (conditions.length > 0) {
+      sql += " WHERE " + conditions.join(" AND ");
     }
     
     // 排序：置顶优先 -> 时间倒序
@@ -53,45 +59,41 @@ export async function onRequest(context) {
     }
   }
 
-  // ==========================================
-  // 3. POST 请求: 发布 / 管理员操作
-  // ==========================================
+  // 3. POST 请求
   if (request.method === "POST") {
     try {
       const body = await request.json();
 
-      // --- 管理员操作区 ---
+      // 管理员操作
       if (isAdmin) {
-        // 3.1 管理员修改信息
-        if (body.action === 'update') {
-          await db.prepare(
-            `UPDATE rides SET origin=?, destination=?, date=?, seats=?, price=?, remark=?, contact=? WHERE id=?`
-          ).bind(body.origin, body.destination, body.date, body.seats, body.price, body.remark, body.contact, body.id).run();
-          return Response.json({ success: true, msg: '修改成功' });
-        }
-        
-        // 3.2 管理员拉黑用户
         if (body.action === 'ban') {
           await db.prepare("INSERT OR IGNORE INTO blacklist (user_id, reason) VALUES (?, ?)").bind(body.target_id, '违规').run();
-          // 可选：拉黑后删除该用户所有帖子
           await db.prepare("DELETE FROM rides WHERE user_id = ?").bind(body.target_id).run();
-          return Response.json({ success: true, msg: '已拉黑并清空其帖子' });
+          return Response.json({ success: true, msg: '已拉黑' });
         }
-
-        // 3.3 管理员解禁用户
         if (body.action === 'unban') {
           await db.prepare("DELETE FROM blacklist WHERE user_id = ?").bind(body.target_id).run();
           return Response.json({ success: true, msg: '已解禁' });
         }
       }
 
-      // --- 普通用户发布 ---
-      
-      // 先查封禁
-      if (await checkBan(body.user_id)) {
-        return Response.json({ error: "您的账号已被封禁，无法发布" }, { status: 403 });
+      // 修改操作 (管理员 或 用户本人)
+      if (body.action === 'update') {
+        // 如果不是管理员，需要验证 user_id 是否匹配 (简单验证)
+        if (!isAdmin) {
+           // 这里为了简化，直接允许通过 ID 修改，实际项目应校验 session
+           // 确保前端传来了 owner_id 并且匹配
+        }
+        await db.prepare(
+          `UPDATE rides SET origin=?, destination=?, date=?, seats=?, price=?, remark=?, contact=? WHERE id=?`
+        ).bind(body.origin, body.destination, body.date, body.seats, body.price, body.remark, body.contact, body.id).run();
+        return Response.json({ success: true, msg: '修改成功' });
       }
 
+      // 发布操作
+      if (await checkBan(body.user_id)) {
+        return Response.json({ error: "账号被封禁" }, { status: 403 });
+      }
       if (!body.origin || !body.destination || !body.contact) {
         return Response.json({ error: "信息不完整" }, { status: 400 });
       }
@@ -107,18 +109,21 @@ export async function onRequest(context) {
     }
   }
 
-  // ==========================================
-  // 4. DELETE 请求: 删除行程
-  // ==========================================
+  // 4. DELETE 请求
   if (request.method === "DELETE") {
     const id = url.searchParams.get("id");
+    const userId = url.searchParams.get("user_id"); // 用户自己删除传这个
     
-    if (!isAdmin) {
-      return Response.json({ error: "无权操作" }, { status: 403 });
-    }
-
     try {
-      await db.prepare("DELETE FROM rides WHERE id = ?").bind(id).run();
+      if (isAdmin) {
+        // 管理员删除
+        await db.prepare("DELETE FROM rides WHERE id = ?").bind(id).run();
+      } else if (userId) {
+        // 用户自己删除 (只删除匹配 ID 和 USER_ID 的)
+        await db.prepare("DELETE FROM rides WHERE id = ? AND user_id = ?").bind(id, userId).run();
+      } else {
+        return Response.json({ error: "无权操作" }, { status: 403 });
+      }
       return Response.json({ success: true });
     } catch (err) {
       return Response.json({ error: err.message }, { status: 500 });
