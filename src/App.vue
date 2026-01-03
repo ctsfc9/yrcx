@@ -110,7 +110,6 @@ onMounted(async () => {
   if (isWeixin || isWindowsWechat) {
     isWeChatEnv.value = true;
     checkUserStatus(); 
-    // 尝试获取后端签名 (需后续配置)
     await initWxConfig();
   } else {
     isWeChatEnv.value = false; 
@@ -137,26 +136,23 @@ const handlePopState = (event) => {
   if (exitClickCount.value >= 3) { wx.closeWindow(); } else { showToast(`再按 ${3 - exitClickCount.value} 次退出平台`); }
 };
 
-// --- 分享逻辑 (调用后端签名) ---
+// --- 分享逻辑 ---
 const initWxConfig = async () => {
   try {
-    // 1. 请求后端获取签名 (需要你部署好后端 api/wx_sign)
     const currentUrl = window.location.href.split('#')[0];
     const res = await fetch(`/api/wx_sign?url=${encodeURIComponent(currentUrl)}`);
     const data = await res.json();
 
     if (data.appId) {
       wx.config({
-        debug: false, // 开启调试模式
+        debug: false,
         appId: data.appId,
         timestamp: data.timestamp,
         nonceStr: data.nonceStr,
         signature: data.signature,
         jsApiList: ['updateAppMessageShareData', 'updateTimelineShareData', 'onMenuShareAppMessage', 'onMenuShareTimeline']
       });
-      
       wx.ready(() => { updateWxShare(); });
-      wx.error((res) => { console.error("WX Config Error:", res); });
     }
   } catch (e) {
     console.log('未配置后端签名，使用默认分享或引导模式');
@@ -166,7 +162,6 @@ const initWxConfig = async () => {
 const updateWxShare = (customData = null) => {
   const shareData = customData || SHARE_CONFIG;
   wx.ready(function () { 
-    // 新版API
     if (wx.updateAppMessageShareData) {
       wx.updateAppMessageShareData({ 
         title: shareData.title, desc: shareData.desc, link: shareData.link, imgUrl: shareData.imgUrl,
@@ -177,7 +172,6 @@ const updateWxShare = (customData = null) => {
         success: function () { }
       });
     }
-    // 兼容旧版API
     wx.onMenuShareAppMessage({ 
       title: shareData.title, desc: shareData.desc, link: shareData.link, imgUrl: shareData.imgUrl 
     });
@@ -274,6 +268,8 @@ const fetchMyRides = async () => {
   } catch (e) {}
 };
 
+const onRefresh = () => { finished.value = false; loading.value = true; refreshing.value = true; onLoad(); };
+
 const switchTab = (index) => {
   if (activeTab.value !== index) { pushHistoryState(`tab-${index}`); activeTab.value = index; }
   if (index === 0) { filterType.value = 'all'; searchForm.origin = ''; searchForm.destination = ''; onRefresh(); updateWxShare(); }
@@ -364,14 +360,12 @@ const handleRealPublish = async () => {
   } catch(e) { showFailToast('网络错误'); }
 };
 
-// --- 辅助 ---
+// --- 地图与辅助 ---
 const autoLocate = () => { if (!window.AMap) { showFailToast('地图未加载'); return; } showLoadingToast({ message: '定位中...', forbidClick: true }); const g = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 10000, needAddress: true }); g.getCurrentPosition((s, r) => { closeToast(); if (s === 'complete') { postForm.origin = r.formattedAddress || r.message; showSuccessToast('已定位'); } else { showFailToast('定位失败，请手动选择'); } }); };
 const openMapSelector = (f) => { currentMapField.value = f; showMapPopup.value = true; mapSearchKeyword.value = ''; mapSearchResults.value = []; nextTick(() => initMap()); };
 const initMap = () => { if (!window.AMap || mapInstance) return; mapInstance = new AMap.Map('map-container', { zoom: 11, center: [116.39, 39.90] }); };
 const onMapSearch = () => { if (!mapSearchKeyword.value || !window.AMap) return; AMap.plugin('AMap.AutoComplete', function(){ const auto = new AMap.AutoComplete({ city: '全国' }); auto.search(mapSearchKeyword.value, (s, r) => { mapSearchResults.value = (s === 'complete' && r.tips) ? r.tips : []; }); }); };
 const selectLocation = (item) => { if (currentMapField.value === 'origin') postForm.origin = item.name; else postForm.destination = item.name; showMapPopup.value = false; };
-const onRefresh = () => { finished.value = false; loading.value = true; refreshing.value = true; onLoad(); };
-const handleShareClick = () => { showShareGuide.value = true; };
 const openSubPage = (pageName) => { currentSubPage.value = pageName; pushHistoryState(pageName); };
 const closeSubPage = () => { window.history.back(); };
 const formatDate = (str) => { if(!str) return ''; const d=new Date(str); const t=new Date(); const isToday=d.getDate()===t.getDate()&&d.getMonth()===t.getMonth(); const ts=`${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; return isToday?`今天 ${ts}`:`${d.getMonth()+1}月${d.getDate()}日 ${ts}`; };
