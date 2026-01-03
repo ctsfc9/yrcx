@@ -10,4 +10,8 @@ export default defineConfig({
       resolvers: [VantResolver()],
     }),
   ],
+  build: {
+    outDir: 'dist', // ⚠️ 强制指定输出目录为 dist
+    assetsDir: 'assets',
+  }
 });
