@@ -3,15 +3,16 @@ import { ref, reactive, computed, nextTick, onMounted, onBeforeUnmount } from 'v
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 import wx from 'weixin-js-sdk'; 
 
-// --- 基础配置 (请确认域名无误) ---
+// --- 基础配置 ---
 const SITE_DOMAIN = 'https://yrcx.ctsfc.top'; 
-// 默认分享配置 (首页)
-const SHARE_CONFIG = {
+const LOGO_URL = `${SITE_DOMAIN}/logo.png`; // 确保 public/logo.png 存在
+
+// 默认分享文案 (首页)
+const DEFAULT_SHARE = {
   title: '宜宾出行公众号，海量信息任你选！',
   desc: '长途顺风车超市，老乡互助，共享出行！',
   link: SITE_DOMAIN,
-  // 核心修复：强制使用绝对路径，指向 public/logo.png
-  imgUrl: `${SITE_DOMAIN}/logo.png`
+  imgUrl: LOGO_URL
 };
 
 // --- 全局状态 ---
@@ -105,16 +106,28 @@ const seatColumns = [1,2,3,4,5,6].map(n => ({ text: `${n}人/空位`, value: n }
 // 逻辑区域
 // =======================
 
+// iOS签名专用：记录首次进入的URL
+const iosFirstUrl = ref('');
+
 onMounted(async () => {
   const ua = navigator.userAgent.toLowerCase();
   const isWeixin = ua.indexOf('micromessenger') !== -1;
   const isWindowsWechat = ua.indexOf('windowswechat') !== -1;
-  
+  const isIos = !!ua.match(/\(i[^;]+;( u;)? cpu.+mac os x/); // 判断iOS
+
   if (isWeixin || isWindowsWechat) {
     isWeChatEnv.value = true;
     checkUserStatus(); 
-    // 初始化微信签名
-    await initWxConfig();
+    
+    // iOS坑：必须记录 entry url
+    iosFirstUrl.value = window.location.href.split('#')[0];
+    
+    // 初始化签名 (iOS只签一次，Android每次签)
+    if (isIos) {
+      await initWxConfig(iosFirstUrl.value);
+    } else {
+      await initWxConfig(window.location.href.split('#')[0]);
+    }
   } else {
     isWeChatEnv.value = false; 
   }
@@ -132,8 +145,7 @@ const pushHistoryState = (pageName) => { window.history.pushState({ page: pageNa
 const handlePopState = (event) => {
   if (selectedRide.value) { 
     selectedRide.value = null; 
-    // 退出详情页时，恢复默认分享
-    updateWxShare(SHARE_CONFIG);
+    setShareData(DEFAULT_SHARE); // 回退时重置分享
     return; 
   }
   if (currentSubPage.value) { currentSubPage.value = null; return; }
@@ -145,17 +157,15 @@ const handlePopState = (event) => {
   if (exitClickCount.value >= 3) { wx.closeWindow(); } else { showToast(`再按 ${3 - exitClickCount.value} 次退出平台`); }
 };
 
-// --- 微信分享核心逻辑 ---
-const initWxConfig = async () => {
+// --- 微信分享核心逻辑 (修复版) ---
+const initWxConfig = async (signUrl) => {
   try {
-    // 1. 获取当前页面URL (去除hash)
-    const currentUrl = window.location.href.split('#')[0];
-    const res = await fetch(`/api/wx_sign?url=${encodeURIComponent(currentUrl)}`);
+    const res = await fetch(`/api/wx_sign?url=${encodeURIComponent(signUrl)}`);
     const data = await res.json();
 
     if (data.appId) {
       wx.config({
-        debug: false, // ⚠️ 如果分享还是失败，请暂时改为 true 查看微信报错信息
+        debug: false, 
         appId: data.appId,
         timestamp: data.timestamp,
         nonceStr: data.nonceStr,
@@ -163,53 +173,45 @@ const initWxConfig = async () => {
         jsApiList: ['updateAppMessageShareData', 'updateTimelineShareData', 'onMenuShareAppMessage', 'onMenuShareTimeline']
       });
       
-      // 签名成功后，立即设置默认分享
-      wx.ready(() => { updateWxShare(SHARE_CONFIG); });
+      wx.ready(() => { 
+        setShareData(DEFAULT_SHARE); // 初始设置
+      });
       wx.error((res) => { console.error("WX Config Error:", res); });
     }
-  } catch (e) {
-    console.log('签名失败:', e);
-  }
+  } catch (e) { console.log('WX Init Failed', e); }
 };
 
-// 更新分享内容通用函数
-const updateWxShare = (shareData) => {
-  // 确保 link 也是绝对路径
-  if (!shareData.link.startsWith('http')) {
-    shareData.link = SITE_DOMAIN;
-  }
-  
-  wx.ready(function () { 
-    const config = {
-      title: shareData.title,
-      desc: shareData.desc,
-      link: shareData.link,
-      imgUrl: shareData.imgUrl,
-      success: function() { console.log('Shared'); }
-    };
+// 统一设置分享数据
+const setShareData = (data) => {
+  // 1. 动态修改网页标题 (兜底)
+  document.title = data.title;
 
-    // 新接口
-    if (wx.updateAppMessageShareData) {
-      wx.updateAppMessageShareData(config);
-      wx.updateTimelineShareData(config);
-    }
-    // 旧接口兼容
+  // 2. 调用微信接口
+  const config = {
+    title: data.title,
+    desc: data.desc,
+    link: SITE_DOMAIN, // 强制分享链接回首页，避免签名错误
+    imgUrl: data.imgUrl,
+    success: () => { }
+  };
+
+  wx.ready(() => {
+    // 覆盖新旧接口，确保最大兼容性
+    if(wx.updateAppMessageShareData) wx.updateAppMessageShareData(config);
+    if(wx.updateTimelineShareData) wx.updateTimelineShareData(config);
     wx.onMenuShareAppMessage(config);
     wx.onMenuShareTimeline(config);
   });
 };
 
-// 生成详情页的分享数据
 const getDetailShareData = (item) => {
   const typeStr = item.type === 'driver' ? '【车找人】' : '【人找车】';
   const cleanRemark = (item.remark || '无备注');
   return {
-    // 标题：关键信息前置
     title: `${typeStr} ${item.origin} → ${item.destination}`,
-    // 描述：时间 + 备注 + 广告语 (去掉了电话)
-    desc: `出发时间: ${formatDate(item.date)}。\n备注: ${cleanRemark}。\n\n宜宾出行公众号，长途顺风车超市，海量信息任你选！`,
-    link: SITE_DOMAIN, // 分享出去点击由于是SPA，暂时跳回首页
-    imgUrl: `${SITE_DOMAIN}/logo.png` // 强制使用 logo.png
+    desc: `出发:${formatDate(item.date)}。${cleanRemark}。宜宾出行公众号，海量信息任你选！`,
+    link: SITE_DOMAIN, 
+    imgUrl: LOGO_URL
   };
 };
 
@@ -293,16 +295,19 @@ const onRefresh = () => { finished.value = false; loading.value = true; refreshi
 
 const switchTab = (index) => {
   if (activeTab.value !== index) { pushHistoryState(`tab-${index}`); activeTab.value = index; }
-  if (index === 0) { filterType.value = 'all'; searchForm.origin = ''; searchForm.destination = ''; onRefresh(); updateWxShare(SHARE_CONFIG); }
+  if (index === 0) { 
+    filterType.value = 'all'; searchForm.origin = ''; searchForm.destination = ''; onRefresh(); 
+    setShareData(DEFAULT_SHARE); 
+  }
   if (index === 2) { fetchMyRides(); }
 };
 
-// --- 详情页逻辑 (核心修复：点击时更新分享) ---
+// --- 详情页逻辑 ---
 const openDetail = (item) => {
   selectedRide.value = item; 
   pushHistoryState('detail'); 
-  // 立即使用当前行程信息更新微信分享数据
-  updateWxShare(getDetailShareData(item));
+  // 核心：打开详情页时，设置特定分享文案
+  setShareData(getDetailShareData(item));
 };
 const closeDetail = () => { window.history.back(); };
 
@@ -329,7 +334,6 @@ const handleUserDelete = (id) => {
   });
 };
 
-// --- 管理员与发布 ---
 const handleLogoClick = () => {
   debugClicks.value++;
   if (debugClicks.value >= 5) {
@@ -377,7 +381,6 @@ const handleRealPublish = async () => {
   } catch(e) { showFailToast('网络错误'); }
 };
 
-// --- 辅助 ---
 const autoLocate = () => { if (!window.AMap) { showFailToast('地图未加载'); return; } showLoadingToast({ message: '定位中...', forbidClick: true }); const g = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 10000, needAddress: true }); g.getCurrentPosition((s, r) => { closeToast(); if (s === 'complete') { postForm.origin = r.formattedAddress || r.message; showSuccessToast('已定位'); } else { showFailToast('定位失败'); } }); };
 const openMapSelector = (f) => { currentMapField.value = f; showMapPopup.value = true; mapSearchKeyword.value = ''; mapSearchResults.value = []; nextTick(() => initMap()); };
 const initMap = () => { if (!window.AMap || mapInstance) return; mapInstance = new AMap.Map('map-container', { zoom: 11, center: [116.39, 39.90] }); };
@@ -469,7 +472,7 @@ const formatDate = (str) => { if(!str) return ''; const d=new Date(str); const t
       <div v-if="currentSubPage === 'settings'" class="sub-page"><van-nav-bar title="系统设置" left-text="返回" left-arrow @click-left="closeSubPage" fixed placeholder /><div style="padding:20px"><van-button block color="#ee0a24" @click="() => { localStorage.removeItem('user_info'); location.reload(); }">退出登录</van-button></div></div>
     </div>
 
-    <van-popup v-if="selectedRide" v-model:show="selectedRide" position="right" :style="{ width: '100%', height: '100%' }"><div class="detail-page"><van-nav-bar title="拼车详情" left-arrow @click-left="closeDetail" fixed placeholder /><div class="detail-content"><div class="detail-card"><div class="detail-header"><span class="badge-type" :class="selectedRide.type">{{ selectedRide.type === 'driver' ? '车找人' : '人找车' }}</span><span class="detail-route">{{ selectedRide.origin }} → {{ selectedRide.destination }}</span></div><van-divider /><div class="detail-item"><van-icon name="clock-o" /> 出发时间：<span class="highlight">{{ selectedRide.date.replace('T', ' ') }}</span></div><div class="detail-item"><van-icon name="friends-o" /> {{ selectedRide.type==='driver'?'空位':'人数' }}：<span class="highlight">{{ selectedRide.seats }}</span></div><div class="detail-item"><van-icon name="gold-coin-o" /> 费用：<span class="price-big">¥{{ selectedRide.price || '面议' }}</span></div><div class="detail-item" v-if="selectedRide.remark"><van-icon name="label-o" /> 备注：{{ selectedRide.remark }}</div></div><div class="detail-actions"><a :href="'tel:'+selectedRide.contact" style="display:block;margin-bottom:15px;"><van-button type="primary" block round icon="phone-o" color="#ff6600">拨打联系电话</van-button></a><van-button plain type="primary" block round icon="share-o" @click="handleShareClick">分享给好友</van-button></div></div></div></van-popup>
+    <van-popup v-if="selectedRide" v-model:show="selectedRide" position="right" :style="{ width: '100%', height: '100%' }"><div class="detail-page"><van-nav-bar title="拼车详情" left-arrow @click-left="closeDetail" fixed placeholder /><div class="detail-content"><div class="detail-card"><div class="detail-header"><span class="badge-type" :class="selectedRide.type">{{ selectedRide.type === 'driver' ? '车找人' : '人找车' }}</span><span class="detail-route">{{ selectedRide.origin }} → {{ selectedRide.destination }}</span></div><van-divider /><div class="detail-item"><van-icon name="clock-o" /> 出发时间：<span class="highlight">{{ selectedRide.date.replace('T', ' ') }}</span></div><div class="detail-item"><van-icon name="friends-o" /> 数量：<span class="highlight">{{ selectedRide.seats }}</span></div><div class="detail-item"><van-icon name="gold-coin-o" /> 费用：<span class="price-big">¥{{ selectedRide.price || '面议' }}</span></div><div class="detail-item" v-if="selectedRide.remark"><van-icon name="label-o" /> 备注：{{ selectedRide.remark }}</div></div><div class="detail-actions"><a :href="'tel:'+selectedRide.contact" style="display:block;margin-bottom:15px;"><van-button type="primary" block round icon="phone-o" color="#ff6600">拨打联系电话</van-button></a><van-button plain type="primary" block round icon="share-o" @click="handleShareClick">分享给好友</van-button></div></div></div></van-popup>
     <van-dialog v-model:show="showEditDialog" title="修改行程" show-cancel-button @confirm="submitEdit">
        <van-form>
          <van-field v-model="editForm.origin" label="起点"/>
@@ -485,8 +488,12 @@ const formatDate = (str) => { if(!str) return ''; const d=new Date(str); const t
       <div class="share-preview" style="margin-top:100px;padding:20px;">
         <div style="background:#fff;border-radius:8px;padding:15px;color:#333;display:flex;align-items:center;">
            <div style="flex:1;">
-             <div style="font-weight:bold;margin-bottom:5px;">{{ SHARE_CONFIG.title }}</div>
-             <div style="font-size:12px;color:#999;">{{ SHARE_CONFIG.desc }}</div>
+             <div style="font-weight:bold;margin-bottom:5px;">
+               {{ selectedRide ? (selectedRide.type==='driver'?'【车找人】':'【人找车】') + ' ' + selectedRide.origin + ' → ' + selectedRide.destination : SHARE_CONFIG.title }}
+             </div>
+             <div style="font-size:12px;color:#999;">
+               {{ selectedRide ? '出发:' + formatDate(selectedRide.date) + ' ' + (selectedRide.remark || '') : SHARE_CONFIG.desc }}
+             </div>
            </div>
            <img :src="SHARE_CONFIG.imgUrl" style="width:50px;height:50px;margin-left:10px;object-fit:cover;">
         </div>
@@ -506,10 +513,7 @@ const formatDate = (str) => { if(!str) return ''; const d=new Date(str); const t
 </template>
 
 <style>
-/* CSS 保持不变 */
+/* CSS */
 :root { --blue-btn: #4fc1e9; --green-btn: #a0d468; } body { background-color: #f2f2f2; font-family: sans-serif; margin: 0; padding-bottom: 70px; }
-.top-bar { text-align: center; padding: 10px; background: #fff; font-weight: bold; color: #333; } .home-banner { height: 160px; } .wechat-mask { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #fff; z-index: 9999; display: flex; align-items: center; justify-content: center; text-align: center; } .mask-content { padding: 40px; } .auth-popup { text-align: center; } .auth-step { padding: 10px; } .auth-icon { margin-bottom: 20px; } .auth-desc { color: #666; font-size: 14px; margin-bottom: 30px; line-height: 1.5; } .input-wrap { margin-bottom: 20px; } .nav-grid { display: grid; grid-template-columns: 1fr 1fr; padding: 10px; gap: 10px; background: #fff; } .nav-btn { height: 60px; display: flex; align-items: center; justify-content: center; color: white; border-radius: 4px; font-weight: bold; font-size: 18px; cursor: pointer; gap: 8px; } .btn-blue { background-color: var(--blue-btn); } .btn-green { background-color: var(--green-btn); } .search-box { display: flex; padding: 10px; background: #fff; align-items: center; margin-top: 1px; } .search-inputs { flex: 1; display: flex; align-items: center; border: 1px solid #ff9800; border-radius: 2px; height: 40px; } .search-inputs input { border: none; outline: none; flex: 1; padding: 0 10px; font-size: 14px; text-align: center; width: 30%; } .swap-icon { font-size: 20px; color: #4fc1e9; padding: 0 5px; } .search-btn { background: #ff6600; color: white; border: none; height: 40px; padding: 0 20px; font-size: 16px; margin-left: 10px; border-radius: 2px; } .quick-routes { padding: 10px; background: #fff; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 1px; } .route-tag { background: #4fc1e9; color: white; padding: 6px 12px; border-radius: 4px; font-size: 14px; width: auto; min-width: 80px; text-align: center; } .list-status { background: #fff; padding: 10px; margin-top: 10px; border-bottom: 1px solid #eee; font-size: 14px; color: #666; } .red-badge { background: #ff4444; color: white; padding: 2px 4px; font-size: 12px; border-radius: 2px; margin-right: 5px; } .ride-list { padding: 0; background: #fff; } .ride-card { padding: 15px; padding-right: 70px; border-bottom: 1px solid #e0e0e0; position: relative; } .card-row-1 { display: flex; align-items: center; margin-bottom: 8px; flex-wrap: wrap; } .badge-top { background: #ff4444; color: white; font-size: 12px; padding: 1px 3px; border-radius: 2px; margin-right: 5px; } .badge-type { font-size: 14px; font-weight: bold; color: white; padding: 1px 4px; border-radius: 2px; margin-right: 8px; } .badge-type.driver { background: #07c160; } .badge-type.passenger { background: #ff6600; } .route-text { font-size: 16px; font-weight: bold; color: #333; margin-left: 5px; } .card-row-2 { font-size: 14px; margin-bottom: 6px; } .time-text { color: #ff0000; font-weight: bold; margin-right: 10px; } .car-type { color: #666; } .card-row-3 { margin-bottom: 6px; font-size: 14px; } .seat-label { color: #333; } .seat-val { font-weight: bold; margin-left: 5px; } .seat-val.driver { color: #07c160; } .seat-val.passenger { color: #ff6600; } .card-row-4 { font-size: 12px; color: #999; } .call-btn-large { position: absolute; right: 0; top: 50%; transform: translateY(-50%); background: orange; width: 60px; height: 40px; border-radius: 20px 0 0 20px; display: flex; align-items: center; justify-content: center; color: white; font-size: 24px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); } .admin-btns { position: absolute; right: 80px; bottom: 10px; display: flex; gap: 5px; } .admin-btns button { padding: 0 5px; height: 22px; font-size: 10px; } .page-me { background: #f2f2f2; min-height: 100vh; } .sub-page { background: #f2f2f2; min-height: 100vh; padding-bottom: 20px; z-index: 10; position: relative; } .user-card { background: #fff; margin: 15px; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); } .user-header { display: flex; align-items: center; margin-bottom: 20px; } .avatar-circle { width: 60px; height: 60px; background: #eee; border-radius: 50%; color: #999; font-size: 24px; display: flex; align-items: center; justify-content: center; margin-right: 15px; overflow: hidden; } .user-info .nickname { font-weight: bold; font-size: 18px; margin-bottom: 5px; } .user-info .userid { color: #999; font-size: 14px; } .user-stats { display: flex; justify-content: space-between; text-align: center; border-top: 1px dashed #eee; padding-top: 15px; } .stat-val { font-size: 18px; font-weight: bold; margin-bottom: 5px; } .stat-val.blue { color: #0099ff; } .stat-label { font-size: 12px; color: #666; } .me-menu-grid { background: #fff; margin: 15px; border-radius: 8px; overflow: hidden; } .empty-state { text-align: center; padding: 50px; color: #999; font-size: 14px; } 
-/* 修复：底部导航层级设为最高 */
-.custom-tabbar { position: fixed; bottom: 0; width: 100%; height: 50px; background: #fff; display: flex; border-top: 1px solid #eee; z-index: 9999; } 
-.tab-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 12px; color: #666; } .tab-item.active { color: #ff6600; } .publish-wrap { position: relative; } .publish-circle { position: absolute; top: -20px; width: 50px; height: 50px; background: #ff6666; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: 0 -2px 5px rgba(0,0,0,0.1); border: 4px solid #fff; } .pub-text { color: white; font-size: 10px; } .map-popup-content { height: 100%; display: flex; flex-direction: column; } .search-list { flex: 1; overflow-y: auto; } .detail-page { background: #f2f2f2; height: 100%; display: flex; flex-direction: column; } .detail-content { padding: 15px; flex: 1; overflow-y: auto; } .detail-card { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 20px; } .detail-header { display: flex; align-items: center; margin-bottom: 10px; } .detail-route { font-size: 20px; font-weight: bold; margin-left: 10px; color: #333; } .detail-item { font-size: 16px; margin-bottom: 12px; color: #666; display: flex; align-items: center; } .detail-item .van-icon { margin-right: 8px; font-size: 18px; } .detail-item .highlight { color: #333; font-weight: bold; } .price-big { color: #ff6600; font-size: 20px; font-weight: bold; } .share-guide { position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.8); z-index: 10000; color: #fff; } .share-arrow { position: absolute; top: 20px; right: 30px; text-align: right; } .share-preview { margin-top: 150px; padding: 0 40px; } .share-card-preview { background: #fff; color: #333; padding: 15px; border-radius: 8px; } .share-body { display: flex; margin-top: 10px; } .share-body img { width: 50px; height: 50px; margin-left: 10px; } .share-body p { flex: 1; font-size: 13px; color: #666; }
+.top-bar { text-align: center; padding: 10px; background: #fff; font-weight: bold; color: #333; } .home-banner { height: 160px; } .wechat-mask { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #fff; z-index: 9999; display: flex; align-items: center; justify-content: center; text-align: center; } .mask-content { padding: 40px; } .auth-popup { text-align: center; } .auth-step { padding: 10px; } .auth-icon { margin-bottom: 20px; } .auth-desc { color: #666; font-size: 14px; margin-bottom: 30px; line-height: 1.5; } .input-wrap { margin-bottom: 20px; } .nav-grid { display: grid; grid-template-columns: 1fr 1fr; padding: 10px; gap: 10px; background: #fff; } .nav-btn { height: 60px; display: flex; align-items: center; justify-content: center; color: white; border-radius: 4px; font-weight: bold; font-size: 18px; cursor: pointer; gap: 8px; } .btn-blue { background-color: var(--blue-btn); } .btn-green { background-color: var(--green-btn); } .search-box { display: flex; padding: 10px; background: #fff; align-items: center; margin-top: 1px; } .search-inputs { flex: 1; display: flex; align-items: center; border: 1px solid #ff9800; border-radius: 2px; height: 40px; } .search-inputs input { border: none; outline: none; flex: 1; padding: 0 10px; font-size: 14px; text-align: center; width: 30%; } .swap-icon { font-size: 20px; color: #4fc1e9; padding: 0 5px; } .search-btn { background: #ff6600; color: white; border: none; height: 40px; padding: 0 20px; font-size: 16px; margin-left: 10px; border-radius: 2px; } .quick-routes { padding: 10px; background: #fff; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 1px; } .route-tag { background: #4fc1e9; color: white; padding: 6px 12px; border-radius: 4px; font-size: 14px; width: auto; min-width: 80px; text-align: center; } .list-status { background: #fff; padding: 10px; margin-top: 10px; border-bottom: 1px solid #eee; font-size: 14px; color: #666; } .red-badge { background: #ff4444; color: white; padding: 2px 4px; font-size: 12px; border-radius: 2px; margin-right: 5px; } .ride-list { padding: 0; background: #fff; } .ride-card { padding: 15px; padding-right: 70px; border-bottom: 1px solid #e0e0e0; position: relative; } .card-row-1 { display: flex; align-items: center; margin-bottom: 8px; flex-wrap: wrap; } .badge-top { background: #ff4444; color: white; font-size: 12px; padding: 1px 3px; border-radius: 2px; margin-right: 5px; } .badge-type { font-size: 14px; font-weight: bold; color: white; padding: 1px 4px; border-radius: 2px; margin-right: 8px; } .badge-type.driver { background: #07c160; } .badge-type.passenger { background: #ff6600; } .route-text { font-size: 16px; font-weight: bold; color: #333; margin-left: 5px; } .card-row-2 { font-size: 14px; margin-bottom: 6px; } .time-text { color: #ff0000; font-weight: bold; margin-right: 10px; } .car-type { color: #666; } .card-row-3 { margin-bottom: 6px; font-size: 14px; } .seat-label { color: #333; } .seat-val { font-weight: bold; margin-left: 5px; } .seat-val.driver { color: #07c160; } .seat-val.passenger { color: #ff6600; } .card-row-4 { font-size: 12px; color: #999; } .call-btn-large { position: absolute; right: 0; top: 50%; transform: translateY(-50%); background: orange; width: 60px; height: 40px; border-radius: 20px 0 0 20px; display: flex; align-items: center; justify-content: center; color: white; font-size: 24px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); } .admin-btns { position: absolute; right: 80px; bottom: 10px; display: flex; gap: 5px; } .admin-btns button { padding: 0 5px; height: 22px; font-size: 10px; } .page-me { background: #f2f2f2; min-height: 100vh; } .sub-page { background: #f2f2f2; min-height: 100vh; padding-bottom: 20px; z-index: 10; position: relative; } .user-card { background: #fff; margin: 15px; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); } .user-header { display: flex; align-items: center; margin-bottom: 20px; } .avatar-circle { width: 60px; height: 60px; background: #eee; border-radius: 50%; color: #999; font-size: 24px; display: flex; align-items: center; justify-content: center; margin-right: 15px; overflow: hidden; } .user-info .nickname { font-weight: bold; font-size: 18px; margin-bottom: 5px; } .user-info .userid { color: #999; font-size: 14px; } .user-stats { display: flex; justify-content: space-between; text-align: center; border-top: 1px dashed #eee; padding-top: 15px; } .stat-val { font-size: 18px; font-weight: bold; margin-bottom: 5px; } .stat-val.blue { color: #0099ff; } .stat-label { font-size: 12px; color: #666; } .me-menu-grid { background: #fff; margin: 15px; border-radius: 8px; overflow: hidden; } .empty-state { text-align: center; padding: 50px; color: #999; font-size: 14px; } .custom-tabbar { position: fixed; bottom: 0; width: 100%; height: 50px; background: #fff; display: flex; border-top: 1px solid #eee; z-index: 9999; } .tab-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 12px; color: #666; } .tab-item.active { color: #ff6600; } .publish-wrap { position: relative; } .publish-circle { position: absolute; top: -20px; width: 50px; height: 50px; background: #ff6666; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: 0 -2px 5px rgba(0,0,0,0.1); border: 4px solid #fff; } .pub-text { color: white; font-size: 10px; } .map-popup-content { height: 100%; display: flex; flex-direction: column; } .search-list { flex: 1; overflow-y: auto; } .detail-page { background: #f2f2f2; height: 100%; display: flex; flex-direction: column; } .detail-content { padding: 15px; flex: 1; overflow-y: auto; } .detail-card { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 20px; } .detail-header { display: flex; align-items: center; margin-bottom: 10px; } .detail-route { font-size: 20px; font-weight: bold; margin-left: 10px; color: #333; } .detail-item { font-size: 16px; margin-bottom: 12px; color: #666; display: flex; align-items: center; } .detail-item .van-icon { margin-right: 8px; font-size: 18px; } .detail-item .highlight { color: #333; font-weight: bold; } .price-big { color: #ff6600; font-size: 20px; font-weight: bold; } .share-guide { position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.8); z-index: 10000; color: #fff; } .share-arrow { position: absolute; top: 20px; right: 30px; text-align: right; }
 </style>
