@@ -1,6 +1,6 @@
 <script setup>
 import { ref, reactive, computed, nextTick, onMounted } from 'vue';
-import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast, showImagePreview } from 'vant';
+import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
 // --- 全局状态 ---
 const activeTab = ref(0);
@@ -11,22 +11,32 @@ const refreshing = ref(false);
 const finished = ref(false);
 const isWeChatEnv = ref(true);
 
-// --- 管理员状态 ---
-const isAdminMode = ref(false);
-const adminPassword = ref('');
-const debugClicks = ref(0);
+// --- 强制登录/注册拦截状态 ---
+const showAuthModal = ref(false); // 控制强制登录弹窗
+const authStep = ref(1);          // 1: 微信授权, 2: 绑定手机
 
-// --- 个人中心状态 (升级版) ---
+// --- 个人中心状态 ---
 const userProfile = reactive({
-  id: '',           // 自动生成
-  nickname: '点击登录',
-  avatar: '',       // 默认空，登录后变微信头像
+  id: '',
+  nickname: '',
+  avatar: '',
+  phone: '',        // 新增：手机号
   balance: '0.00',
   isVerified: false,
   isLogin: false
 });
+
+// --- 注册表单 ---
+const registerForm = reactive({
+  phone: '',
+  code: '' // 预留验证码字段
+});
+
+// --- 管理员状态 ---
+const isAdminMode = ref(false);
+const adminPassword = ref('');
+const debugClicks = ref(0);
 const meActiveTab = ref(0);
-// 控制子页面显示: null | 'wallet' | 'auth' | 'settings' | 'about' | 'share'
 const currentSubPage = ref(null); 
 
 // --- 搜索表单 ---
@@ -85,7 +95,7 @@ const seatColumns = [1,2,3,4,5,6].map(n => ({ text: `${n}人/空位`, value: n }
 // 逻辑区域
 // =======================
 
-// --- 初始化与模拟微信登录 ---
+// --- 初始化与强制登录逻辑 ---
 onMounted(() => {
   // 1. 环境检测
   const ua = navigator.userAgent.toLowerCase();
@@ -94,38 +104,87 @@ onMounted(() => {
   
   if (isWeixin || isWindowsWechat) {
     isWeChatEnv.value = true;
-    autoLogin(); // 在微信里自动登录
+    checkUserStatus(); // 核心：检查用户状态
   } else {
     isWeChatEnv.value = false; 
   }
 });
 
-const autoLogin = () => {
-  // 模拟从本地缓存获取用户信息
+// 检查用户是否完整注册
+const checkUserStatus = () => {
   const storedUser = localStorage.getItem('user_info');
+  
   if (storedUser) {
+    // 本地有缓存，加载进来
     Object.assign(userProfile, JSON.parse(storedUser));
+    
+    // 检查1：是否已登录 (有昵称/头像)
+    if (!userProfile.isLogin) {
+      authStep.value = 1;
+      showAuthModal.value = true;
+      return;
+    }
+    
+    // 检查2：是否绑定了手机号
+    if (!userProfile.phone) {
+      authStep.value = 2; // 跳转到绑定手机
+      showAuthModal.value = true;
+      return;
+    }
+    
+    // 一切正常，放行
+    showAuthModal.value = false;
+    
   } else {
-    // 如果是第一次，自动生成 ID
-    const randomId = Math.floor(10000 + Math.random() * 90000);
-    userProfile.id = String(randomId);
-    // 模拟等待用户点击“授权”后获取头像
+    // 没有任何记录，强制开始授权流程
+    authStep.value = 1;
+    showAuthModal.value = true;
   }
 };
 
-const handleLoginClick = () => {
-  if (userProfile.isLogin) return;
+// 步骤1：模拟微信授权获取信息
+const handleWeChatAuth = () => {
+  showLoadingToast({ message: '获取微信信息中...', forbidClick: true });
   
-  showLoadingToast({ message: '微信授权中...', forbidClick: true });
   setTimeout(() => {
-    // 模拟获取到了微信头像和昵称
-    userProfile.nickname = '微信用户_' + userProfile.id.substr(-4);
-    userProfile.avatar = 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'; // 模拟头像
-    userProfile.isLogin = true;
-    localStorage.setItem('user_info', JSON.stringify(userProfile));
+    // 模拟生成新用户 ID 和 微信信息
+    const randomId = Math.floor(10000 + Math.random() * 90000);
+    userProfile.id = String(randomId);
+    userProfile.nickname = '微信用户_' + randomId;
+    userProfile.avatar = 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg';
+    userProfile.isLogin = true; // 标记已获取微信授权
+    
     closeToast();
-    showSuccessToast('登录成功');
-  }, 1000);
+    showSuccessToast('授权成功');
+    
+    // 立即保存状态，并进入下一步
+    localStorage.setItem('user_info', JSON.stringify(userProfile));
+    authStep.value = 2; // 切换到绑定手机
+  }, 800);
+};
+
+// 步骤2：绑定手机号
+const handleBindPhone = () => {
+  // 简单验证
+  if (!/^1[3-9]\d{9}$/.test(registerForm.phone)) {
+    showFailToast('请输入正确的手机号');
+    return;
+  }
+  
+  showLoadingToast({ message: '绑定中...', forbidClick: true });
+  setTimeout(() => {
+    // 保存手机号
+    userProfile.phone = registerForm.phone;
+    
+    // 更新本地缓存
+    localStorage.setItem('user_info', JSON.stringify(userProfile));
+    
+    closeToast();
+    showSuccessToast('注册完成');
+    
+    // 关闭所有拦截弹窗，允许使用
+    showAuthModal.value = false;
+  }, 800);
 };
 
 // 唤起微信
@@ -199,7 +258,11 @@ const selectLocation = (item) => { postForm.destination = item.name; showMapPopu
 const handlePublishClick = () => { showRoleSheet.value = true; };
 const onSelectRole = (action) => { postForm.type = action.value; showRoleSheet.value = false; activeTab.value = 1; if (!postForm.origin) autoLocate(); };
 const onPreSubmit = () => {
-  if (!userProfile.isLogin) { showToast('请先在个人中心登录'); activeTab.value=2; return; }
+  // 双重保险：发布前再次检查登录
+  if (!userProfile.isLogin || !userProfile.phone) { 
+    showAuthModal.value = true; 
+    return; 
+  }
   if (!/^1[3-9]\d{9}$/.test(postForm.contact)) { showFailToast('手机号格式错误'); return; }
   if (!postForm.origin || !postForm.destination) { showFailToast('请补全信息'); return; }
   showPaymentDialog.value = true;
@@ -267,6 +330,42 @@ const formatDate = (str) => {
       </div>
     </div>
     
+    <van-popup 
+      v-model:show="showAuthModal" 
+      :close-on-click-overlay="false" 
+      :closeable="false"
+      class="auth-popup"
+      style="width: 80%; border-radius: 12px; padding: 20px;"
+    >
+      <div v-if="authStep === 1" class="auth-step">
+        <div class="auth-icon"><van-icon name="wechat" color="#07c160" size="48" /></div>
+        <h3>欢迎来到宜人出行</h3>
+        <p class="auth-desc">为了提供更好的服务，我们需要获取您的微信公开信息（昵称、头像）。</p>
+        <van-button type="primary" block round @click="handleWeChatAuth" color="#07c160">
+          微信一键授权
+        </van-button>
+      </div>
+
+      <div v-if="authStep === 2" class="auth-step">
+        <div class="auth-icon"><van-icon name="phone-circle" color="#1989fa" size="48" /></div>
+        <h3>完善联系方式</h3>
+        <p class="auth-desc">请绑定手机号，以便司机/乘客能联系到您。</p>
+        <div class="input-wrap">
+          <van-field 
+            v-model="registerForm.phone" 
+            type="tel" 
+            placeholder="请输入11位手机号" 
+            border
+            maxlength="11"
+            style="background: #f7f8fa; border-radius: 8px;"
+          />
+        </div>
+        <van-button type="primary" block round @click="handleBindPhone" color="#1989fa" style="margin-top: 15px;">
+          确认绑定
+        </van-button>
+      </div>
+    </van-popup>
+
     <div v-show="activeTab === 0" class="page-home">
       <div class="top-bar" @click="handleLogoClick">{{ isAdminMode ? '🔧 管理员模式' : '宜人出行' }}</div>
       <van-swipe :autoplay="3000" indicator-color="white" class="home-banner">
@@ -301,7 +400,7 @@ const formatDate = (str) => {
             </div>
             <div class="card-row-2"><span class="time-text">{{ formatDate(item.date) }} 出发</span><span class="car-type">车型: 商务车</span></div>
             <div class="card-row-3">
-              <span class="seat-label">{{ item.type==='driver' ? '剩余空位:' : '出行人数:' }}</span>
+              <span class="seat-label" style="color: #333;">{{ item.type==='driver' ? '剩余空位:' : '出行人数:' }}</span>
               <span class="seat-val" :class="item.type">{{ item.seats }}</span>
             </div>
             <div class="card-row-4" v-if="item.remark">备注: {{ item.remark }}</div>
@@ -334,16 +433,15 @@ const formatDate = (str) => {
     <div v-if="activeTab === 2" class="page-me">
       <div v-show="!currentSubPage">
         <van-nav-bar title="个人中心" left-arrow @click-left="switchTab(0)" fixed placeholder style="--van-nav-bar-background: #ff6600; --van-nav-bar-title-text-color: #fff; --van-nav-bar-icon-color: #fff;" />
-        
-        <div class="user-card" @click="handleLoginClick">
+        <div class="user-card">
           <div class="user-header">
             <div class="avatar-circle">
                <img v-if="userProfile.isLogin" :src="userProfile.avatar" style="width:100%;height:100%;border-radius:50%;" />
                <span v-else>未</span>
             </div>
             <div class="user-info">
-              <div class="nickname">{{ userProfile.nickname }}</div>
-              <div class="userid">ID: {{ userProfile.id || '---' }}</div>
+              <div class="nickname">{{ userProfile.nickname || '微信用户' }}</div>
+              <div class="userid">ID: {{ userProfile.id }} | 手机: {{ userProfile.phone.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2') }}</div>
             </div>
             <van-tag :type="userProfile.isVerified ? 'success' : 'warning'" plain>{{ userProfile.isVerified ? '已认证' : '未认证' }}</van-tag>
           </div>
@@ -393,9 +491,7 @@ const formatDate = (str) => {
           <van-button type="primary" block style="margin-top: 20px;" @click="handleRecharge">立即充值</van-button>
           <van-button plain block style="margin-top: 10px;">提现</van-button>
         </div>
-        <van-cell-group title="交易记录">
-          <van-cell title="暂无交易记录" />
-        </van-cell-group>
+        <van-cell-group title="交易记录"><van-cell title="暂无交易记录" /></van-cell-group>
       </div>
 
       <div v-if="currentSubPage === 'about'" class="sub-page">
@@ -403,24 +499,18 @@ const formatDate = (str) => {
         <div style="padding: 40px; text-align: center;">
           <van-icon name="smile-o" size="60" color="#ff6600" />
           <h2 style="margin: 10px 0;">宜人出行</h2>
-          <p style="color: #666;">版本 v1.0.2</p>
-          <p style="color: #999; margin-top: 20px; font-size: 12px;">
-            宜人出行是一个专注于本地顺风车出行的信息平台。<br>
-            旨在为车主和乘客提供便捷的信息对接服务。
-          </p>
+          <p style="color: #666;">版本 v1.0.3</p>
+          <p style="color: #999; margin-top: 20px; font-size: 12px;">宜人出行是一个专注于本地顺风车出行的信息平台。</p>
         </div>
       </div>
 
        <div v-if="currentSubPage === 'settings'" class="sub-page">
         <van-nav-bar title="系统设置" left-text="返回" left-arrow @click-left="closeSubPage" fixed placeholder />
         <van-cell-group style="margin-top: 10px;">
-          <van-cell title="消息通知" is-link />
-          <van-cell title="清除缓存" is-link value="0.0MB" />
-          <van-cell title="用户协议" is-link />
-          <van-cell title="隐私政策" is-link />
+          <van-cell title="消息通知" is-link /><van-cell title="清除缓存" is-link value="0.0MB" /><van-cell title="用户协议" is-link /><van-cell title="隐私政策" is-link />
         </van-cell-group>
         <div style="margin: 30px 16px;">
-          <van-button block color="#ee0a24" @click="() => { userProfile.isLogin=false; closeSubPage(); }">退出登录</van-button>
+          <van-button block color="#ee0a24" @click="() => { localStorage.removeItem('user_info'); location.reload(); }">退出登录</van-button>
         </div>
       </div>
     </div>
@@ -453,11 +543,19 @@ const formatDate = (str) => {
 body { background-color: #f2f2f2; font-family: sans-serif; margin: 0; padding-bottom: 70px; }
 .top-bar { text-align: center; padding: 10px; background: #fff; font-weight: bold; color: #333; }
 .home-banner { height: 160px; }
+
+/* 遮罩与授权 */
 .wechat-mask { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #fff; z-index: 9999; display: flex; align-items: center; justify-content: center; text-align: center; }
 .mask-content { padding: 40px; }
 .mask-content h3 { margin: 20px 0 10px; color: #333; }
 .mask-content p { color: #666; font-size: 14px; margin-bottom: 30px; }
-.copy-tip { margin-top: 20px; font-size: 12px; color: #999; }
+.auth-popup { text-align: center; }
+.auth-step { padding: 10px; }
+.auth-icon { margin-bottom: 20px; }
+.auth-desc { color: #666; font-size: 14px; margin-bottom: 30px; line-height: 1.5; }
+.input-wrap { margin-bottom: 20px; }
+
+/* 导航 */
 .nav-grid { display: grid; grid-template-columns: 1fr 1fr; padding: 10px; gap: 10px; background: #fff; }
 .nav-btn { height: 60px; display: flex; align-items: center; justify-content: center; color: white; border-radius: 4px; font-weight: bold; font-size: 18px; cursor: pointer; gap: 8px; }
 .btn-blue { background-color: var(--blue-btn); } .btn-green { background-color: var(--green-btn); }
@@ -481,7 +579,8 @@ body { background-color: #f2f2f2; font-family: sans-serif; margin: 0; padding-bo
 .time-text { color: #ff0000; font-weight: bold; margin-right: 10px; }
 .car-type { color: #666; }
 .card-row-3 { margin-bottom: 6px; font-size: 14px; }
-.seat-label { color: #fff; } 
+/* 剩余空位颜色修改为黑色 */
+.seat-label { color: #333; } 
 .seat-val { font-weight: bold; margin-left: 5px; }
 .seat-val.driver { color: #07c160; } .seat-val.passenger { color: #ff6600; }
 .card-row-4 { font-size: 12px; color: #999; }
