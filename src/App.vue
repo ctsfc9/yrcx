@@ -3,7 +3,7 @@ import { ref, reactive, computed, nextTick, onMounted, onBeforeUnmount } from 'v
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 import wx from 'weixin-js-sdk'; 
 
-// --- 系统全局配置 (统一使用下划线命名，与数据库一致) ---
+// --- 系统全局配置 ---
 const sysConfig = reactive({
   platform_name: '宜人出行',
   platform_logo: 'https://yrcx.ctsfc.top/logo.png',
@@ -69,7 +69,7 @@ const seatColumns = Array.from({length: 6}, (_, i) => ({ text: `${i + 1}`, value
 const adminUserList = ref([]);
 const adminRideList = ref([]);
 
-// --- 动态计算 (增加防空判断) ---
+// --- 动态计算 (增加防空判断，修复白屏核心) ---
 const bannersList = computed(() => (sysConfig.banners || '').split(',').filter(i=>i));
 const currentRemarkOptions = computed(() => {
   const str = postForm.type === 'driver' ? sysConfig.tags_driver : sysConfig.tags_passenger;
@@ -77,14 +77,14 @@ const currentRemarkOptions = computed(() => {
 });
 const remarkDisplayText = computed(() => (postForm.remark || []).join('，') || '请选择下方标签');
 
-// 快捷路线 (修复白屏核心：增加空值检查)
+// 快捷路线 (🚨 白屏修复核心：增加 item 判空)
 const displayQuickRoutes = computed(() => {
   if (!list.value || list.value.length === 0) {
     return [ { from: '高县', to: '宁波' }, { from: '筠连', to: '嘉兴' } ];
   }
   const counts = {};
   list.value.forEach(item => {
-    // 🚨 关键修复：必须检查 item 和 item.origin 是否存在
+    // 只有当 item 和 item.origin 都存在时才计算
     if (item && item.origin && item.destination) {
       const key = `${getShortCity(item.origin)}→${getShortCity(item.destination)}`;
       counts[key] = (counts[key] || 0) + 1;
@@ -114,7 +114,7 @@ const dateColumns = computed(() => {
 
 onMounted(async () => {
   try {
-    // 1. 后台入口判断
+    // 1. 后台入口
     if (window.location.pathname === '/admin') {
       isSystemAdmin.value = true;
       document.title = "管理后台";
@@ -143,13 +143,12 @@ onMounted(async () => {
   } catch (e) { console.log(e); }
 });
 
-// --- 系统配置读取 (修复命名不一致) ---
+// --- 系统配置读取 ---
 const fetchSystemConfig = async () => {
   try {
     const res = await fetch('/api/rides?action=get_config');
     const data = await res.json();
     if(data && Object.keys(data).length > 0) {
-      // 遍历赋值，确保数据库里的下划线字段能对应上
       Object.keys(sysConfig).forEach(key => {
         if (data[key] !== undefined) sysConfig[key] = data[key];
       });
@@ -158,7 +157,7 @@ const fetchSystemConfig = async () => {
   } catch(e) {}
 };
 
-// --- 前台业务逻辑 (修复白屏核心) ---
+// --- 前台业务逻辑 (🚨 白屏修复核心：过滤脏数据) ---
 const onLoad = async () => {
   loading.value = true;
   try {
@@ -166,7 +165,7 @@ const onLoad = async () => {
     const data = await res.json();
     let results = data.results || [];
     
-    // 🚨 关键修复：过滤掉所有 null 或 结构不完整的脏数据
+    // 强力过滤：只要 origin 是空的，直接扔掉，防止崩页面
     results = results.filter(item => item && item.origin && item.destination);
 
     if (searchForm.origin) results = results.filter(i => i.origin.includes(searchForm.origin));
@@ -179,7 +178,7 @@ const onLoad = async () => {
   finished.value = true;
 };
 
-// --- 其他逻辑保持不变 ---
+// --- 后台逻辑 ---
 const handleAdminLogin = async () => {
   showLoadingToast('登录中...');
   try {
@@ -378,10 +377,12 @@ const selectedRide = ref(null);
       <van-pull-refresh v-model="refreshing" @refresh="onRefresh">
         <van-list v-model:loading="loading" :finished="finished" finished-text="没有更多了" @load="onLoad" class="ride-list">
           <div v-for="item in list" :key="item.id" class="ride-card" @click="openDetail(item)">
-            <div class="card-row-1"><span class="badge-type" :class="item.type">{{ item.type === 'driver' ? '车找人' : '人找车' }}</span><span class="route-text">{{ getShortCity(item.origin) }} → {{ getShortCity(item.destination) }}</span></div>
-            <div class="card-row-2"><span class="time-text">{{ formatDate(item.date) }}</span><span class="car-type" v-if="item.car_model">{{ item.car_model }}</span></div>
-            <div class="card-row-3"><span class="seat-label">余座/人数:</span><span class="seat-val">{{ item.seats }}</span></div>
-            <div class="call-btn-large" @click.stop="handleCall(item.contact)"><van-icon name="phone-o" /></div>
+            <div v-if="item && item.origin">
+              <div class="card-row-1"><span class="badge-type" :class="item.type">{{ item.type === 'driver' ? '车找人' : '人找车' }}</span><span class="route-text">{{ getShortCity(item.origin) }} → {{ getShortCity(item.destination) }}</span></div>
+              <div class="card-row-2"><span class="time-text">{{ formatDate(item.date) }}</span><span class="car-type" v-if="item.car_model">{{ item.car_model }}</span></div>
+              <div class="card-row-3"><span class="seat-label">余座/人数:</span><span class="seat-val">{{ item.seats }}</span></div>
+              <div class="call-btn-large" @click.stop="handleCall(item.contact)"><van-icon name="phone-o" /></div>
+            </div>
           </div>
         </van-list>
       </van-pull-refresh>
