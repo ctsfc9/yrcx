@@ -7,17 +7,14 @@ export async function onRequest(context) {
   const url = new URL(request.url);
   const action = url.searchParams.get("action");
 
-  // 1. 获取配置 (完全公开，确保后台和前台都能读取)
+  // 1. 获取配置 (公开接口，确保前端能读到)
   if (request.method === "GET" && action === 'get_config') {
     try {
       const { results } = await db.prepare("SELECT * FROM system_config").all();
       const config = {};
-      // 转换格式为 Object
       if(results) results.forEach(item => { config[item.key] = item.value; });
       return Response.json(config);
-    } catch (e) {
-      return Response.json({});
-    }
+    } catch (e) { return Response.json({}); }
   }
 
   // 2. 登录
@@ -29,12 +26,13 @@ export async function onRequest(context) {
     return Response.json({ error: "账号或密码错误" }, { status: 401 });
   }
 
-  // --- 鉴权 ---
+  // 鉴权
+  const token = url.searchParams.get("token"); 
   const verifyBody = async () => {
     try { const b = await request.clone().json(); return b.auth_token === ADMIN_PWD; } catch { return false; }
   };
 
-  // 3. 保存配置 (后台保存)
+  // 3. 保存配置
   if (request.method === "POST" && action === 'save_config') {
      const body = await request.json();
      if (body.auth_token !== ADMIN_PWD) return Response.json({ error: "无权" }, { status: 403 });
@@ -42,15 +40,14 @@ export async function onRequest(context) {
      const stmt = db.prepare("INSERT INTO system_config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
      const batch = [];
      for (const [k, v] of Object.entries(body.config)) {
-       batch.push(stmt.bind(k, String(v || ''))); // 确保转为字符串存储
+       batch.push(stmt.bind(k, String(v || '')));
      }
      await db.batch(batch);
      return Response.json({ success: true });
   }
 
-  // 4. 数据管理 (列表/删除/封禁)
+  // 4. 数据管理
   if (request.method === "GET") {
-    const token = url.searchParams.get("token");
     if (token !== ADMIN_PWD) return Response.json({ error: "无权" }, { status: 403 });
     
     if (action === 'get_rides') {
