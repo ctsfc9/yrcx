@@ -32,8 +32,7 @@ const adminActiveMenu = ref('basic');
 // --- 前台状态 ---
 const activeTab = ref(0);
 const filterType = ref('all'); 
-const list = ref([]);
-const myRidesList = ref([]);
+const list = ref([]); // 原始数据
 const loading = ref(false);
 const refreshing = ref(false);
 const finished = ref(false);
@@ -45,7 +44,6 @@ const showAuthModal = ref(false);
 const authStep = ref(1);
 const showRolePopup = ref(false);
 const showDatePicker = ref(false); 
-const showSeatPicker = ref(false); 
 const showPaymentDialog = ref(false);
 const showMapPopup = ref(false);
 const showShareGuide = ref(false);
@@ -69,7 +67,16 @@ const seatColumns = Array.from({length: 6}, (_, i) => ({ text: `${i + 1}`, value
 const adminUserList = ref([]);
 const adminRideList = ref([]);
 
-// --- 动态计算 (增加防空判断，修复白屏核心) ---
+// --- 🚨 核心修复：安全列表 (过滤掉所有导致白屏的脏数据) ---
+const safeList = computed(() => {
+  if (!Array.isArray(list.value)) return [];
+  return list.value.filter(item => {
+    // 只有当item存在，且有起点和终点时才显示，彻底杜绝 undefined 报错
+    return item && item.origin && item.destination;
+  });
+});
+
+// --- 动态计算 ---
 const bannersList = computed(() => (sysConfig.banners || '').split(',').filter(i=>i));
 const currentRemarkOptions = computed(() => {
   const str = postForm.type === 'driver' ? sysConfig.tags_driver : sysConfig.tags_passenger;
@@ -77,18 +84,17 @@ const currentRemarkOptions = computed(() => {
 });
 const remarkDisplayText = computed(() => (postForm.remark || []).join('，') || '请选择下方标签');
 
-// 快捷路线 (🚨 白屏修复核心：增加 item 判空)
+// 快捷路线 (使用 safeList 计算，防止崩溃)
 const displayQuickRoutes = computed(() => {
-  if (!list.value || list.value.length === 0) {
+  if (safeList.value.length === 0) {
     return [ { from: '高县', to: '宁波' }, { from: '筠连', to: '嘉兴' } ];
   }
   const counts = {};
-  list.value.forEach(item => {
-    // 只有当 item 和 item.origin 都存在时才计算
-    if (item && item.origin && item.destination) {
+  safeList.value.forEach(item => {
+    try {
       const key = `${getShortCity(item.origin)}→${getShortCity(item.destination)}`;
       counts[key] = (counts[key] || 0) + 1;
-    }
+    } catch(e) {}
   });
   const sortedKeys = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
   return sortedKeys.slice(0, 8).map(key => { 
@@ -157,7 +163,7 @@ const fetchSystemConfig = async () => {
   } catch(e) {}
 };
 
-// --- 前台业务逻辑 (🚨 白屏修复核心：过滤脏数据) ---
+// --- 前台业务逻辑 ---
 const onLoad = async () => {
   loading.value = true;
   try {
@@ -165,11 +171,9 @@ const onLoad = async () => {
     const data = await res.json();
     let results = data.results || [];
     
-    // 强力过滤：只要 origin 是空的，直接扔掉，防止崩页面
-    results = results.filter(item => item && item.origin && item.destination);
-
-    if (searchForm.origin) results = results.filter(i => i.origin.includes(searchForm.origin));
-    if (searchForm.destination) results = results.filter(i => i.destination.includes(searchForm.destination));
+    // 前端筛选逻辑
+    if (searchForm.origin) results = results.filter(i => i?.origin?.includes(searchForm.origin));
+    if (searchForm.destination) results = results.filter(i => i?.destination?.includes(searchForm.destination));
     
     list.value = results; 
   } catch(e) { console.log("Load Error", e); }
@@ -268,7 +272,11 @@ const handlePopState = () => { if(selectedRide.value) selectedRide.value=null; e
 const checkUserStatus = () => { const u=localStorage.getItem('user_info'); if(u) Object.assign(userProfile,JSON.parse(u)); verifyBanStatus(); };
 const handleWeChatAuth = () => { const id=Math.floor(Math.random()*90000+10000); Object.assign(userProfile,{id:String(id),nickname:`用户${id}`,avatar:'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg',isLogin:true}); authStep.value=2; localStorage.setItem('user_info',JSON.stringify(userProfile)); };
 const handleBindPhone = () => { userProfile.phone=registerForm.phone; showAuthModal.value=false; localStorage.setItem('user_info',JSON.stringify(userProfile)); };
-const getShortCity = (addr) => addr ? addr.substring(0, 5) : '';
+// 🚨 安全的城市截取函数
+const getShortCity = (addr) => {
+  if (!addr) return '';
+  return addr.length > 5 ? addr.substring(0, 5) : addr;
+};
 const selectedRide = ref(null);
 </script>
 
@@ -376,7 +384,7 @@ const selectedRide = ref(null);
       <div class="search-box"><input v-model="searchForm.origin" placeholder="出发地" /><van-icon name="exchange" /><input v-model="searchForm.destination" placeholder="目的地" /><button @click="onRefresh">查询</button></div>
       <van-pull-refresh v-model="refreshing" @refresh="onRefresh">
         <van-list v-model:loading="loading" :finished="finished" finished-text="没有更多了" @load="onLoad" class="ride-list">
-          <div v-for="item in list" :key="item.id" class="ride-card" @click="openDetail(item)">
+          <div v-for="item in safeList" :key="item.id" class="ride-card" @click="openDetail(item)">
             <div v-if="item && item.origin">
               <div class="card-row-1"><span class="badge-type" :class="item.type">{{ item.type === 'driver' ? '车找人' : '人找车' }}</span><span class="route-text">{{ getShortCity(item.origin) }} → {{ getShortCity(item.destination) }}</span></div>
               <div class="card-row-2"><span class="time-text">{{ formatDate(item.date) }}</span><span class="car-type" v-if="item.car_model">{{ item.car_model }}</span></div>
