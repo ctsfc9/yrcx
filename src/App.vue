@@ -27,8 +27,8 @@ const sysConfig = reactive({
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
 const adminLoginData = reactive({ username: '', password: '' });
-const adminActiveMenu = ref('basic'); // 侧边栏菜单
-const adminSettingTab = ref(0); // 后台设置页内部Tab
+const adminActiveMenu = ref('basic'); 
+const adminSettingTab = ref(0);
 
 // 前台状态
 const activeTab = ref(0);
@@ -47,8 +47,8 @@ const showRolePopup = ref(false);
 const showDatePicker = ref(false); 
 const showPaymentDialog = ref(false);
 const showMapPopup = ref(false);
-const showShareGuide = ref(false);
 const showEditDialog = ref(false);
+const showShareGuide = ref(false);
 
 // 业务数据
 const userProfile = reactive({ id: '', nickname: '未登录', avatar: '', phone: '', balance: '0.00', isLogin: false });
@@ -56,13 +56,15 @@ const registerForm = reactive({ phone: '' });
 const postForm = reactive({ type: '', origin: '', destination: '', date: '', dateDisplay: '', seats: 1, price: '', remark: [], contact: '', car_model: '' });
 const editForm = reactive({ id: '', origin: '', destination: '', date: '', price: '', contact: '', remark: '', seats: 1 });
 
-// 地图搜索相关
+// 地图相关 (核心修复)
 const mapSearchKeyword = ref('');
 const mapSearchResults = ref([]); 
 const currentMapField = ref(''); 
 const hotCities = ['宜宾', '成都', '重庆', '昆明', '贵阳', '东莞', '深圳', '广州', '上海', '宁波', '温州', '嘉兴'];
 const carModelOptions = ['油车', '电车'];
 const seatColumns = Array.from({length: 6}, (_, i) => ({ text: `${i + 1}`, value: i + 1 }));
+let mapInstance = null; // 地图实例
+let geoCoder = null; // 逆地理编码器
 
 // 后台列表
 const adminUserList = ref([]);
@@ -111,7 +113,7 @@ const dateColumns = computed(() => {
 });
 
 // ==========================================
-// 3. 初始化与地图加载
+// 3. 初始化
 // ==========================================
 onMounted(async () => {
   if (window.location.pathname === '/admin') {
@@ -133,9 +135,10 @@ onMounted(async () => {
     if(userProfile.isLogin) fetchMyRides();
   }
 
-  if(sysConfig.amap_key) {
-    loadAMapScript(sysConfig.amap_key);
-  }
+  // 这里的Key是示例，请务必替换为您自己的Key
+  // 如果数据库里配了，会优先用数据库的
+  const keyToUse = sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e'; 
+  loadAMapScript(keyToUse);
 
   setTimeout(() => {
     initWxConfig();
@@ -146,51 +149,138 @@ onMounted(async () => {
   window.addEventListener('popstate', handlePopState);
 });
 
-// 监听搜索
+// ==========================================
+// 4. 地图核心逻辑 (重写：带地图选点)
+// ==========================================
+const loadAMapScript = (key) => {
+  if (window.AMap) return;
+  // ★★★ 安全密钥 (必须配置，否则无法搜索/定位) ★★★
+  window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' }; 
+  
+  const script = document.createElement('script');
+  script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.PlaceSearch`;
+  document.body.appendChild(script);
+};
+
+// 自动定位 (进入发布页触发)
+const autoLocate = () => {
+  if (!window.AMap) { showFailToast('地图加载中...'); return; }
+  showLoadingToast({ message: '定位中...', forbidClick: true, duration: 5000 });
+  
+  const geolocation = new AMap.Geolocation({
+    enableHighAccuracy: true,
+    timeout: 5000,
+    zoomToAccuracy: true
+  });
+
+  geolocation.getCurrentPosition(function(status, result) {
+    closeToast();
+    if(status == 'complete'){
+      // 逆地理编码获取详细街道
+      if(!geoCoder) geoCoder = new AMap.Geocoder();
+      geoCoder.getAddress([result.position.lng, result.position.lat], (status, res) => {
+        if (status === 'complete' && res.regeocode) {
+           postForm.origin = res.regeocode.formattedAddress;
+        } else {
+           postForm.origin = result.formattedAddress; // 降级方案
+        }
+        showSuccessToast('定位成功');
+      });
+    } else {
+      showFailToast('定位失败，请手动选择');
+    }
+  });
+};
+
+// 打开地图选择器 (初始化地图)
+const openMapSelector = (f) => {
+  currentMapField.value = f;
+  showMapPopup.value = true;
+  mapSearchKeyword.value = '';
+  mapSearchResults.value = [];
+  
+  // 延迟初始化地图，防止容器未渲染
+  nextTick(() => {
+    if (!mapInstance && window.AMap) {
+      mapInstance = new AMap.Map('picker-map-container', {
+        zoom: 16,
+        center: [104.630526, 28.766155] // 默认宜宾
+      });
+      
+      // 监听拖拽结束，获取中心点地址
+      mapInstance.on('moveend', () => {
+        const center = mapInstance.getCenter();
+        if(!geoCoder) geoCoder = new AMap.Geocoder();
+        geoCoder.getAddress(center, (status, result) => {
+          if (status === 'complete' && result.regeocode) {
+            // 只是为了展示，暂不赋值
+            // 可以加一个 UI 显示“当前位置：xxx”
+            showToast({message: result.regeocode.formattedAddress, position: 'bottom'});
+          }
+        });
+      });
+      
+      // 尝试定位到当前位置作为初始点
+      const geolocation = new AMap.Geolocation();
+      geolocation.getCurrentPosition((s, r) => {
+        if(s === 'complete') mapInstance.setCenter(r.position);
+      });
+    }
+  });
+};
+
+// 确认选点 (点击确认按钮)
+const confirmSelection = () => {
+  if(!mapInstance) return;
+  const center = mapInstance.getCenter();
+  if(!geoCoder) geoCoder = new AMap.Geocoder();
+  geoCoder.getAddress(center, (status, result) => {
+    if (status === 'complete' && result.regeocode) {
+      const addr = result.regeocode.formattedAddress;
+      if (currentMapField.value === 'origin') postForm.origin = addr;
+      else postForm.destination = addr;
+      showMapPopup.value = false;
+    } else {
+      showFailToast('地址解析失败');
+    }
+  });
+};
+
+// 搜索联想
 watch(mapSearchKeyword, (newVal) => {
   if (newVal && window.AMap) {
-    AMap.plugin('AMap.AutoComplete', function(){
-      var autoComplete = new AMap.AutoComplete({ city: '全国' });
-      autoComplete.search(newVal, function(status, result) {
-        if (status === 'complete' && result.tips) {
-          mapSearchResults.value = result.tips;
-        } else {
-          mapSearchResults.value = [];
-        }
-      });
+    const auto = new AMap.AutoComplete({ city: '全国' });
+    auto.search(newVal, (status, result) => {
+      if (status === 'complete' && result.tips) {
+        mapSearchResults.value = result.tips;
+      }
     });
   } else {
     mapSearchResults.value = [];
   }
 });
 
-const loadAMapScript = (key) => {
-  if (window.AMap) return;
-  // ★★★ 这里填入你的安全密钥 ★★★
-  window._AMapSecurityConfig = { securityJsCode: 'YOUR_SECURITY_CODE' }; 
-  const script = document.createElement('script');
-  script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Geolocation,AMap.AutoComplete`;
-  document.body.appendChild(script);
+const selectSearchResult = (item) => {
+  // 选中搜索结果，地图跳转到该位置
+  if (item.location && mapInstance) {
+    mapInstance.setCenter([item.location.lng, item.location.lat]);
+    mapSearchKeyword.value = ''; // 清空搜索框让用户看地图
+    mapSearchResults.value = [];
+  } else {
+    // 如果没有坐标，直接用名字
+    if (currentMapField.value === 'origin') postForm.origin = item.name;
+    else postForm.destination = item.name;
+    showMapPopup.value = false;
+  }
 };
 
-// 自动定位
-const autoLocate = () => {
-  if (!window.AMap) { showFailToast('地图未加载'); return; }
-  showLoadingToast({ message: '定位中...', forbidClick: true, duration: 8000 });
-  AMap.plugin('AMap.Geolocation', function() {
-    var geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 5000, zoomToAccuracy: true });
-    geolocation.getCurrentPosition(function(status, result) {
-      closeToast();
-      if(status == 'complete'){
-        postForm.origin = result.formattedAddress || result.message;
-        showSuccessToast('定位成功');
-      } else {
-        showFailToast('定位失败: ' + result.message);
-      }
-    });
-  });
+const selectHotCity = (name) => {
+  if (currentMapField.value === 'origin') postForm.origin = name;
+  else postForm.destination = name;
+  showMapPopup.value = false;
 };
 
+// ... 其他业务逻辑 (与之前保持一致) ...
 const switchTab = (idx) => {
   if (activeTab.value === idx) return;
   activeTab.value = idx;
@@ -225,9 +315,6 @@ const fetchSystemConfig = async () => {
   } catch(e) {}
 };
 
-// ==========================================
-// 4. 业务逻辑
-// ==========================================
 const onLoad = async () => {
   loading.value = true;
   try {
@@ -304,21 +391,10 @@ const handleRealPublish = async () => {
   showSuccessToast('发布成功'); switchTab(0);
 };
 
-const openMapSelector = (f) => { currentMapField.value = f; showMapPopup.value = true; mapSearchKeyword.value=''; mapSearchResults.value=[]; };
-const onMapSearch = () => { 
-  if(window.AMap && mapSearchKeyword.value) {
-    AMap.plugin('AMap.AutoComplete', ()=>{ 
-      new AMap.AutoComplete({city:'全国'}).search(mapSearchKeyword.value, (s,r)=>{
-        mapSearchResults.value = (s==='complete' && r.tips) ? r.tips : [];
-      }); 
-    }); 
-  }
-};
-const selectLocation = (item) => { 
-  const n = typeof item === 'string' ? item : item.name; 
-  if(currentMapField.value==='origin') postForm.origin = n; 
-  else postForm.destination = n; 
-  showMapPopup.value=false; 
+const selectRoleAndGo = (r) => { 
+  postForm.type=r; postForm.date=''; postForm.remark=[]; showRolePopup.value=false; 
+  switchTab(1); 
+  nextTick(() => { if(!postForm.origin) autoLocate(); });
 };
 
 const handleWeChatAuth = () => { 
@@ -337,12 +413,6 @@ const handleBindPhone = () => {
 
 const initWxConfig = () => { /* WX Config */ };
 const handlePublishClick = () => showRolePopup.value=true;
-const selectRoleAndGo = (r) => { 
-  postForm.type=r; postForm.date=''; postForm.remark=[]; showRolePopup.value=false; 
-  switchTab(1); 
-  nextTick(() => { if(!postForm.origin) autoLocate(); });
-};
-const searchForm = reactive({ origin: '', destination: '' });
 const onRefresh = () => { finished.value=false; onLoad(); refreshing.value=false; };
 const onConfirmDate = ({selectedOptions}) => {
   const v = selectedOptions.map(o=>o.value);
@@ -372,8 +442,8 @@ const closeDetail = () => selectedRide.value = null;
     <div v-if="!isLogined" class="admin-login-box">
       <h3>平台后台管理</h3>
       <van-form @submit="handleAdminLogin">
-        <van-field v-model="adminLoginData.username" label="账号" placeholder="admin" required />
-        <van-field v-model="adminLoginData.password" type="password" label="密码" placeholder="admin888" required />
+        <van-field v-model="adminLoginData.username" label="账号" required />
+        <van-field v-model="adminLoginData.password" type="password" label="密码" required />
         <div style="margin:20px;"><van-button block type="primary" native-type="submit">登录</van-button></div>
       </van-form>
     </div>
@@ -397,7 +467,7 @@ const closeDetail = () => selectedRide.value = null;
                   <van-field v-model="sysConfig.platform_logo" label="Logo URL" />
                   <van-field v-model="sysConfig.kefu_wechat" label="客服微信号" />
                   <van-field v-model="sysConfig.amap_key" label="高德Key" placeholder="Web端 Key" />
-                  <van-field v-model="sysConfig.notice_text" label="滚动公告" type="textarea" rows="2" />
+                  <van-field v-model="sysConfig.notice_text" label="滚动公告" type="textarea" />
                 </van-cell-group>
               </van-tab>
               <van-tab title="费用与开关">
@@ -415,10 +485,10 @@ const closeDetail = () => selectedRide.value = null;
               </van-tab>
               <van-tab title="其他配置">
                 <van-cell-group inset style="margin-top:10px;">
-                  <van-field v-model="sysConfig.banners" label="轮播图" type="textarea" placeholder="多张图片URL用逗号隔开" />
-                  <van-field v-model="sysConfig.tags_driver" label="车主标签" type="textarea" placeholder="逗号隔开" />
-                  <van-field v-model="sysConfig.tags_passenger" label="乘客标签" type="textarea" placeholder="逗号隔开" />
-                  <van-field v-model="sysConfig.about_us" label="关于我们" type="textarea" rows="3" />
+                  <van-field v-model="sysConfig.banners" label="轮播图" type="textarea" placeholder="用逗号隔开" />
+                  <van-field v-model="sysConfig.tags_driver" label="车主标签" type="textarea" />
+                  <van-field v-model="sysConfig.tags_passenger" label="乘客标签" type="textarea" />
+                  <van-field v-model="sysConfig.about_us" label="关于我们" type="textarea" />
                 </van-cell-group>
               </van-tab>
             </van-tabs>
@@ -437,7 +507,7 @@ const closeDetail = () => selectedRide.value = null;
         <div v-if="adminActiveMenu==='users'">
           <div v-for="u in adminUserList" :key="u.user_id" class="admin-list-item">
             <span>{{ u.user_id }}</span>
-            <van-button size="mini" :type="u.is_banned?'primary':'danger'" @click="banUserAdmin(u.user_id, !u.is_banned)">{{u.is_banned?'解封':'封禁'}}</van-button>
+            <van-button size="mini" @click="banUserAdmin(u.user_id, !u.is_banned)">{{u.is_banned?'解封':'封禁'}}</van-button>
           </div>
         </div>
       </div>
@@ -552,7 +622,29 @@ const closeDetail = () => selectedRide.value = null;
     
     <van-popup v-model:show="showRolePopup" position="bottom" :style="{height:'100%'}"><div class="role-select-page"><div class="role-close" @click="showRolePopup=false"><van-icon name="cross"/></div><div class="role-container"><div class="role-card" @click="selectRoleAndGo('passenger')">我是乘客</div><div class="role-card" @click="selectRoleAndGo('driver')">我是车主</div></div></div></van-popup>
     <van-popup v-model:show="showDatePicker" position="bottom"><van-picker :columns="dateColumns" @confirm="onConfirmDate" @cancel="showDatePicker=false"/></van-popup>
-    <van-popup v-model:show="showMapPopup" position="bottom" :style="{height:'90%'}" round><div class="map-popup-content"><van-search v-model="mapSearchKeyword" show-action placeholder="搜索" @search="onMapSearch"><template #action><div @click="showMapPopup=false">关闭</div></template></van-search><div class="hot-cities-area"><div class="hot-tag" v-for="c in hotCities" :key="c" @click="selectLocation(c)">{{c}}</div></div><van-list><van-cell v-for="(i,k) in mapSearchResults" :key="k" :title="i.name" @click="selectLocation(i)"/></van-list></div></van-popup>
+    
+    <van-popup v-model:show="showMapPopup" position="bottom" :style="{height:'90%'}" round>
+      <div class="map-popup-content" style="height:100%;display:flex;flex-direction:column;">
+        <van-search v-model="mapSearchKeyword" show-action placeholder="搜索地点" @search="onMapSearch">
+          <template #action><div @click="showMapPopup=false">关闭</div></template>
+        </van-search>
+        
+        <div v-if="mapSearchResults.length > 0" style="flex:1;overflow-y:auto;">
+          <van-cell v-for="(item, index) in mapSearchResults" :key="index" :title="item.name" :label="item.district" @click="selectSearchResult(item)" icon="location-o" />
+        </div>
+        
+        <div v-else style="flex:1;position:relative;">
+          <div id="picker-map-container" style="width:100%;height:100%;"></div>
+          <div class="center-pin" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:999;pointer-events:none;">
+            <van-icon name="location" color="#ee0a24" size="30" />
+          </div>
+          <div style="position:absolute;bottom:20px;left:20px;right:20px;z-index:999;">
+            <van-button block type="primary" @click="confirmSelection">确认选择此位置</van-button>
+          </div>
+        </div>
+      </div>
+    </van-popup>
+
     <van-dialog v-model:show="showPaymentDialog" title="确认发布" show-cancel-button @confirm="handleRealPublish"><div style="padding:20px;text-align:center">置顶 <van-switch v-model="postForm.is_top" size="16px"/></div></van-dialog>
     <van-popup v-model:show="showAuthModal" position="bottom" style="height:40%;padding:20px;">
       <h3 style="text-align:center">欢迎登录</h3>
@@ -599,7 +691,7 @@ const closeDetail = () => selectedRide.value = null;
 :root { --blue: #1989fa; --green: #07c160; --bg: #f7f8fa; --orange: #ff6600; }
 body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 14px; padding-bottom: 70px; }
 
-/* 修复：后台布局 */
+/* 修复：后台严格的 Flex 布局 */
 .admin-wrapper { display: flex; width: 100vw; height: 100vh; overflow: hidden; position: fixed; top: 0; left: 0; z-index: 9999; background: #fff; }
 .admin-sidebar { width: 110px; background: #001529; color: #fff; display: flex; flex-direction: column; flex-shrink: 0; height: 100%; overflow-y: auto; }
 .admin-main { flex: 1; padding: 20px; overflow-y: auto; background: #fff; height: 100%; box-sizing: border-box; }
