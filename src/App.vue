@@ -3,7 +3,7 @@ import { ref, reactive, computed, nextTick, onMounted, onBeforeUnmount } from 'v
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 import wx from 'weixin-js-sdk'; 
 
-// --- 系统全局配置 ---
+// --- 系统配置 ---
 const sysConfig = reactive({
   platform_name: '宜人出行',
   platform_logo: 'https://yrcx.ctsfc.top/logo.png',
@@ -32,7 +32,7 @@ const adminActiveMenu = ref('basic');
 // --- 前台状态 ---
 const activeTab = ref(0);
 const filterType = ref('all'); 
-const list = ref([]); // 原始数据
+const list = ref([]); // 原始数据 (可能含脏数据)
 const loading = ref(false);
 const refreshing = ref(false);
 const finished = ref(false);
@@ -44,6 +44,7 @@ const showAuthModal = ref(false);
 const authStep = ref(1);
 const showRolePopup = ref(false);
 const showDatePicker = ref(false); 
+const showSeatPicker = ref(false); 
 const showPaymentDialog = ref(false);
 const showMapPopup = ref(false);
 const showShareGuide = ref(false);
@@ -67,16 +68,22 @@ const seatColumns = Array.from({length: 6}, (_, i) => ({ text: `${i + 1}`, value
 const adminUserList = ref([]);
 const adminRideList = ref([]);
 
-// --- 🚨 核心修复：安全列表 (过滤掉所有导致白屏的脏数据) ---
+// --- 辅助函数 (提前定义，防止调用顺序错误) ---
+const getShortCity = (addr) => {
+  if (!addr) return '';
+  return addr.length > 5 ? addr.substring(0, 5) : addr;
+};
+
+// --- 🚨 核心修复：先定义安全列表 (过滤脏数据) ---
 const safeList = computed(() => {
-  if (!Array.isArray(list.value)) return [];
+  if (!list.value || !Array.isArray(list.value)) return [];
+  // 强力过滤：只有当 item 不为 null 且具备 origin/destination 属性时才保留
   return list.value.filter(item => {
-    // 只有当item存在，且有起点和终点时才显示，彻底杜绝 undefined 报错
-    return item && item.origin && item.destination;
+    return item && typeof item === 'object' && item.origin && item.destination;
   });
 });
 
-// --- 动态计算 ---
+// --- 动态计算 (依赖 safeList，杜绝崩溃) ---
 const bannersList = computed(() => (sysConfig.banners || '').split(',').filter(i=>i));
 const currentRemarkOptions = computed(() => {
   const str = postForm.type === 'driver' ? sysConfig.tags_driver : sysConfig.tags_passenger;
@@ -84,17 +91,20 @@ const currentRemarkOptions = computed(() => {
 });
 const remarkDisplayText = computed(() => (postForm.remark || []).join('，') || '请选择下方标签');
 
-// 快捷路线 (使用 safeList 计算，防止崩溃)
+// 快捷路线 (🚨 修复：改用 safeList 计算)
 const displayQuickRoutes = computed(() => {
+  // 如果安全列表为空，显示默认
   if (safeList.value.length === 0) {
     return [ { from: '高县', to: '宁波' }, { from: '筠连', to: '嘉兴' } ];
   }
   const counts = {};
+  // 使用经过清洗的 safeList 进行遍历，绝对安全
   safeList.value.forEach(item => {
-    try {
+    // 再次加锁，防止极端情况
+    if (item?.origin && item?.destination) {
       const key = `${getShortCity(item.origin)}→${getShortCity(item.destination)}`;
       counts[key] = (counts[key] || 0) + 1;
-    } catch(e) {}
+    }
   });
   const sortedKeys = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
   return sortedKeys.slice(0, 8).map(key => { 
@@ -171,9 +181,9 @@ const onLoad = async () => {
     const data = await res.json();
     let results = data.results || [];
     
-    // 前端筛选逻辑
-    if (searchForm.origin) results = results.filter(i => i?.origin?.includes(searchForm.origin));
-    if (searchForm.destination) results = results.filter(i => i?.destination?.includes(searchForm.destination));
+    // 这里只负责存入原始数据，不做复杂逻辑，防止报错
+    if (searchForm.origin) results = results.filter(i => i && i.origin && i.origin.includes(searchForm.origin));
+    if (searchForm.destination) results = results.filter(i => i && i.destination && i.destination.includes(searchForm.destination));
     
     list.value = results; 
   } catch(e) { console.log("Load Error", e); }
@@ -272,11 +282,6 @@ const handlePopState = () => { if(selectedRide.value) selectedRide.value=null; e
 const checkUserStatus = () => { const u=localStorage.getItem('user_info'); if(u) Object.assign(userProfile,JSON.parse(u)); verifyBanStatus(); };
 const handleWeChatAuth = () => { const id=Math.floor(Math.random()*90000+10000); Object.assign(userProfile,{id:String(id),nickname:`用户${id}`,avatar:'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg',isLogin:true}); authStep.value=2; localStorage.setItem('user_info',JSON.stringify(userProfile)); };
 const handleBindPhone = () => { userProfile.phone=registerForm.phone; showAuthModal.value=false; localStorage.setItem('user_info',JSON.stringify(userProfile)); };
-// 🚨 安全的城市截取函数
-const getShortCity = (addr) => {
-  if (!addr) return '';
-  return addr.length > 5 ? addr.substring(0, 5) : addr;
-};
 const selectedRide = ref(null);
 </script>
 
@@ -385,12 +390,10 @@ const selectedRide = ref(null);
       <van-pull-refresh v-model="refreshing" @refresh="onRefresh">
         <van-list v-model:loading="loading" :finished="finished" finished-text="没有更多了" @load="onLoad" class="ride-list">
           <div v-for="item in safeList" :key="item.id" class="ride-card" @click="openDetail(item)">
-            <div v-if="item && item.origin">
-              <div class="card-row-1"><span class="badge-type" :class="item.type">{{ item.type === 'driver' ? '车找人' : '人找车' }}</span><span class="route-text">{{ getShortCity(item.origin) }} → {{ getShortCity(item.destination) }}</span></div>
-              <div class="card-row-2"><span class="time-text">{{ formatDate(item.date) }}</span><span class="car-type" v-if="item.car_model">{{ item.car_model }}</span></div>
-              <div class="card-row-3"><span class="seat-label">余座/人数:</span><span class="seat-val">{{ item.seats }}</span></div>
-              <div class="call-btn-large" @click.stop="handleCall(item.contact)"><van-icon name="phone-o" /></div>
-            </div>
+            <div class="card-row-1"><span class="badge-type" :class="item.type">{{ item.type === 'driver' ? '车找人' : '人找车' }}</span><span class="route-text">{{ getShortCity(item.origin) }} → {{ getShortCity(item.destination) }}</span></div>
+            <div class="card-row-2"><span class="time-text">{{ formatDate(item.date) }}</span><span class="car-type" v-if="item.car_model">{{ item.car_model }}</span></div>
+            <div class="card-row-3"><span class="seat-label">余座/人数:</span><span class="seat-val">{{ item.seats }}</span></div>
+            <div class="call-btn-large" @click.stop="handleCall(item.contact)"><van-icon name="phone-o" /></div>
           </div>
         </van-list>
       </van-pull-refresh>
