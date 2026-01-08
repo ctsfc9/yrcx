@@ -7,7 +7,20 @@ export async function onRequest(context) {
   const url = new URL(request.url);
   const action = url.searchParams.get("action");
 
-  // 1. 登录
+  // 1. 获取配置 (完全公开，确保后台和前台都能读取)
+  if (request.method === "GET" && action === 'get_config') {
+    try {
+      const { results } = await db.prepare("SELECT * FROM system_config").all();
+      const config = {};
+      // 转换格式为 Object
+      if(results) results.forEach(item => { config[item.key] = item.value; });
+      return Response.json(config);
+    } catch (e) {
+      return Response.json({});
+    }
+  }
+
+  // 2. 登录
   if (request.method === "POST" && action === 'login') {
     const body = await request.json();
     if (body.username === SYS_USER && body.password === ADMIN_PWD) {
@@ -16,35 +29,36 @@ export async function onRequest(context) {
     return Response.json({ error: "账号或密码错误" }, { status: 401 });
   }
 
-  // 2. 获取系统配置 (完全公开，防止后台读取失败)
-  if (request.method === "GET" && action === 'get_config') {
-    try {
-      const { results } = await db.prepare("SELECT * FROM system_config").all();
-      const config = {};
-      // 赋予默认值，防止数据库为空时前端崩溃
-      if(results) results.forEach(item => { config[item.key] = item.value; });
-      return Response.json(config);
-    } catch (e) {
-      return Response.json({});
-    }
-  }
-
-  // --- 以下接口需要 Token 鉴权 ---
-  const token = url.searchParams.get("token"); 
+  // --- 鉴权 ---
   const verifyBody = async () => {
     try { const b = await request.clone().json(); return b.auth_token === ADMIN_PWD; } catch { return false; }
   };
 
-  // 3. 获取数据 (拼车/用户)
+  // 3. 保存配置 (后台保存)
+  if (request.method === "POST" && action === 'save_config') {
+     const body = await request.json();
+     if (body.auth_token !== ADMIN_PWD) return Response.json({ error: "无权" }, { status: 403 });
+     
+     const stmt = db.prepare("INSERT INTO system_config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+     const batch = [];
+     for (const [k, v] of Object.entries(body.config)) {
+       batch.push(stmt.bind(k, String(v || ''))); // 确保转为字符串存储
+     }
+     await db.batch(batch);
+     return Response.json({ success: true });
+  }
+
+  // 4. 数据管理 (列表/删除/封禁)
   if (request.method === "GET") {
-    if (!token || token !== ADMIN_PWD) return Response.json({ error: "无权访问", list: [] }, { status: 403 });
+    const token = url.searchParams.get("token");
+    if (token !== ADMIN_PWD) return Response.json({ error: "无权" }, { status: 403 });
     
     if (action === 'get_rides') {
-      const { results } = await db.prepare("SELECT * FROM rides ORDER BY id DESC LIMIT 100").all();
+      const { results } = await db.prepare("SELECT * FROM rides ORDER BY id DESC LIMIT 50").all();
       return Response.json({ list: results || [] });
     }
     if (action === 'get_users') {
-      const { results } = await db.prepare("SELECT user_id, COUNT(*) as post_count FROM rides GROUP BY user_id ORDER BY post_count DESC LIMIT 100").all();
+      const { results } = await db.prepare("SELECT user_id, COUNT(*) as post_count FROM rides GROUP BY user_id ORDER BY post_count DESC LIMIT 50").all();
       const users = results || [];
       for(let u of users) {
         const ban = await db.prepare("SELECT 1 FROM blacklist WHERE user_id=?").bind(u.user_id).first();
@@ -54,19 +68,7 @@ export async function onRequest(context) {
     }
   }
 
-  // 4. 操作 (保存配置/封禁/删除)
   if (request.method === "POST") {
-    // 验证保存配置的权限
-    if (action === 'save_config') {
-       const body = await request.json();
-       if (body.auth_token !== ADMIN_PWD) return Response.json({ error: "无权" }, { status: 403 });
-       const stmt = db.prepare("INSERT INTO system_config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
-       const batch = [];
-       for (const [k, v] of Object.entries(body.config)) batch.push(stmt.bind(k, String(v || '')));
-       await db.batch(batch);
-       return Response.json({ success: true });
-    }
-
     if (!await verifyBody()) return Response.json({ error: "无权" }, { status: 403 });
     const body = await request.json();
     
@@ -84,5 +86,5 @@ export async function onRequest(context) {
     return Response.json({ success: true });
   }
 
-  return Response.json({ error: "Unknown action" });
+  return Response.json({ error: "Unknown" });
 }
