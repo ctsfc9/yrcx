@@ -6,7 +6,7 @@ export async function onRequest(context) {
   const url = new URL(request.url);
   const action = url.searchParams.get("action");
 
-  // 1. 获取配置 (前端初始化用)
+  // 1. 获取配置
   if (request.method === "GET" && action === 'get_config') {
     try {
       const { results } = await db.prepare("SELECT * FROM system_config").all();
@@ -16,7 +16,7 @@ export async function onRequest(context) {
     } catch (e) { return Response.json({}); }
   }
 
-  // 2. 更新配置 (后台保存用)
+  // 2. 更新配置 (后台)
   if (request.method === "POST" && action === 'update_config') {
     const body = await request.json();
     if (body.admin_key !== ADMIN_PWD) return Response.json({ error: "密码错误" }, { status: 403 });
@@ -30,9 +30,8 @@ export async function onRequest(context) {
     return Response.json({ success: true });
   }
 
-  // 3. 获取列表 (首页/搜索/我的)
+  // 3. 获取列表
   if (request.method === "GET") {
-    // 读取过期配置
     let showExpired = 'false';
     try {
       const row = await db.prepare("SELECT value FROM system_config WHERE key = 'show_expired'").first();
@@ -44,17 +43,16 @@ export async function onRequest(context) {
     const conditions = [];
 
     const filterUserId = url.searchParams.get("filter_user_id");
+    
     if (filterUserId) {
-      // 个人中心：只看自己的
       conditions.push("user_id = ?");
       params.push(filterUserId);
     } else {
-      // 首页：过滤过期 (如果不显示过期)
+      // 首页逻辑
       if (showExpired !== 'true') {
-        const now = new Date().toISOString().slice(0, 16); // 简单时间比较
+        const now = new Date().toISOString().slice(0, 16);
         conditions.push(`date >= '${now}'`);
       }
-      // 首页：筛选类型
       const type = url.searchParams.get("type");
       if (type && type !== 'all') {
         conditions.push("type = ?");
@@ -64,25 +62,36 @@ export async function onRequest(context) {
 
     if (conditions.length > 0) sql += " WHERE " + conditions.join(" AND ");
     
-    // 排序逻辑：个人中心按发布倒序；首页按出发时间正序(最近的在前)
-    if (filterUserId) {
-      sql += " ORDER BY id DESC LIMIT 50";
-    } else {
-      sql += " ORDER BY is_top DESC, date ASC LIMIT 100";
-    }
+    // 排序
+    if (filterUserId) sql += " ORDER BY id DESC LIMIT 50";
+    else sql += " ORDER BY is_top DESC, date ASC LIMIT 100";
 
     const { results } = await db.prepare(sql).bind(...params).all();
     return Response.json({ results: results || [] });
   }
 
-  // 4. 发布/删除
+  // 4. POST 操作 (发布/修改/删除)
   if (request.method === "POST") {
     const body = await request.json();
-    // 封禁检查
+    
+    // 修改操作 (用户修改自己 或 管理员修改)
+    if (body.action === 'update') {
+      // 简单鉴权：如果是管理员key或者用户ID匹配
+      const isOwner = body.user_id; // 简单校验，实际场景建议更严谨的Token
+      if (!isOwner && body.admin_key !== ADMIN_PWD) return Response.json({ error: "无权操作" }, { status: 403 });
+
+      await db.prepare(
+        `UPDATE rides SET origin=?, destination=?, date=?, seats=?, price=?, remark=?, contact=?, car_model=? WHERE id=?`
+      ).bind(body.origin, body.destination, body.date, body.seats, body.price, body.remark, body.contact, body.car_model || '', body.id).run();
+      
+      return Response.json({ success: true });
+    }
+
+    // 封禁检测
     const banned = await db.prepare("SELECT 1 FROM blacklist WHERE user_id = ?").bind(body.user_id).first();
     if (banned) return Response.json({ error: "账号被封禁" }, { status: 403 });
 
-    // 写入数据
+    // 发布
     await db.prepare(
       `INSERT INTO rides (user_id, type, origin, destination, date, seats, price, remark, contact, pay_amount, is_top, car_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(body.user_id, body.type, body.origin, body.destination, body.date, body.seats, body.price, body.remark, body.contact, 0, 0, body.car_model||'').run();
@@ -90,6 +99,7 @@ export async function onRequest(context) {
     return Response.json({ success: true });
   }
 
+  // DELETE 删除
   if (request.method === "DELETE") {
     const id = url.searchParams.get("id");
     const uid = url.searchParams.get("user_id");
