@@ -4,7 +4,7 @@ import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToas
 import wx from 'weixin-js-sdk'; 
 
 // ==========================================
-// 1. 系统配置 (数据源)
+// 1. 系统配置 (全小写下划线，对接数据库)
 // ==========================================
 const sysConfig = reactive({
   platform_name: '宜人出行',
@@ -21,40 +21,39 @@ const sysConfig = reactive({
   tags_passenger: '',
   banners: '',
   amap_key: '', 
-  about_us: ''
+  about_us: '',
+  sms_account: ''
 });
 
 // 全局状态
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
 const adminLoginData = reactive({ username: '', password: '' });
-const adminActiveMenu = ref('basic'); // 当前选中的菜单
+const adminActiveMenu = ref('basic'); 
 
 // 前台状态
 const activeTab = ref(0);
 const filterType = ref('all'); 
 const list = ref([]); 
-const myRidesList = ref([]); 
+const myRidesList = ref([]); // 我的发布
 const loading = ref(false);
 const refreshing = ref(false);
 const finished = ref(false);
 const isWeChatEnv = ref(true);
 
-// 弹窗控制
+// 弹窗
 const showAuthModal = ref(false); 
 const authStep = ref(1);
 const showRolePopup = ref(false);
 const showDatePicker = ref(false); 
 const showPaymentDialog = ref(false);
 const showMapPopup = ref(false);
-const showEditDialog = ref(false);
 const showShareGuide = ref(false);
 
 // 业务数据
 const userProfile = reactive({ id: '', nickname: '未登录', avatar: '', phone: '', balance: '0.00', isLogin: false });
 const registerForm = reactive({ phone: '' });
 const postForm = reactive({ type: '', origin: '', destination: '', date: '', dateDisplay: '', seats: 1, price: '', remark: [], contact: '', car_model: '' });
-const editForm = reactive({ id: '', origin: '', destination: '', date: '', price: '', contact: '', remark: '', seats: 1 });
 
 // 选项数据
 const mapSearchKeyword = ref('');
@@ -73,8 +72,7 @@ const adminRideList = ref([]);
 // ==========================================
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
-  let res = list.value.filter(item => item && item.origin && item.destination);
-  return res;
+  return list.value.filter(item => item && item.origin && item.destination);
 });
 
 const displayQuickRoutes = computed(() => {
@@ -115,6 +113,7 @@ const dateColumns = computed(() => {
 // 3. 初始化
 // ==========================================
 onMounted(async () => {
+  // 1. 后台入口
   if (window.location.pathname === '/admin') {
     isSystemAdmin.value = true;
     document.title = "后台管理";
@@ -126,6 +125,7 @@ onMounted(async () => {
     return;
   }
 
+  // 2. 前台初始化
   await fetchSystemConfig();
   const ua = navigator.userAgent.toLowerCase();
   isWeChatEnv.value = (ua.indexOf('micromessenger') !== -1);
@@ -170,11 +170,11 @@ const switchTab = (idx) => {
 const handlePopState = () => {
   if (showRolePopup.value) { showRolePopup.value = false; return; }
   if (showMapPopup.value) { showMapPopup.value = false; return; }
-  if (showShareGuide.value) { showShareGuide.value = false; return; }
   if (selectedRide.value) { selectedRide.value = null; return; }
   if (activeTab.value !== 0) activeTab.value = 0;
 };
 
+// 修复：确保数据正确回填到 sysConfig
 const fetchSystemConfig = async () => {
   try {
     const res = await fetch('/api/admin?action=get_config');
@@ -314,6 +314,7 @@ const onConfirmDate = ({selectedOptions}) => {
 const handleCall = (p) => location.href=`tel:${p}`;
 const formatDate = (str) => { if(!str) return ''; const d=new Date(str); return `${d.getMonth()+1}月${d.getDate()}日 ${d.getHours()}点`; };
 
+// 个人中心逻辑
 const fetchMyRides = async () => { 
   if(userProfile.id) { 
     const res=await fetch(`/api/rides?filter_user_id=${userProfile.id}`); 
@@ -321,21 +322,6 @@ const fetchMyRides = async () => {
   }
 };
 const handleUserDelete = (id) => { showDialog({title:'删除',message:'确认删除?'}).then(async(a)=>{if(a==='confirm'){await fetch(`/api/rides?id=${id}&user_id=${userProfile.id}`,{method:'DELETE'});fetchMyRides();}}); };
-
-const openEditDialog = (item) => { 
-  Object.assign(editForm, item); 
-  if(typeof editForm.remark !== 'string') editForm.remark = '';
-  showEditDialog.value=true; 
-};
-const submitEdit = async () => {
-  await fetch('/api/rides', {
-    method: 'POST', 
-    body: JSON.stringify({...editForm, action: 'update', user_id: userProfile.id})
-  });
-  showSuccessToast('修改成功');
-  showEditDialog.value=false;
-  fetchMyRides();
-};
 
 const selectedRide = ref(null);
 const openDetail = (item) => selectedRide.value = item;
@@ -352,7 +338,6 @@ const closeDetail = () => selectedRide.value = null;
         <div style="margin:20px;"><van-button block type="primary" native-type="submit">登录</van-button></div>
       </van-form>
     </div>
-    
     <div v-else class="admin-dashboard">
       <div class="admin-sidebar">
         <div class="menu-item" :class="{active:adminActiveMenu==='basic'}" @click="switchAdminMenu('basic')">系统设置</div>
@@ -360,27 +345,25 @@ const closeDetail = () => selectedRide.value = null;
         <div class="menu-item" :class="{active:adminActiveMenu==='users'}" @click="switchAdminMenu('users')">用户管理</div>
         <div class="menu-item logout" @click="()=>location.href='/'">退出后台</div>
       </div>
-      
       <div class="admin-main">
         <div v-if="adminActiveMenu==='basic'">
-          <h3 style="margin-top:0;">平台参数配置</h3>
           <van-form @submit="saveSystemConfig">
-            <van-tabs type="card">
+            <van-tabs>
               <van-tab title="基础信息">
                 <van-cell-group inset style="margin-top:10px;">
-                  <van-field v-model="sysConfig.platform_name" label="平台名称" placeholder="如：宜人出行" />
-                  <van-field v-model="sysConfig.platform_logo" label="Logo URL" placeholder="图片链接" />
+                  <van-field v-model="sysConfig.platform_name" label="平台名称" />
+                  <van-field v-model="sysConfig.platform_logo" label="Logo URL" />
                   <van-field v-model="sysConfig.kefu_wechat" label="客服微信号" />
-                  <van-field v-model="sysConfig.amap_key" label="高德地图Key" placeholder="用于自动定位和搜索" />
-                  <van-field v-model="sysConfig.notice_text" label="滚动公告" type="textarea" rows="2" />
+                  <van-field v-model="sysConfig.amap_key" label="高德地图Key" placeholder="Web端 Key" />
+                  <van-field v-model="sysConfig.notice_text" label="滚动公告" type="textarea" />
                 </van-cell-group>
               </van-tab>
               <van-tab title="费用与开关">
                 <van-cell-group inset style="margin-top:10px;">
-                  <van-cell center title="显示过期帖子">
+                  <van-cell center title="显示过期">
                     <template #right-icon><van-switch v-model="sysConfig.show_expired" active-value="true" inactive-value="false" size="20" /></template>
                   </van-cell>
-                  <van-cell center title="司机强制认证">
+                  <van-cell center title="司机认证">
                     <template #right-icon><van-switch v-model="sysConfig.verify_driver" active-value="true" inactive-value="false" size="20" /></template>
                   </van-cell>
                   <van-field v-model="sysConfig.publish_fee_passenger" label="乘客发布费" type="number" />
@@ -397,21 +380,16 @@ const closeDetail = () => selectedRide.value = null;
                 </van-cell-group>
               </van-tab>
             </van-tabs>
-            <div style="margin:20px;"><van-button block type="primary" native-type="submit">保存所有配置</van-button></div>
+            <div style="margin:20px;"><van-button block type="primary" native-type="submit">保存配置</van-button></div>
           </van-form>
         </div>
-
         <div v-if="adminActiveMenu==='rides'">
-          <h3 style="margin-top:0;">拼车信息管理</h3>
           <div v-for="item in adminRideList" :key="item.id" class="admin-list-item">
             <span>{{ item?.origin }}→{{ item?.destination }} ({{ item?.type }})</span>
-            <div style="font-size:12px;color:#999">{{ item.date }}</div>
             <van-button size="mini" type="danger" @click="deleteRideAdmin(item.id)">删除</van-button>
           </div>
         </div>
-
         <div v-if="adminActiveMenu==='users'">
-          <h3 style="margin-top:0;">用户管理</h3>
           <div v-for="u in adminUserList" :key="u.user_id" class="admin-list-item">
             <span>{{ u.user_id }}</span>
             <van-button size="mini" :type="u.is_banned?'primary':'danger'" @click="banUserAdmin(u.user_id, !u.is_banned)">{{u.is_banned?'解封':'封禁'}}</van-button>
@@ -467,7 +445,8 @@ const closeDetail = () => selectedRide.value = null;
                 <span class="route">{{ item?.origin }} → {{ item?.destination }}</span>
               </div>
               <div class="card-row-2">
-                <span>{{ formatDate(item.date) }}</span><span>{{ item.car_model }}</span>
+                <span class="time-tag">{{ formatDate(item.date) }}</span>
+                <span class="car-badge" v-if="item.car_model">{{ item.car_model }}</span>
               </div>
               <div class="card-row-3"><span class="seat-label">余座/人数:</span><span class="seat-val">{{ item.seats }}</span></div>
               <div class="call-btn" @click.stop="handleCall(item.contact)"><van-icon name="phone-o" /></div>
@@ -506,8 +485,7 @@ const closeDetail = () => selectedRide.value = null;
             <div v-for="item in myRidesList" :key="item.id" class="ride-card">
               <div class="card-row-1"><span class="route">{{ item.origin }} → {{ item.destination }}</span></div>
               <div class="card-row-2">{{ formatDate(item.date) }}</div>
-              <div style="text-align:right;margin-top:10px;display:flex;justify-content:flex-end;gap:10px;">
-                <van-button size="small" type="primary" plain @click="openEditDialog(item)">修改</van-button>
+              <div style="text-align:right;margin-top:10px;">
                 <van-button size="small" type="danger" plain @click="handleUserDelete(item.id)">删除</van-button>
               </div>
             </div>
@@ -541,16 +519,6 @@ const closeDetail = () => selectedRide.value = null;
         <van-button block type="primary" @click="handleBindPhone">确认绑定</van-button>
       </div>
     </van-popup>
-
-    <van-dialog v-model:show="showEditDialog" title="修改信息" show-cancel-button @confirm="submitEdit">
-      <van-form style="padding:10px;">
-        <van-field v-model="editForm.origin" label="起点" />
-        <van-field v-model="editForm.destination" label="终点" />
-        <van-field v-model="editForm.price" label="费用" type="number" />
-        <van-field v-model="editForm.contact" label="电话" />
-        <van-field v-model="editForm.remark" label="备注" type="textarea" />
-      </van-form>
-    </van-dialog>
 
     <van-popup v-if="selectedRide" v-model:show="selectedRide" position="right" :style="{width:'100%',height:'100%'}">
       <div class="detail-page">
@@ -623,7 +591,10 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 14p
 .card-row-1 { display: flex; align-items: center; font-size: 16px; font-weight: bold; margin-bottom: 8px; }
 .badge { padding: 2px 6px; font-size: 12px; color: #fff; border-radius: 4px; margin-right: 8px; }
 .badge.driver { background: var(--green); } .badge.passenger { background: orange; }
-.card-row-2 { color: #666; font-size: 13px; margin-bottom: 5px; }
+.card-row-2 { color: #666; font-size: 13px; margin-bottom: 5px; display: flex; align-items: center; gap: 8px; }
+.time-tag { color: #333; font-weight: 500; }
+/* 修复：车型展示突出显示 */
+.car-badge { background: #f0f9eb; color: var(--green); padding: 2px 6px; border-radius: 4px; border: 1px solid #c2e7b0; font-size: 12px; }
 .call-btn { position: absolute; right: 15px; top: 25px; font-size: 28px; color: orange; background: #fff9f0; padding: 8px; border-radius: 50%; }
 
 /* 个人中心复古橙色风格 */
@@ -637,7 +608,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 14p
 
 .custom-tabbar { position: fixed; bottom: 0; width: 100%; height: 50px; background: #fff; display: flex; border-top: 1px solid #eee; z-index: 999; }
 .tab-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 12px; color: #666; }
-.tab-item.active { color: var(--orange); } /* 选中变为橙色 */
+.tab-item.active { color: var(--orange); }
 .publish-wrap { position: relative; }
 .publish-circle { position: absolute; top: -20px; width: 50px; height: 50px; background: #ff4444; border-radius: 50%; color: #fff; display: flex; align-items: center; justify-content: center; border: 4px solid #fff; box-shadow: 0 -2px 6px rgba(0,0,0,0.1); }
 .role-select-page { height: 100%; background: rgba(0,0,0,0.85); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; }
@@ -648,7 +619,6 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 14p
 .hot-cities-area { padding: 10px; }
 .hot-tag { display: inline-block; padding: 6px 12px; background: #f5f5f5; margin: 5px; border-radius: 4px; color: #333; }
 
-/* 详情页样式复刻 */
 .detail-page { background: #f2f2f2; height: 100%; display: flex; flex-direction: column; } 
 .detail-content { padding: 15px; flex: 1; overflow-y: auto; } 
 .detail-card { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 20px; } 
