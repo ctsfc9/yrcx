@@ -1,17 +1,10 @@
-import { defineConfig } from 'vite';
-import vue from '@vitejs/plugin-vue';
-import Components from 'unplugin-vue-components/vite';
-import { VantResolver } from 'unplugin-vue-components/resolvers';
+import { defineConfig } from 'vite'
+import vue from '@vitejs/plugin-vue'
 
+// https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [
-    vue(),
-    Components({
-      resolvers: [VantResolver()],
-    }),
-  ],
-  build: {
-    outDir: 'dist', // ⚠️ 强制指定输出目录为 dist
-    assetsDir: 'assets',
+  plugins: [vue()],
+  server: {
+    port: 3000
   }
-});
+})
