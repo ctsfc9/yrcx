@@ -7,7 +7,7 @@ export async function onRequest(context) {
   const url = new URL(request.url);
   const action = url.searchParams.get("action");
 
-  // 1. 获取配置 (公开接口，确保前端能读到)
+  // 1. 获取配置 (完全公开，确保前台能读到 Key)
   if (request.method === "GET" && action === 'get_config') {
     try {
       const { results } = await db.prepare("SELECT * FROM system_config").all();
@@ -27,7 +27,6 @@ export async function onRequest(context) {
   }
 
   // 鉴权
-  const token = url.searchParams.get("token"); 
   const verifyBody = async () => {
     try { const b = await request.clone().json(); return b.auth_token === ADMIN_PWD; } catch { return false; }
   };
@@ -48,6 +47,7 @@ export async function onRequest(context) {
 
   // 4. 数据管理
   if (request.method === "GET") {
+    const token = url.searchParams.get("token");
     if (token !== ADMIN_PWD) return Response.json({ error: "无权" }, { status: 403 });
     
     if (action === 'get_rides') {
