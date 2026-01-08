@@ -3,7 +3,9 @@ import { ref, reactive, computed, nextTick, onMounted, onBeforeUnmount } from 'v
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 import wx from 'weixin-js-sdk'; 
 
-// --- 系统配置 ---
+// ==========================================
+// 1. 系统配置与状态
+// ==========================================
 const sysConfig = reactive({
   platform_name: '宜人出行',
   platform_logo: 'https://yrcx.ctsfc.top/logo.png',
@@ -23,23 +25,21 @@ const sysConfig = reactive({
   sms_password: ''
 });
 
-// --- 全局状态 ---
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
 const adminLoginData = reactive({ username: '', password: '' });
 const adminActiveMenu = ref('basic'); 
 
-// --- 前台状态 ---
 const activeTab = ref(0);
 const filterType = ref('all'); 
-const list = ref([]); // 原始数据 (可能含脏数据)
+const list = ref([]); // 原始数据列表
+const myRidesList = ref([]);
 const loading = ref(false);
 const refreshing = ref(false);
 const finished = ref(false);
 const isWeChatEnv = ref(true);
 const isBannedUser = ref(false);
 
-// --- 弹窗控制 ---
 const showAuthModal = ref(false); 
 const authStep = ref(1);
 const showRolePopup = ref(false);
@@ -50,13 +50,11 @@ const showMapPopup = ref(false);
 const showShareGuide = ref(false);
 const showEditDialog = ref(false); 
 
-// --- 业务数据 ---
 const userProfile = reactive({ id: '', nickname: '', avatar: '', wechatId: '', phone: '', isLogin: false });
 const registerForm = reactive({ phone: '', code: '' });
 const postForm = reactive({ type: '', origin: '', destination: '', date: '', dateDisplay: '', seats: 1, price: '', remark: [], contact: '', car_model: '' });
 const editForm = reactive({ id: '', origin: '', destination: '', date: '', price: '', contact: '', remark: '', seats: 1, car_model: '' });
 
-// --- 地图与选项 ---
 const mapSearchKeyword = ref('');
 const mapSearchResults = ref([]);
 const currentMapField = ref(''); 
@@ -64,43 +62,36 @@ const hotCities = ['宜宾', '成都', '重庆', '昆明', '贵阳', '东莞', '
 const carModelOptions = ['油车', '电车'];
 const seatColumns = Array.from({length: 6}, (_, i) => ({ text: `${i + 1}`, value: i + 1 }));
 
-// --- 后台数据 ---
 const adminUserList = ref([]);
 const adminRideList = ref([]);
 
-// --- 辅助函数 (提前定义，防止调用顺序错误) ---
+// ==========================================
+// 2. 核心修复：安全计算属性 (防崩溃)
+// ==========================================
+
+// [修复] 辅助函数提前定义
 const getShortCity = (addr) => {
-  if (!addr) return '';
+  if (!addr || typeof addr !== 'string') return '';
   return addr.length > 5 ? addr.substring(0, 5) : addr;
 };
 
-// --- 🚨 核心修复：先定义安全列表 (过滤脏数据) ---
+// [修复] 安全列表：彻底过滤脏数据，供后续计算属性使用
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
-  // 强力过滤：只有当 item 不为 null 且具备 origin/destination 属性时才保留
   return list.value.filter(item => {
+    // 只有当 item 是对象，且 origin 和 destination 都有值时才保留
     return item && typeof item === 'object' && item.origin && item.destination;
   });
 });
 
-// --- 动态计算 (依赖 safeList，杜绝崩溃) ---
-const bannersList = computed(() => (sysConfig.banners || '').split(',').filter(i=>i));
-const currentRemarkOptions = computed(() => {
-  const str = postForm.type === 'driver' ? sysConfig.tags_driver : sysConfig.tags_passenger;
-  return (str || '').split(',').filter(i=>i);
-});
-const remarkDisplayText = computed(() => (postForm.remark || []).join('，') || '请选择下方标签');
-
-// 快捷路线 (🚨 修复：改用 safeList 计算)
+// [修复] 快捷路线：依赖 safeList，绝不直接读取 list
 const displayQuickRoutes = computed(() => {
-  // 如果安全列表为空，显示默认
   if (safeList.value.length === 0) {
     return [ { from: '高县', to: '宁波' }, { from: '筠连', to: '嘉兴' } ];
   }
   const counts = {};
-  // 使用经过清洗的 safeList 进行遍历，绝对安全
   safeList.value.forEach(item => {
-    // 再次加锁，防止极端情况
+    // 双重保险，防止 item 意外为空
     if (item?.origin && item?.destination) {
       const key = `${getShortCity(item.origin)}→${getShortCity(item.destination)}`;
       counts[key] = (counts[key] || 0) + 1;
@@ -113,7 +104,13 @@ const displayQuickRoutes = computed(() => {
   });
 });
 
-// 时间选择器
+const bannersList = computed(() => (sysConfig.banners || '').split(',').filter(i=>i));
+const currentRemarkOptions = computed(() => {
+  const str = postForm.type === 'driver' ? sysConfig.tags_driver : sysConfig.tags_passenger;
+  return (str || '').split(',').filter(i=>i);
+});
+const remarkDisplayText = computed(() => (postForm.remark || []).join('，') || '请选择下方标签');
+
 const dateColumns = computed(() => {
   const y = new Date().getFullYear();
   return [
@@ -125,12 +122,12 @@ const dateColumns = computed(() => {
 });
 
 // =======================
-// 逻辑区域
+// 3. 生命周期与初始化
 // =======================
 
 onMounted(async () => {
   try {
-    // 1. 后台入口
+    // 后台判断
     if (window.location.pathname === '/admin') {
       isSystemAdmin.value = true;
       document.title = "管理后台";
@@ -142,7 +139,7 @@ onMounted(async () => {
       return; 
     }
 
-    // 2. 前台初始化
+    // 前台初始化
     await fetchSystemConfig();
     
     const ua = navigator.userAgent.toLowerCase();
@@ -156,10 +153,9 @@ onMounted(async () => {
     
     window.history.replaceState({ page: 'home' }, '');
     window.addEventListener('popstate', handlePopState);
-  } catch (e) { console.log(e); }
+  } catch (e) { console.error('Mounted Error:', e); }
 });
 
-// --- 系统配置读取 ---
 const fetchSystemConfig = async () => {
   try {
     const res = await fetch('/api/rides?action=get_config');
@@ -173,26 +169,41 @@ const fetchSystemConfig = async () => {
   } catch(e) {}
 };
 
-// --- 前台业务逻辑 ---
+// =======================
+// 4. 数据获取与清洗 (核心修复)
+// =======================
+
 const onLoad = async () => {
   loading.value = true;
   try {
     const res = await fetch(`/api/rides`);
     const data = await res.json();
-    let results = data.results || [];
+    let rawResults = data.results || [];
     
-    // 这里只负责存入原始数据，不做复杂逻辑，防止报错
-    if (searchForm.origin) results = results.filter(i => i && i.origin && i.origin.includes(searchForm.origin));
-    if (searchForm.destination) results = results.filter(i => i && i.destination && i.destination.includes(searchForm.destination));
+    // [修复] 强力清洗数据：把 null/undefined/缺字段的数据全部剔除
+    // 防止进入 list 后导致 computed 属性计算报错
+    let cleanResults = rawResults.filter(item => {
+      return item && typeof item === 'object' && item.origin && item.destination;
+    });
+
+    // 搜索筛选
+    if (searchForm.origin) cleanResults = cleanResults.filter(i => i.origin.includes(searchForm.origin));
+    if (searchForm.destination) cleanResults = cleanResults.filter(i => i.destination.includes(searchForm.destination));
     
-    list.value = results; 
-  } catch(e) { console.log("Load Error", e); }
+    list.value = cleanResults; 
+  } catch(e) { 
+    console.error("Load Error", e); 
+    showFailToast("数据加载异常");
+  }
   
   loading.value = false; 
   finished.value = true;
 };
 
-// --- 后台逻辑 ---
+// =======================
+// 5. 其他业务逻辑
+// =======================
+
 const handleAdminLogin = async () => {
   showLoadingToast('登录中...');
   try {
