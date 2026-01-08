@@ -3,20 +3,24 @@ import { ref, reactive, computed, nextTick, onMounted, onBeforeUnmount } from 'v
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 import wx from 'weixin-js-sdk'; 
 
-// --- 系统默认配置 (会被后台覆盖) ---
+// --- 系统默认配置 ---
 const sysConfig = reactive({
   publishFee: '2.00',
   topFee: '5.00',
   noticeText: '数据加载中...',
-  shareTitle: '宜人出行：长途顺风合乘平台',
-  shareDesc: '老乡互助，共享出行！',
-  shareImg: 'https://yrcx.ctsfc.top/logo.png'
+  shareTitle: '宜人出行',
+  shareDesc: '顺风出行',
+  shareImg: 'https://yrcx.ctsfc.top/logo.png',
+  tagsDriver: '有行李,走高速,可吸烟,线下支付',
+  tagsPassenger: '有行李,走高速,线下支付,只限女生',
+  banners: 'https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg'
 });
 
 // --- 全局状态 ---
-const isSystemAdmin = ref(false); // 是否处于管理后台模式
+const isSystemAdmin = ref(false); // 后台模式开关
 const adminLoginData = reactive({ username: '', password: '' });
-const isLogined = ref(false); // 管理员是否已登录
+const isLogined = ref(false); 
+const adminActiveMenu = ref('basic'); // 后台当前菜单
 
 const activeTab = ref(0);
 const filterType = ref('all'); 
@@ -52,7 +56,8 @@ const editForm = reactive({ id: '', origin: '', destination: '', date: '', price
 
 // --- 搜索 ---
 const searchForm = reactive({ origin: '', destination: '' });
-const banners = ['https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg', 'https://fastly.jsdelivr.net/npm/@vant/assets/apple-2.jpeg'];
+// 动态轮播图
+const bannersList = computed(() => sysConfig.banners.split(',').filter(i => i));
 const isTop = ref(false);
 
 // --- 地址简化 ---
@@ -64,16 +69,11 @@ const getShortCity = (address) => {
 };
 
 const displayQuickRoutes = computed(() => {
-  if (list.value.length === 0) return [
-    { from: '高县', to: '宁波' }, { from: '筠连', to: '嘉兴' },
-    { from: '南溪', to: '宁波' }, { from: '江安', to: '中山' }
-  ];
+  if (list.value.length === 0) return [ { from: '高县', to: '宁波' }, { from: '筠连', to: '嘉兴' } ];
   const counts = {};
   list.value.forEach(item => {
     if (item.origin && item.destination) {
-      const shortOrigin = getShortCity(item.origin);
-      const shortDest = getShortCity(item.destination);
-      const key = `${shortOrigin}→${shortDest}`;
+      const key = `${getShortCity(item.origin)}→${getShortCity(item.destination)}`;
       counts[key] = (counts[key] || 0) + 1;
     }
   });
@@ -91,8 +91,6 @@ const mapSearchKeyword = ref('');
 const mapSearchResults = ref([]);
 const currentMapField = ref(''); 
 let mapInstance = null;
-
-// 热门城市
 const hotCities = ['宜宾', '成都', '重庆', '昆明', '贵阳', '东莞', '深圳', '广州', '上海', '宁波', '温州', '嘉兴'];
 
 const postForm = reactive({ 
@@ -100,10 +98,15 @@ const postForm = reactive({
   seats: 1, price: '', remark: [], contact: '', car_model: '' 
 });
 
-const remarkOptions = ['有行李', '走高速', '可吸烟', '拒吸烟', '可带宠', '线下支付', '只限女生', '已有3人'];
-const carModelOptions = ['油车', '电车']; // 简化为2种
+// 动态标签 (根据身份变化)
+const currentRemarkOptions = computed(() => {
+  const str = postForm.type === 'driver' ? sysConfig.tagsDriver : sysConfig.tagsPassenger;
+  return str.split(',').filter(i => i);
+});
 
-// --- 时间选择器 (年/月/日/时) ---
+const carModelOptions = ['油车', '电车'];
+
+// --- 时间选择器 ---
 const dateColumns = computed(() => {
   const currentYear = new Date().getFullYear();
   const years = [{ text: `${currentYear}年`, value: currentYear }, { text: `${currentYear + 1}年`, value: currentYear + 1 }];
@@ -125,19 +128,17 @@ const onConfirmDate = ({ selectedOptions }) => {
 // =======================
 
 onMounted(async () => {
-  // 1. 检查是否进入后台模式
   if (window.location.pathname === '/admin') {
     isSystemAdmin.value = true;
-    document.title = "管理后台登录";
-    return; // 终止后续逻辑，只渲染后台
+    document.title = "平台管理后台";
+    return;
   }
 
-  // 2. 普通用户逻辑
   const ua = navigator.userAgent.toLowerCase();
   const isWeixin = ua.indexOf('micromessenger') !== -1;
   const isWindowsWechat = ua.indexOf('windowswechat') !== -1;
   
-  await fetchSystemConfig(); // 加载配置
+  await fetchSystemConfig();
 
   if (isWeixin || isWindowsWechat) {
     isWeChatEnv.value = true;
@@ -167,7 +168,7 @@ const handleAdminLogin = async () => {
     if (data.success) {
       isLogined.value = true;
       closeToast();
-      fetchSystemConfig(); // 登录成功获取最新配置
+      fetchSystemConfig();
     } else {
       showFailToast(data.error);
     }
@@ -180,23 +181,21 @@ const saveSystemConfig = async () => {
     const res = await fetch('/api/admin?action=save_config', {
       method: 'POST',
       body: JSON.stringify({
-        // 将密码作为鉴权token传回去
         auth_token: adminLoginData.password, 
         publish_fee: sysConfig.publishFee,
         top_fee: sysConfig.topFee,
         notice_text: sysConfig.noticeText,
         share_title: sysConfig.shareTitle,
         share_desc: sysConfig.shareDesc,
-        share_img: sysConfig.shareImg
+        share_img: sysConfig.shareImg,
+        tags_driver: sysConfig.tagsDriver,
+        tags_passenger: sysConfig.tagsPassenger,
+        banners: sysConfig.banners
       })
     });
-    if ((await res.json()).success) showSuccessToast('配置已生效');
+    if ((await res.json()).success) showSuccessToast('保存成功');
     else showFailToast('保存失败');
   } catch(e) { showFailToast('网络错误'); }
-};
-
-const exitAdmin = () => {
-  window.location.href = '/'; // 返回首页
 };
 
 // --- 系统配置读取 ---
@@ -210,8 +209,10 @@ const fetchSystemConfig = async () => {
     if (data.share_title) sysConfig.shareTitle = data.share_title;
     if (data.share_desc) sysConfig.shareDesc = data.share_desc;
     if (data.share_img) sysConfig.shareImg = data.share_img;
+    if (data.tags_driver) sysConfig.tagsDriver = data.tags_driver;
+    if (data.tags_passenger) sysConfig.tagsPassenger = data.tags_passenger;
+    if (data.banners) sysConfig.banners = data.banners;
     
-    // 更新默认分享配置
     updateWxShare({
       title: sysConfig.shareTitle,
       desc: sysConfig.shareDesc,
@@ -262,7 +263,6 @@ const initWxConfig = async (signUrl) => {
 };
 
 const updateWxShare = (shareData) => {
-  // 确保使用配置中的值（如果传入为空）
   const config = {
     title: shareData.title || sysConfig.shareTitle,
     desc: shareData.desc || sysConfig.shareDesc,
@@ -382,7 +382,6 @@ const openDetail = (item) => {
 };
 const closeDetail = () => { window.history.back(); };
 
-// --- 核心：发布流程 ---
 const handlePublishClick = () => { showRolePopup.value = true; };
 
 const selectRoleAndGo = (role) => {
@@ -400,7 +399,6 @@ const selectRoleAndGo = (role) => {
   setTimeout(() => { if (!postForm.origin) autoLocate(); }, 500);
 };
 
-// --- 提交 ---
 const onPreSubmit = () => {
   if (isBannedUser.value) { showFailToast('账号被封禁'); return; }
   if (!userProfile.isLogin || !userProfile.phone) { showAuthModal.value = true; return; }
@@ -462,44 +460,65 @@ const openSubPage = (pageName) => { currentSubPage.value = pageName; pushHistory
 const closeSubPage = () => { window.history.back(); };
 const formatDate = (str) => { if(!str) return ''; const d=new Date(str); const t=new Date(); const isToday=d.getDate()===t.getDate()&&d.getMonth()===t.getMonth(); const ts=`${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; return isToday?`今天 ${ts}`:`${d.getMonth()+1}月${d.getDate()}日 ${ts}`; };
 
+const handleLogoClick = () => { debugClicks.value++; if (debugClicks.value >= 5) { debugClicks.value = 0; if (isAdminMode.value) { isAdminMode.value = false; showToast('退出管理'); } else { const pwd = prompt("管理员密码:", ""); if (pwd === adminPassword.value) { isAdminMode.value = true; showSuccessToast('管理员模式'); } } } };
+const handleAdminDelete = (id) => { showDialog({ title: '删除', message: '确定删除?', showCancelButton: true }).then(async (action) => { if (action === 'confirm') { await fetch(`/api/rides?id=${id}&admin_key=${adminPassword.value}`, { method: 'DELETE' }); onRefresh(); } }); };
 const handleUserDelete = (id) => { showDialog({ title: '删除', message: '确定删除?', showCancelButton: true }).then(async (action) => { if (action === 'confirm') { const res = await fetch(`/api/rides?id=${id}&user_id=${userProfile.id}`, { method: 'DELETE' }); if ((await res.json()).success) { showSuccessToast('已删除'); fetchMyRides(); onRefresh(); } } }); };
 const openEditDialog = (item) => { Object.assign(editForm, item); editForm.remark = item.remark || ''; showEditDialog.value = true; };
 const submitEdit = async () => { const res = await fetch('/api/rides', { method: 'POST', body: JSON.stringify({ ...editForm, action: 'update', admin_key: adminPassword.value }) }); if ((await res.json()).success) { showSuccessToast('修改成功'); showEditDialog.value = false; onRefresh(); fetchMyRides(); } else { showFailToast('修改失败'); } };
+const handleBanUser = (targetId) => { showDialog({ title: '封禁', message: '拉黑此用户?', showCancelButton: true }).then(async (action) => { if (action === 'confirm') { const res = await fetch('/api/rides', { method: 'POST', body: JSON.stringify({ action: 'ban', target_id: targetId, admin_key: adminPassword.value }) }); if ((await res.json()).success) { showSuccessToast('已拉黑'); onRefresh(); } } }); };
 </script>
 
 <template>
-  <div v-if="isSystemAdmin" class="admin-panel">
-    <van-nav-bar title="平台管理后台" left-text="返回网站" @click-left="exitAdmin" />
-    
+  <div v-if="isSystemAdmin" class="admin-layout">
     <div v-if="!isLogined" class="admin-login-box">
-      <h3>管理员登录</h3>
+      <h3>平台管理后台</h3>
       <van-form @submit="handleAdminLogin">
-        <van-field v-model="adminLoginData.username" label="账号" placeholder="输入账号" required />
-        <van-field v-model="adminLoginData.password" type="password" label="密码" placeholder="输入密码" required />
-        <div style="margin: 30px 10px;">
-          <van-button round block type="primary" native-type="submit">登录</van-button>
-        </div>
+        <van-field v-model="adminLoginData.username" label="账号" placeholder="admin" required />
+        <van-field v-model="adminLoginData.password" type="password" label="密码" required />
+        <div style="margin: 30px 10px;"><van-button round block type="primary" native-type="submit">登录</van-button></div>
       </van-form>
     </div>
-
-    <div v-else class="admin-content">
-      <van-form @submit="saveSystemConfig">
-        <van-cell-group title="费用设置">
-          <van-field v-model="sysConfig.publishFee" label="发布费(元)" placeholder="0.00" />
-          <van-field v-model="sysConfig.topFee" label="置顶费(元)" placeholder="0.00" />
-        </van-cell-group>
-        <van-cell-group title="系统公告">
-          <van-field v-model="sysConfig.noticeText" rows="2" autosize type="textarea" label="公告内容" />
-        </van-cell-group>
-        <van-cell-group title="分享设置">
-          <van-field v-model="sysConfig.shareTitle" label="分享标题" />
-          <van-field v-model="sysConfig.shareDesc" label="分享描述" />
-          <van-field v-model="sysConfig.shareImg" label="Logo URL" placeholder="https://..." />
-        </van-cell-group>
-        <div style="margin: 30px 10px;">
-          <van-button round block type="primary" native-type="submit">保存所有配置</van-button>
-        </div>
-      </van-form>
+    <div v-else class="admin-dashboard">
+      <div class="admin-sidebar">
+        <div class="sidebar-header">后台管理</div>
+        <div class="menu-item" :class="{active: adminActiveMenu==='basic'}" @click="adminActiveMenu='basic'">平台参数设置</div>
+        <div class="menu-item" :class="{active: adminActiveMenu==='banner'}" @click="adminActiveMenu='banner'">首页轮播图</div>
+        <div class="menu-item" :class="{active: adminActiveMenu==='tags'}" @click="adminActiveMenu='tags'">标签配置</div>
+        <div class="menu-item logout" @click="()=>window.location.href='/'">返回前台</div>
+      </div>
+      <div class="admin-main">
+        <h2 style="margin-top:0;">{{ adminActiveMenu==='basic'?'参数设置':(adminActiveMenu==='banner'?'轮播图':'标签管理') }}</h2>
+        <van-form @submit="saveSystemConfig">
+          <div v-if="adminActiveMenu==='basic'">
+            <van-cell-group title="基本设置">
+              <van-field v-model="sysConfig.publishFee" label="发布费(元)" />
+              <van-field v-model="sysConfig.topFee" label="置顶费(元)" />
+              <van-field v-model="sysConfig.noticeText" type="textarea" label="公告内容" />
+            </van-cell-group>
+            <van-cell-group title="分享设置">
+              <van-field v-model="sysConfig.shareTitle" label="分享标题" />
+              <van-field v-model="sysConfig.shareDesc" label="分享描述" />
+              <van-field v-model="sysConfig.shareImg" label="Logo URL" />
+            </van-cell-group>
+          </div>
+          <div v-if="adminActiveMenu==='banner'">
+            <van-cell-group title="轮播图 (用逗号分隔)">
+              <van-field v-model="sysConfig.banners" type="textarea" rows="3" placeholder="图片URL1,图片URL2..." />
+            </van-cell-group>
+          </div>
+          <div v-if="adminActiveMenu==='tags'">
+            <van-cell-group title="车主标签 (逗号分隔)">
+              <van-field v-model="sysConfig.tagsDriver" type="textarea" rows="3" />
+            </van-cell-group>
+            <van-cell-group title="乘客标签 (逗号分隔)">
+              <van-field v-model="sysConfig.tagsPassenger" type="textarea" rows="3" />
+            </van-cell-group>
+          </div>
+          <div style="margin-top:20px;">
+            <van-button type="primary" native-type="submit">保存配置</van-button>
+          </div>
+        </van-form>
+      </div>
     </div>
   </div>
 
@@ -512,14 +531,8 @@ const submitEdit = async () => { const res = await fetch('/api/rides', { method:
         <div class="role-title">一键发布行程</div>
         <div class="role-subtitle">选择您的身份</div>
         <div class="role-container">
-          <div class="role-card passenger" @click="selectRoleAndGo('passenger')">
-            <div class="role-icon-circle green"><van-icon name="friends" /></div>
-            <div class="role-text">我是乘客</div>
-          </div>
-          <div class="role-card driver" @click="selectRoleAndGo('driver')">
-            <div class="role-icon-circle orange"><van-icon name="logistics" /></div>
-            <div class="role-text">我是车主</div>
-          </div>
+          <div class="role-card passenger" @click="selectRoleAndGo('passenger')"><div class="role-icon-circle green"><van-icon name="friends" /></div><div class="role-text">我是乘客</div></div>
+          <div class="role-card driver" @click="selectRoleAndGo('driver')"><div class="role-icon-circle orange"><van-icon name="logistics" /></div><div class="role-text">我是车主</div></div>
         </div>
       </div>
     </van-popup>
@@ -529,22 +542,9 @@ const submitEdit = async () => { const res = await fetch('/api/rides', { method:
       
       <div class="post-card">
         <div class="location-group">
-          <div class="loc-row">
-            <div class="dot green">起</div>
-            <div class="input-area" @click="openMapSelector('origin')">
-              <span v-if="postForm.origin" class="val">{{ postForm.origin }}</span>
-              <span v-else class="placeholder">点击选择出发地</span>
-            </div>
-            <div class="loc-icon" @click.stop="autoLocate"><van-icon name="aim" /></div>
-          </div>
+          <div class="loc-row"><div class="dot green">起</div><div class="input-area" @click="openMapSelector('origin')"><span v-if="postForm.origin" class="val">{{ postForm.origin }}</span><span v-else class="placeholder">点击选择出发地</span></div><div class="loc-icon" @click.stop="autoLocate"><van-icon name="aim" /></div></div>
           <div class="loc-divider"></div>
-          <div class="loc-row">
-            <div class="dot red">终</div>
-            <div class="input-area" @click="openMapSelector('destination')">
-              <span v-if="postForm.destination" class="val">{{ postForm.destination }}</span>
-              <span v-else class="placeholder">点击选择目的地</span>
-            </div>
-          </div>
+          <div class="loc-row"><div class="dot red">终</div><div class="input-area" @click="openMapSelector('destination')"><span v-if="postForm.destination" class="val">{{ postForm.destination }}</span><span v-else class="placeholder">点击选择目的地</span></div></div>
           <div class="swap-btn" @click="()=>{const t=postForm.origin;postForm.origin=postForm.destination;postForm.destination=t}"><van-icon name="exchange" /></div>
         </div>
 
@@ -552,37 +552,34 @@ const submitEdit = async () => { const res = await fetch('/api/rides', { method:
           <div class="form-row">
             <div class="label">座位/人数</div>
             <div class="seat-selector-grid">
-              <div v-for="num in 6" :key="num" 
-                   class="seat-num-btn" 
-                   :class="{selected: postForm.seats === num}"
-                   @click="postForm.seats = num">
-                {{ num }}
-              </div>
+              <div v-for="num in 6" :key="num" class="seat-num-btn" :class="{selected: postForm.seats === num}" @click="postForm.seats = num">{{ num }}</div>
             </div>
           </div>
           
-          <div class="form-row">
-            <div class="label">期望费用</div>
-            <div style="flex:1;">
-              <van-field v-model="postForm.price" type="number" placeholder="费用 (元)" input-align="right" maxlength="4" />
-            </div>
+          <div v-if="postForm.type==='driver'" class="form-row">
+            <div class="label">车型选择</div>
+            <van-radio-group v-model="postForm.car_model" direction="horizontal">
+              <van-radio v-for="car in carModelOptions" :key="car" :name="car">{{car}}</van-radio>
+            </van-radio-group>
           </div>
 
           <van-cell title="出发时间" is-link :value="postForm.dateDisplay || '请选择时间'" @click="showDatePicker=true" />
-          <van-cell title="备注要求" :value="postForm.remark.length ? postForm.remark.join(' ') : '请选择标签'" />
+          
+          <div class="form-row">
+            <div class="label">期望费用</div>
+            <div style="flex:1;"><van-field v-model="postForm.price" type="number" placeholder="费用 (元)" input-align="right" maxlength="4" /></div>
+          </div>
+
+          <div class="form-row">
+            <div class="label">备注要求</div>
+            <div style="flex:1;text-align:right;color:#999;">{{ postForm.remark.join(' ') || '请选择下方标签' }}</div>
+          </div>
         </div>
         
-        <div v-if="postForm.type==='driver'" class="tags-group">
-          <div class="tags-title">车型选择 (必选)</div>
-          <van-radio-group v-model="postForm.car_model" direction="horizontal">
-            <van-radio v-for="car in carModelOptions" :key="car" :name="car" class="tag-item">{{car}}</van-radio>
-          </van-radio-group>
-        </div>
-
         <div class="tags-group">
-          <div class="tags-title">快捷选项 (可多选)</div>
+          <div class="tags-title">快捷标签 (可多选)</div>
           <van-checkbox-group v-model="postForm.remark" direction="horizontal">
-             <van-checkbox v-for="opt in remarkOptions" :key="opt" :name="opt" shape="square" class="tag-item">{{opt}}</van-checkbox>
+             <van-checkbox v-for="opt in currentRemarkOptions" :key="opt" :name="opt" shape="square" class="tag-item">{{opt}}</van-checkbox>
           </van-checkbox-group>
         </div>
       </div>
@@ -595,37 +592,27 @@ const submitEdit = async () => { const res = await fetch('/api/rides', { method:
     <van-popup v-model:show="showDatePicker" position="bottom" round>
       <van-picker :columns="dateColumns" @confirm="onConfirmDate" @cancel="showDatePicker=false" title="选择出发时间" />
     </van-popup>
-
     <van-dialog v-model:show="showPaymentDialog" title="确认发布" show-cancel-button @confirm="handleRealPublish">
       <div style="padding:20px;text-align:center">
         <div style="color:#999;font-size:12px;margin-bottom:10px;">平台服务费: ¥{{ sysConfig.publishFee }}</div>
         <div>置顶 <van-switch v-model="isTop" size="16px"/> (+¥{{ sysConfig.topFee }})</div>
       </div>
     </van-dialog>
-
     <van-popup v-model:show="showMapPopup" position="bottom" :style="{height:'90%'}" round @opened="initMap">
       <div class="map-popup-content">
-        <van-search v-model="mapSearchKeyword" show-action placeholder="请输入城市或地点..." @search="onMapSearch" @update:model-value="onMapSearch">
-          <template #action><div @click="showMapPopup=false">关闭</div></template>
-        </van-search>
-        
+        <van-search v-model="mapSearchKeyword" show-action placeholder="请输入城市或地点..." @search="onMapSearch" @update:model-value="onMapSearch"><template #action><div @click="showMapPopup=false">关闭</div></template></van-search>
         <div v-if="!mapSearchKeyword && !mapSearchResults.length" class="hot-cities-area">
-          <div class="hot-title">热门城市 (点击选择)</div>
-          <div class="hot-grid">
-            <div class="hot-tag" v-for="city in hotCities" :key="city" @click="selectLocation(city)">{{ city }}</div>
-          </div>
+          <div class="hot-title">热门城市</div>
+          <div class="hot-grid"><div class="hot-tag" v-for="city in hotCities" :key="city" @click="selectLocation(city)">{{ city }}</div></div>
         </div>
-
-        <div id="map-container" style="width:100%;height:300px;display:none;"></div> 
-        <van-list class="search-list">
-          <van-cell v-for="(item, i) in mapSearchResults" :key="i" :title="item.name" :label="item.district" @click="selectLocation(item)" />
-        </van-list>
+        <div id="map-container" style="display:none;"></div> 
+        <van-list class="search-list"><van-cell v-for="(item, i) in mapSearchResults" :key="i" :title="item.name" :label="item.district" @click="selectLocation(item)" /></van-list>
       </div>
     </van-popup>
 
     <div v-show="activeTab === 0" class="page-home">
       <div class="top-bar">宜人出行</div>
-      <van-swipe :autoplay="3000" indicator-color="white" class="home-banner"><van-swipe-item v-for="(img, index) in banners" :key="index"><img :src="img" style="width:100%;height:100%;object-fit:cover;" /></van-swipe-item></van-swipe>
+      <van-swipe :autoplay="3000" indicator-color="white" class="home-banner"><van-swipe-item v-for="(img, index) in bannersList" :key="index"><img :src="img" style="width:100%;height:100%;object-fit:cover;" /></van-swipe-item></van-swipe>
       <van-notice-bar left-icon="volume-o" :text="sysConfig.noticeText" background="#fff" color="#333" />
       <div class="nav-grid two-cols"><div class="nav-btn btn-blue" @click="filterType='driver';onRefresh()"><van-icon name="logistics" size="24" /><span>车找人</span></div><div class="nav-btn btn-green" @click="filterType='passenger';onRefresh()"><van-icon name="friends" size="24" /><span>人找车</span></div></div>
       <div class="search-box"><div class="search-inputs"><input v-model="searchForm.origin" placeholder="出发地" /><van-icon name="exchange" class="swap-icon" @click="()=>{const t=searchForm.origin;searchForm.origin=searchForm.destination;searchForm.destination=t}" /><input v-model="searchForm.destination" placeholder="目的地" /></div><button class="search-btn" @click="onRefresh">查询</button></div>
@@ -655,11 +642,7 @@ const submitEdit = async () => { const res = await fetch('/api/rides', { method:
           </div>
           <div class="user-stats"><div class="stat-item"><div class="stat-val blue">¥{{ userProfile.balance }}</div><div class="stat-label">余额</div></div><div class="stat-item"><div class="stat-val blue">{{ myRidesList.length }}</div><div class="stat-label">我的发布</div></div><div class="stat-item"><div class="stat-val blue">0</div><div class="stat-label">预约</div></div></div>
         </div>
-        <div class="me-menu-grid"><van-grid :column-num="3" clickable>
-          <van-grid-item icon="service-o" text="联系客服" @click="showDialog({ message: '客服微信: yiren_service' })" />
-          <van-grid-item icon="share-o" text="分享转发" @click="handleShareClick" />
-          <van-grid-item icon="setting-o" text="系统设置" @click="openSubPage('settings')" />
-        </van-grid></div>
+        <div class="me-menu-grid"><van-grid :column-num="3" clickable><van-grid-item icon="service-o" text="联系客服" @click="showDialog({ message: '客服微信: yiren_service' })" /><van-grid-item icon="share-o" text="分享转发" @click="handleShareClick" /><van-grid-item icon="setting-o" text="系统设置" @click="openSubPage('settings')" /></van-grid></div>
         <van-tabs v-model:active="meActiveTab" style="margin-top:10px" @change="switchTab(2)">
           <van-tab title="我的发布">
             <div v-if="myRidesList.length === 0" class="empty-state">暂无发布记录</div>
@@ -715,9 +698,15 @@ html, body { font-size: 16px; background-color: var(--bg-gray); font-family: san
 .pub-text { color: white; font-size: 10px; }
 
 /* 管理后台样式 */
-.admin-panel { min-height: 100vh; background: #f2f3f5; }
-.admin-login-box { margin-top: 100px; padding: 20px; background: #fff; border-radius: 12px; margin-left: 20px; margin-right: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-.admin-content { padding-top: 20px; }
+.admin-layout { display: flex; min-height: 100vh; }
+.admin-login-box { width: 100%; margin-top: 100px; padding: 20px; background: #fff; }
+.admin-dashboard { display: flex; width: 100%; }
+.admin-sidebar { width: 120px; background: #2c3e50; color: #fff; height: 100vh; overflow-y: auto; }
+.sidebar-header { padding: 20px; font-weight: bold; text-align: center; background: #1a252f; }
+.menu-item { padding: 15px; font-size: 14px; cursor: pointer; border-bottom: 1px solid #34495e; }
+.menu-item.active { background: #34495e; color: #4fc1e9; }
+.menu-item.logout { color: #e74c3c; margin-top: 20px; }
+.admin-main { flex: 1; padding: 20px; background: #fff; overflow-y: auto; height: 100vh; }
 
 /* 角色选择全屏页 */
 .role-select-page { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.8); color: #fff; position: relative; }
@@ -748,7 +737,6 @@ html, body { font-size: 16px; background-color: var(--bg-gray); font-family: san
 .tags-title { font-size: 14px; color: #666; margin-bottom: 10px; }
 .tag-item { margin-bottom: 10px; margin-right: 10px; }
 
-/* 修复：座位选择器 (大数字样式) */
 .form-row { display: flex; align-items: center; padding: 15px 0; border-bottom: 1px solid #f5f6fa; }
 .form-row .label { width: 100px; font-size: 16px; color: #333; }
 .seat-selector-grid { flex: 1; display: flex; justify-content: space-between; gap: 5px; }
@@ -765,13 +753,11 @@ html, body { font-size: 16px; background-color: var(--bg-gray); font-family: san
   box-shadow: 0 2px 8px rgba(7,193,96,0.15);
 }
 
-/* 热门城市样式 */
 .hot-cities-area { padding: 20px 15px; background: #fff; }
 .hot-title { font-size: 14px; color: #999; margin-bottom: 15px; }
 .hot-grid { display: flex; flex-wrap: wrap; gap: 10px; }
 .hot-tag { padding: 8px 20px; background: #f5f6fa; border-radius: 20px; color: #333; font-size: 14px; font-weight: 500; }
 
-/* 其他样式保持 */
 .wechat-mask { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #fff; z-index: 9999; display: flex; align-items: center; justify-content: center; text-align: center; } .mask-content { padding: 40px; } 
 .auth-popup { text-align: center; } .auth-step { padding: 10px; } .auth-icon { margin-bottom: 20px; } 
 .nav-grid { display: grid; grid-template-columns: 1fr 1fr; padding: 10px; gap: 10px; background: #fff; } .nav-btn { height: 60px; display: flex; align-items: center; justify-content: center; color: white; border-radius: 4px; font-weight: bold; font-size: 18px; cursor: pointer; gap: 8px; } 
