@@ -4,7 +4,7 @@ import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToas
 import wx from 'weixin-js-sdk'; 
 
 // ==========================================
-// 1. 系统配置 (与数据库 key 严格一致)
+// 1. 系统配置 (与数据库一致)
 // ==========================================
 const sysConfig = reactive({
   platform_name: '宜人出行',
@@ -24,23 +24,23 @@ const sysConfig = reactive({
   about_us: ''
 });
 
-// 全局
+// 全局状态
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
 const adminLoginData = reactive({ username: '', password: '' });
-const adminActiveMenu = ref('basic'); 
+const adminActiveMenu = ref('basic'); // basic, rides, users
 
-// 前台
+// 前台状态
 const activeTab = ref(0);
 const filterType = ref('all'); 
 const list = ref([]); 
-const myRidesList = ref([]); // 修复：我的发布列表
+const myRidesList = ref([]); // 我的发布
 const loading = ref(false);
 const refreshing = ref(false);
 const finished = ref(false);
 const isWeChatEnv = ref(true);
 
-// 弹窗
+// 弹窗控制
 const showAuthModal = ref(false); 
 const authStep = ref(1);
 const showRolePopup = ref(false);
@@ -48,14 +48,15 @@ const showDatePicker = ref(false);
 const showPaymentDialog = ref(false);
 const showMapPopup = ref(false);
 const showEditDialog = ref(false);
-const showShareGuide = ref(false);
+const showShareGuide = ref(false); // 分享引导
 
-// 数据
+// 业务数据
 const userProfile = reactive({ id: '', nickname: '未登录', avatar: '', phone: '', balance: '0.00', isLogin: false });
 const registerForm = reactive({ phone: '' });
 const postForm = reactive({ type: '', origin: '', destination: '', date: '', dateDisplay: '', seats: 1, price: '', remark: [], contact: '', car_model: '' });
 const editForm = reactive({ id: '', origin: '', destination: '', date: '', price: '', contact: '', remark: '', seats: 1 });
 
+// 选项数据
 const mapSearchKeyword = ref('');
 const mapSearchResults = ref([]);
 const currentMapField = ref(''); 
@@ -63,15 +64,15 @@ const hotCities = ['宜宾', '成都', '重庆', '昆明', '贵阳', '东莞', '
 const carModelOptions = ['油车', '电车'];
 const seatColumns = Array.from({length: 6}, (_, i) => ({ text: `${i + 1}`, value: i + 1 }));
 
+// 后台列表
 const adminUserList = ref([]);
 const adminRideList = ref([]);
 
 // ==========================================
-// 2. 核心计算 (防爆)
+// 2. 计算属性 (防爆)
 // ==========================================
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
-  // 过滤无效数据
   let res = list.value.filter(item => item && item.origin && item.destination);
   return res;
 });
@@ -114,25 +115,29 @@ const dateColumns = computed(() => {
 // 3. 初始化
 // ==========================================
 onMounted(async () => {
+  // 1. 尝试获取配置
+  await fetchSystemConfig();
+
+  // 2. 后台入口拦截
   if (window.location.pathname === '/admin') {
     isSystemAdmin.value = true;
     document.title = "后台管理";
     if(localStorage.getItem('admin_token')) {
       adminLoginData.password = localStorage.getItem('admin_token');
       isLogined.value = true;
+      // 再次刷新配置，确保后台有数据
       fetchSystemConfig();
     }
     return;
   }
 
-  await fetchSystemConfig();
+  // 3. 前台初始化
   const ua = navigator.userAgent.toLowerCase();
   isWeChatEnv.value = (ua.indexOf('micromessenger') !== -1);
   
   const storedUser = localStorage.getItem('user_info');
   if (storedUser) {
     Object.assign(userProfile, JSON.parse(storedUser));
-    // 修复：初始化时加载我的发布
     if(userProfile.isLogin) fetchMyRides();
   }
 
@@ -160,7 +165,7 @@ const switchTab = (idx) => {
     window.history.replaceState({ tab: 0 }, '');
     onRefresh();
   } else if (idx === 2) {
-    fetchMyRides(); // 修复：切换到我的tab时刷新数据
+    fetchMyRides();
     window.history.pushState({ tab: 2 }, '');
   } else {
     window.history.pushState({ tab: idx }, '');
@@ -170,16 +175,20 @@ const switchTab = (idx) => {
 const handlePopState = () => {
   if (showRolePopup.value) { showRolePopup.value = false; return; }
   if (showMapPopup.value) { showMapPopup.value = false; return; }
-  if (selectedRide.value) { selectedRide.value = null; return; } // 详情页返回修复
+  if (showShareGuide.value) { showShareGuide.value = false; return; }
+  if (selectedRide.value) { selectedRide.value = null; return; }
   if (activeTab.value !== 0) activeTab.value = 0;
 };
 
+// 修复：统一从 admin 接口获取配置，防止路径错误
 const fetchSystemConfig = async () => {
   try {
-    const res = await fetch('/api/rides?action=get_config');
+    const res = await fetch('/api/admin?action=get_config');
     const data = await res.json();
-    if(data) Object.assign(sysConfig, data);
-    document.title = sysConfig.platform_name || '宜人出行';
+    if(data && Object.keys(data).length > 0) {
+      Object.assign(sysConfig, data);
+      document.title = sysConfig.platform_name || '宜人出行';
+    }
   } catch(e) {}
 };
 
@@ -212,16 +221,15 @@ const handleAdminLogin = async () => {
     if (data.success) {
       isLogined.value = true;
       localStorage.setItem('admin_token', data.token);
-      fetchSystemConfig();
+      fetchSystemConfig(); // 登录成功立即刷新数据
     } else { showFailToast('密码错误'); }
   } catch(e) {}
 };
 
 const saveSystemConfig = async () => {
   showLoadingToast('保存中...');
-  // 确保所有字段都被提交
-  await fetch('/api/rides?action=update_config', {
-    method: 'POST', body: JSON.stringify({ admin_key: adminLoginData.password, config: sysConfig })
+  await fetch('/api/admin?action=save_config', {
+    method: 'POST', body: JSON.stringify({ auth_token: adminLoginData.password, config: sysConfig })
   });
   showSuccessToast('保存成功');
 };
@@ -252,6 +260,7 @@ const banUserAdmin = (uid, ban) => {
   });
 };
 
+// 交互
 const toggleRemark = (tag) => { if (!postForm.remark.includes(tag)) postForm.remark.push(tag); };
 const autoLocate = () => {
   showLoadingToast('定位中...');
@@ -312,7 +321,7 @@ const onConfirmDate = ({selectedOptions}) => {
 const handleCall = (p) => location.href=`tel:${p}`;
 const formatDate = (str) => { if(!str) return ''; const d=new Date(str); return `${d.getMonth()+1}月${d.getDate()}日 ${d.getHours()}点`; };
 
-// 修复：获取我的发布
+// 个人中心逻辑
 const fetchMyRides = async () => { 
   if(userProfile.id) { 
     const res=await fetch(`/api/rides?filter_user_id=${userProfile.id}`); 
@@ -321,6 +330,7 @@ const fetchMyRides = async () => {
 };
 const handleUserDelete = (id) => { showDialog({title:'删除',message:'确认删除?'}).then(async(a)=>{if(a==='confirm'){await fetch(`/api/rides?id=${id}&user_id=${userProfile.id}`,{method:'DELETE'});fetchMyRides();}}); };
 
+// 编辑功能
 const openEditDialog = (item) => { 
   Object.assign(editForm, item); 
   if(typeof editForm.remark !== 'string') editForm.remark = '';
@@ -552,12 +562,16 @@ const closeDetail = () => selectedRide.value = null;
             <div class="detail-item"><van-icon name="gold-coin-o" /> 费用：<span class="price-big">¥{{ selectedRide.price || '面议' }}</span></div>
             <div class="detail-item" v-if="selectedRide.remark"><van-icon name="label-o" /> 备注：{{ selectedRide.remark }}</div>
           </div>
-          <div style="padding:20px;">
-            <van-button block round type="primary" color="#ff6600" @click="handleCall(selectedRide.contact)">拨打联系电话</van-button>
+          <div style="padding:20px;display:flex;gap:10px;">
+            <van-button block round type="primary" color="#ff6600" @click="handleCall(selectedRide.contact)" style="flex:1;">拨打联系电话</van-button>
+            <van-button block round type="warning" @click="showShareGuide=true" style="flex:1;">分享给好友</van-button>
           </div>
         </div>
       </div>
     </van-popup>
+    <div v-if="showShareGuide" class="share-guide" @click="showShareGuide=false">
+      <div style="text-align:right;padding:20px;color:#fff;">点击右上角 [...] 发送给朋友</div>
+    </div>
   </div>
 </template>
 
@@ -607,7 +621,6 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 14p
 .card-row-2 { color: #666; font-size: 13px; margin-bottom: 5px; }
 .call-btn { position: absolute; right: 15px; top: 25px; font-size: 28px; color: orange; background: #fff9f0; padding: 8px; border-radius: 50%; }
 
-/* 个人中心复古橙色风格 */
 .user-card { background: var(--orange); color: #fff; padding: 40px 20px; display: flex; align-items: center; }
 .avatar { width: 60px; height: 60px; border-radius: 50%; background: #fff; margin-right: 15px; object-fit: cover; }
 .stats-row { display: flex; justify-content: space-around; background: #fff; padding: 15px 0; margin-bottom: 10px; }
@@ -618,7 +631,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 14p
 
 .custom-tabbar { position: fixed; bottom: 0; width: 100%; height: 50px; background: #fff; display: flex; border-top: 1px solid #eee; z-index: 999; }
 .tab-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 12px; color: #666; }
-.tab-item.active { color: var(--orange); } /* 选中变为橙色 */
+.tab-item.active { color: var(--orange); }
 .publish-wrap { position: relative; }
 .publish-circle { position: absolute; top: -20px; width: 50px; height: 50px; background: #ff4444; border-radius: 50%; color: #fff; display: flex; align-items: center; justify-content: center; border: 4px solid #fff; box-shadow: 0 -2px 6px rgba(0,0,0,0.1); }
 .role-select-page { height: 100%; background: rgba(0,0,0,0.85); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; }
@@ -629,7 +642,6 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 14p
 .hot-cities-area { padding: 10px; }
 .hot-tag { display: inline-block; padding: 6px 12px; background: #f5f5f5; margin: 5px; border-radius: 4px; color: #333; }
 
-/* 详情页样式复刻 */
 .detail-page { background: #f2f2f2; height: 100%; display: flex; flex-direction: column; } 
 .detail-content { padding: 15px; flex: 1; overflow-y: auto; } 
 .detail-card { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 20px; } 
@@ -641,4 +653,5 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 14p
 .price-big { color: #ff6600; font-size: 20px; font-weight: bold; }
 .badge-type { font-size: 14px; font-weight: bold; color: white; padding: 1px 4px; border-radius: 2px; margin-right: 8px; }
 .badge-type.driver { background: #07c160; } .badge-type.passenger { background: #ff6600; }
+.share-guide { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; }
 </style>
