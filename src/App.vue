@@ -16,14 +16,11 @@ const sysConfig = reactive({
   about_us: ''
 });
 
-// ★★★ 防白屏核心：默认为 true，保证 UI 立即渲染 ★★★
-const appReady = ref(true); 
+// 防白屏
+const appReady = ref(false); 
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
-
-// 退出计数器相关
 let exitCounter = 0;
-let exitTimer = null;
 
 // 后台数据
 const adminLoginData = reactive({ username: '', password: '' });
@@ -42,7 +39,7 @@ const refreshing = ref(false);
 const finished = ref(false);
 const submitLoading = ref(false);
 
-// 弹窗状态
+// 弹窗管理
 const showRolePopup = ref(false);
 const showDatePicker = ref(false);
 const showPaymentDialog = ref(false);
@@ -75,7 +72,6 @@ let geocoderInstance = null;
 // ==========================================
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
-  // 强制按出发时间排序
   return list.value.slice().sort((a, b) => new Date(a.date) - new Date(b.date));
 });
 
@@ -95,18 +91,20 @@ const dateColumns = computed(() => {
   return [years, months, days, hours];
 });
 
-// ★★★ 辅助：车型样式判断 ★★★
+// ★★★ 修复：车型颜色逻辑 (优先判断混合) ★★★
 const getCarClass = (model) => {
   if (!model) return '';
-  if (model.includes('电')) return 'electric';
-  if (model.includes('混合')) return 'hybrid'; // 混动紫色
-  return 'gas';
+  if (model.includes('混合')) return 'hybrid'; // 先判混合(紫色)
+  if (model.includes('电')) return 'electric'; // 再判电(绿色)
+  return 'gas'; // 最后油(红色)
 };
 
 // ==========================================
 // 3. 初始化
 // ==========================================
 onMounted(async () => {
+  setTimeout(() => { if(!appReady.value) appReady.value = true; }, 300);
+
   try {
     const u = localStorage.getItem('user_info');
     if (u) {
@@ -120,7 +118,6 @@ onMounted(async () => {
       localStorage.setItem('user_info', JSON.stringify(userProfile));
     }
 
-    // 异步加载，不阻塞UI
     fetchSystemConfig();
     onLoad(); 
     
@@ -256,7 +253,7 @@ watch(mapSearchKeyword, (newVal) => {
 
 const openMapSelector = (f) => { 
   currentMapField.value = f; 
-  showMapPopup.value = true; 
+  uiState.showMap = true; 
   mapSearchKeyword.value = ''; 
   mapSearchResults.value = []; 
   setTimeout(initMapPicker, 300);
@@ -266,7 +263,7 @@ const confirmMapSelection = () => {
   if(mapSearchKeyword.value) {
     if(currentMapField.value === 'origin') postForm.origin = mapSearchKeyword.value;
     else postForm.destination = mapSearchKeyword.value;
-    showMapPopup.value = false;
+    uiState.showMap = false;
   } else {
     showToast('请移动地图选择');
   }
@@ -276,7 +273,7 @@ const selectSearchResult = (item) => {
   let name = item.name;
   if(currentMapField.value==='origin') postForm.origin = name; 
   else postForm.destination = name; 
-  showMapPopup.value = false; 
+  uiState.showMap = false; 
 };
 
 // ==========================================
@@ -356,7 +353,7 @@ const onPreSubmit = () => {
   
   if (!userProfile.phone) { 
     showDialog({ message: '发布前请绑定手机号' }).then(() => {
-        showAuthModal.value = true;
+        uiState.showAuth = true;
     });
     return;
   }
@@ -456,7 +453,6 @@ const switchTab = (idx) => {
   window.history.pushState({ tab: idx }, null, document.URL);
 };
 
-// ★★★ 修复：退出计数器逻辑 ★★★
 const handlePopState = () => {
   if (showRolePopup.value || showMapPopup.value || showShareGuide.value || selectedRide.value || showDatePicker.value || showPaymentDialog.value) {
     showRolePopup.value = false;
@@ -473,23 +469,18 @@ const handlePopState = () => {
     window.history.pushState({ page: 'home' }, null, document.URL);
     return;
   }
-  
   exitCounter++;
-  if (exitCounter >= 2) {
-    // 超过2次，允许退出 (不pushState)
-    return; 
-  } else {
-    showToast('再按一次退出');
-    window.history.pushState({ page: 'home' }, null, document.URL);
-    // 重置计数器
-    if(exitTimer) clearTimeout(exitTimer);
-    exitTimer = setTimeout(() => { exitCounter = 0; }, 2000);
-  }
+  if (exitCounter < 3) showToast(`再按 ${3 - exitCounter} 次退出`);
+  setTimeout(() => { exitCounter = 0; }, 2000);
 };
 </script>
 
 <template>
-  <div v-if="appReady">
+  <div v-if="!appReady" style="display:flex;justify-content:center;align-items:center;height:100vh;background:#f7f8fa;">
+    <van-loading size="24px" vertical>加载中...</van-loading>
+  </div>
+
+  <div v-else>
     <div v-if="isSystemAdmin" class="admin-wrapper">
       <div v-if="!isLogined" class="admin-login-box">
         <h3>后台管理</h3>
@@ -578,7 +569,7 @@ const handlePopState = () => {
       </div>
 
       <div v-show="activeTab === 0" class="page-home">
-        <van-notice-bar left-icon="volume-o" :text="sysConfig.notice_text" style="height:36px;margin-bottom:5px;" scrollable />
+        <van-notice-bar v-if="activeTab === 0" left-icon="volume-o" :text="sysConfig.notice_text" style="height:36px;margin-bottom:5px;" scrollable />
         <van-swipe :autoplay="3000" class="home-banner">
           <van-swipe-item v-for="i in bannersList" :key="i"><img :src="i" style="width:100%;height:100%;object-fit:cover;"/></van-swipe-item>
         </van-swipe>
@@ -611,7 +602,7 @@ const handlePopState = () => {
 
               <div class="card-row-3" v-if="item.remark">{{ item.remark }}</div>
               
-              <div class="call-btn" @click.stop="handleCall(item.contact)"><van-icon name="phone" color="#fff" /></div>
+              <div class="call-btn" @click.stop="handleCall(item.contact)"><van-icon name="phone" color="#fff" size="20" /></div>
             </div>
           </van-list>
         </van-pull-refresh>
@@ -784,8 +775,8 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .info-item.center { flex: 1; justify-content: center; color: #333; font-weight: 500; }
 .price-val { color: #000; font-size: 20px; font-weight: bold; }
 .card-row-3 { font-size: 13px; color: #999; background: #f8f8f8; padding: 8px; border-radius: 6px; }
-/* 实心电话按钮 */
-.call-btn { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 32px; color: #fff; background: #ff6600; padding: 10px; border-radius: 50%; z-index: 10; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 50px; height: 50px; }
+/* ★★★ 修复：实心电话按钮缩小 (36px) ★★★ */
+.call-btn { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 20px; color: #fff; background: #ff6600; padding: 8px; border-radius: 50%; z-index: 10; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; }
 
 /* 底部发布按钮 */
 .custom-tabbar { position: fixed; bottom: 0; width: 100%; height: 65px; background: #fff; display: flex; border-top: 1px solid #eee; z-index: 999; padding-bottom: constant(safe-area-inset-bottom); padding-bottom: env(safe-area-inset-bottom); }
