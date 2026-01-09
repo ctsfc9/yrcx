@@ -46,7 +46,7 @@ const authStep = ref(1);
 const showShareGuide = ref(false);
 const selectedRide = ref(null);
 
-// 表单数据
+// 表单
 const userProfile = reactive({ id: '', nickname: '未登录', avatar: '', phone: '', balance: '0.00', isLogin: false });
 const registerForm = reactive({ phone: '' });
 const postForm = reactive({ 
@@ -54,7 +54,7 @@ const postForm = reactive({
   seats: 1, price: '', remark: [], contact: '', car_model: '', is_top: false 
 });
 
-// 地图数据
+// 地图
 const mapSearchKeyword = ref('');
 const mapSearchResults = ref([]);
 const currentMapField = ref(''); 
@@ -150,7 +150,7 @@ const fetchSystemConfig = async () => {
 };
 
 // ==========================================
-// 4. 地图逻辑 (★ 强力修复版 ★)
+// 4. 地图逻辑 (★ 恢复详细定位 ★)
 // ==========================================
 const loadAMapScript = (key) => {
   if (window.AMap) return;
@@ -162,32 +162,29 @@ const loadAMapScript = (key) => {
 
 const autoLocate = () => {
   if (!window.AMap) { 
-    showFailToast('加载中...'); 
-    // 地图未加载完成时，延迟重试
+    showFailToast('地图加载中...'); 
     setTimeout(autoLocate, 1000);
     return; 
   }
   
-  showLoadingToast({ message: '获取位置...', forbidClick: true, duration: 3000 });
+  showLoadingToast({ message: '获取位置...', forbidClick: true, duration: 5000 });
 
-  // 1. IP定位 (最快，兜底)
+  // 1. IP定位 (秒开兜底)
   AMap.plugin('AMap.CitySearch', function () {
     var citySearch = new AMap.CitySearch();
     citySearch.getLocalCity(function (status, result) {
       if (status === 'complete' && result.info === 'OK') {
         const city = result.city || result.province;
-        
-        // ★ 核心修复：直接强制赋值，确保 UI 刷新 ★
-        nextTick(() => {
+        // 还没获取到GPS前，先显示城市，防白板
+        if (!postForm.origin) {
           postForm.origin = city;
           closeToast();
-          showSuccessToast('已定位：' + city);
-        });
-
-        // 2. 后台尝试 GPS 修正 (静默)
+          showSuccessToast('大致位置：' + city);
+        }
+        // 2. 尝试 GPS 精确覆盖
         tryGPSCorrection();
       } else {
-        tryGPSCorrection(); // IP失败直接试GPS
+        tryGPSCorrection();
       }
     })
   });
@@ -195,18 +192,22 @@ const autoLocate = () => {
 
 const tryGPSCorrection = () => {
   AMap.plugin('AMap.Geolocation', function() {
-    var geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 4000 });
+    var geolocation = new AMap.Geolocation({ 
+      enableHighAccuracy: true, 
+      timeout: 5000,
+      extensions: 'all' // ★ 开启详情
+    });
     geolocation.getCurrentPosition(function(status, result) {
       if(status == 'complete'){
-        // 提取区+街道
-        const ac = result.addressComponent;
-        let safeAddr = (ac.district||'') + (ac.street||ac.township||'');
-        if (!safeAddr) safeAddr = (result.formattedAddress || '').substring(0, 15);
-        safeAddr = safeAddr.replace(/[0-9]+[号室栋楼]/g, '').replace(/单元/g, '');
-
-        if(safeAddr) {
+        // ★★★ 修复：不再正则过滤，直接使用最详细地址 ★★★
+        // 优先使用 formattedAddress (含门牌号)
+        const detailedAddr = result.formattedAddress || '';
+        
+        if(detailedAddr) {
           nextTick(() => {
-            postForm.origin = safeAddr; // 覆盖之前的城市名
+            postForm.origin = detailedAddr;
+            closeToast();
+            showSuccessToast('定位成功');
           });
         }
       }
@@ -466,12 +467,9 @@ const handlePopState = () => {
           <div class="info-group">
             <div class="form-row"><div class="label">座位</div><div class="seat-grid"><div v-for="n in 6" :key="n" class="seat-btn" :class="{active:postForm.seats===n}" @click="postForm.seats=n">{{n}}</div></div></div>
             <div v-if="postForm.type==='driver'" class="form-row"><div class="label">车型</div><van-radio-group v-model="postForm.car_model" direction="horizontal"><van-radio name="油车">油车</van-radio><van-radio name="电车">电车</van-radio></van-radio-group></div>
-            <van-cell title="时间" is-link :value="postForm.dateDisplay||'请选择'" @click="showDatePicker=true" />
-            <div class="form-row"><div class="label">费用</div><div style="flex:1"><van-field v-model="postForm.price" type="digit" :formatter="priceFormatter" placeholder="元" input-align="right"/></div></div>
-            <div class="form-row" style="flex-direction:column;align-items:flex-start;">
-              <div class="label" style="margin-bottom:5px;">备注</div>
-              <van-field v-model="remarkDisplayText" readonly type="textarea" rows="2" style="background:#f9f9f9;border-radius:4px;width:100%;" />
-            </div>
+            <div class="form-row"><div class="label">出发时间</div><div style="flex:1" @click="showDatePicker=true">{{ postForm.dateDisplay || '请选择' }} <van-icon name="arrow" style="float:right;margin-top:3px;color:#999"/></div></div>
+            <div class="form-row"><div class="label">费用</div><div style="flex:1"><van-field v-model="postForm.price" type="digit" :formatter="priceFormatter" placeholder="元" input-align="right" style="padding:0"/></div></div>
+            <div class="form-row" style="align-items:flex-start;"><div class="label" style="margin-top:8px;">备注</div><van-field v-model="remarkDisplayText" readonly type="textarea" rows="2" style="background:#f9f9f9;border-radius:4px;width:100%;padding:8px;" /></div>
           </div>
           <div class="tags-group"><div v-for="t in currentRemarkOptions" :key="t" class="tag-item" @click="toggleRemark(t)">{{t}}</div></div>
         </div>
@@ -563,8 +561,8 @@ const handlePopState = () => {
         <div class="tab-item" :class="{active: activeTab===0}" @click="switchTab(0)"><van-icon name="wap-home-o"/>首页</div>
         <div class="tab-item publish-wrap" @click="showRolePopup=true">
           <div class="publish-float-btn">
-            <van-icon name="plus" size="18" />
-            <span style="font-size:12px;font-weight:900;">发布</span>
+            <van-icon name="plus" size="20" />
+            <span style="font-size:13px;font-weight:900;">发布</span>
           </div>
         </div>
         <div class="tab-item" :class="{active: activeTab===2}" @click="switchTab(2)"><van-icon name="user-o"/>我的</div>
@@ -633,7 +631,6 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 
 /* 首页布局优化 */
 .page-home { padding: 10px; }
-/* 修复：卡片右边距增加到90px */
 .ride-card { background: #fff; margin: 10px; padding: 15px; padding-right: 90px; border-radius: 12px; position: relative; box-shadow: 0 2px 8px rgba(0,0,0,0.02); }
 /* 第一排 */
 .card-row-1 { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
@@ -681,19 +678,22 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .dot { width: 16px; height: 16px; border-radius: 50%; color: #fff; text-align: center; margin-right: 10px; font-size: 12px; flex-shrink: 0; }
 .dot.green { background: var(--green); } .dot.red { background: red; }
 .input-area { font-size: 16px; font-weight: bold; flex: 1; color: #333; }
-.form-row { display: flex; align-items: center; padding: 12px 0; border-bottom: 1px solid #f5f5f5; }
-.form-row .label { width: 60px; color: #666; }
+/* 修复：行间距压缩为 8px */
+.form-row { display: flex; align-items: center; padding: 8px 0; border-bottom: 1px solid #f5f5f5; }
+/* 修复：标签对齐 */
+.form-row .label { width: 75px; color: #666; font-size: 14px; }
 .seat-grid { display: flex; gap: 8px; }
 .seat-btn { width: 30px; height: 30px; background: #f0f0f0; display: flex; align-items: center; justify-content: center; border-radius: 4px; }
 .seat-btn.active { background: var(--blue); color: #fff; }
 /* 修复：标签样式加大，增加底部距离 */
 .tags-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; margin-bottom: 30px; }
 .tag-item { padding: 6px 14px; background: #f0f0f0; border-radius: 4px; font-size: 14px; }
-.top-bar { display: none; /* 修复：隐藏标题 */ }
+.top-bar { text-align: center; padding: 12px; background: #fff; font-weight: bold; font-size: 18px; }
 /* 修复：广告高度 140px */
 .home-banner { height: 140px; }
+/* 修复：筛选按钮高度减小 */
 .nav-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; background: #fff; }
-.nav-btn { height: 50px; display: flex; align-items: center; justify-content: center; color: #fff; border-radius: 8px; font-weight: bold; font-size: 16px; gap: 5px; opacity: 0.9; }
+.nav-btn { height: 40px; display: flex; align-items: center; justify-content: center; color: #fff; border-radius: 8px; font-weight: bold; font-size: 15px; gap: 5px; opacity: 0.9; }
 .nav-btn.btn-blue { background: #4fc1e9; } .nav-btn.btn-green { background: #a0d468; }
 .search-box { display: flex; padding: 10px; background: #fff; gap: 8px; }
 .search-box input { flex: 1; border: 1px solid #eee; padding: 10px; border-radius: 4px; text-align: center; background: #f9f9f9; font-size: 14px; }
