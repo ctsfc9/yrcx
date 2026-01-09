@@ -3,12 +3,12 @@ import { ref, reactive, computed, nextTick, onMounted, watch } from 'vue';
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
 // ==========================================
-// 1. 全局配置与状态
+// 1. 全局配置
 // ==========================================
 const sysConfig = reactive({
   platform_name: '宜人出行',
   kefu_wechat: 'keea02',
-  notice_text: '欢迎使用宜人出行，数据连接中...',
+  notice_text: '欢迎使用宜人出行，真实发布，拒绝虚假信息。',
   tags_driver: '有行李,走高速,可吸烟,线下支付',
   tags_passenger: '有行李,走高速,只限女生,线下支付',
   banners: 'https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg,https://fastly.jsdelivr.net/npm/@vant/assets/apple-2.jpeg',
@@ -16,7 +16,7 @@ const sysConfig = reactive({
   about_us: ''
 });
 
-// ★★★ 核心修复：默认为 true，绝不让页面白屏 ★★★
+// 默认直接显示，防止白屏
 const appReady = ref(true); 
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
@@ -38,7 +38,7 @@ const loading = ref(false);
 const refreshing = ref(false);
 const finished = ref(false);
 
-// 弹窗
+// 弹窗状态
 const uiState = reactive({
   showRole: false,
   showDate: false,
@@ -93,43 +93,44 @@ const dateColumns = computed(() => {
 });
 
 // ==========================================
-// 3. 初始化 (非阻塞式)
+// 3. 初始化
 // ==========================================
-onMounted(() => {
-  // 1. 初始化逻辑放在 setTimeout 中，确保 Vue 渲染周期完成，避免报错阻塞 UI
-  setTimeout(async () => {
-    try {
-      // 1.1 读取本地缓存的用户信息
-      const u = localStorage.getItem('user_info');
-      if (u) {
-        try { Object.assign(userProfile, JSON.parse(u)); } catch(e){}
-      } else {
-        userProfile.id = 'u_' + Date.now();
-        localStorage.setItem('user_info', JSON.stringify(userProfile));
-      }
+onMounted(async () => {
+  try {
+    fetchSystemConfig(); // 获取配置
 
-      // 1.2 尝试获取配置 (失败不影响主流程)
-      fetchSystemConfig();
-
-      // 1.3 尝试初始化 D1 表结构 (如果是第一次部署)
-      fetch('/api/rides?init=true').catch(e => console.warn('DB Init check skipped'));
-
-      // 1.4 加载列表数据
-      onLoad();
-
-      // 1.5 延迟加载地图 (完全不影响白屏)
-      loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
-
-      // 1.6 管理员登录状态
-      if (window.location.pathname === '/admin' && localStorage.getItem('admin_token')) {
-        isSystemAdmin.value = true;
+    if (window.location.pathname === '/admin') {
+      isSystemAdmin.value = true;
+      if(localStorage.getItem('admin_token')) {
+        adminLoginData.password = localStorage.getItem('admin_token');
         isLogined.value = true;
       }
-    } catch(e) {
-      console.error("Setup Error:", e);
-      // 即使出错，UI 依然会显示
+    } else {
+      // 2. 加载用户 (修复：确保有ID就是已登录状态)
+      const u = localStorage.getItem('user_info');
+      if (u) {
+        try { 
+          Object.assign(userProfile, JSON.parse(u));
+          if(userProfile.id) userProfile.isLogin = true; // 强制修正登录状态
+        } catch(e){}
+      } else {
+        // 自动初始化访客
+        userProfile.id = 'u_' + Date.now();
+        userProfile.isLogin = true; // 访客也是登录态，但在发布时校验手机
+        localStorage.setItem('user_info', JSON.stringify(userProfile));
+      }
+      
+      // 3. 拉取 D1 数据
+      onLoad();
+
+      // 4. 异步加载地图
+      setTimeout(() => {
+        loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
+      }, 500);
     }
-  }, 100);
+  } catch(e) {
+    console.error("Init Error", e);
+  }
 
   window.history.replaceState({ page: 'home' }, null, document.URL);
   window.addEventListener('popstate', handlePopState);
@@ -142,20 +143,17 @@ const fetchSystemConfig = async () => {
       const data = await res.json();
       if(data && Object.keys(data).length > 0) Object.assign(sysConfig, data);
     }
-  } catch(e) {
-    // 静默失败，使用默认配置
-  }
+  } catch(e) {}
 };
 
 // ==========================================
-// 4. 地图逻辑 (省+市+区)
+// 4. 地图逻辑
 // ==========================================
 const loadAMapScript = (key) => {
   if (window.AMap) return;
   window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' }; 
   const script = document.createElement('script');
   script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Map,AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`;
-  script.onerror = () => showFailToast('地图服务连接失败');
   document.body.appendChild(script);
 };
 
@@ -221,12 +219,10 @@ const initMapPicker = () => {
   nextTick(() => {
     const el = document.getElementById('picker-map-container');
     if(!el) return;
-    
     mapInstance = new AMap.Map(el, { zoom: 13, center: [104.630526, 28.766155] });
     AMap.plugin('AMap.CitySearch', function () {
         new AMap.CitySearch().getLocalCity((s, r) => { if(s==='complete'&&r.bounds) mapInstance.setBounds(r.bounds); });
     });
-
     mapInstance.on('moveend', () => {
       const center = mapInstance.getCenter();
       if(!geocoderInstance) geocoderInstance = new AMap.Geocoder();
@@ -278,11 +274,10 @@ const selectSearchResult = (item) => {
 };
 
 // ==========================================
-// 5. 业务交互 (★ D1 数据库连接 ★)
+// 5. 业务交互 (D1数据库)
 // ==========================================
 const onRefresh = () => { refreshing.value = true; onLoad(); };
 
-// ★★★ 核心：调用 Cloudflare Functions 获取数据 ★★★
 const onLoad = async () => {
   if (refreshing.value) {
     list.value = [];
@@ -292,25 +287,18 @@ const onLoad = async () => {
   loading.value = true;
   try {
     const res = await fetch(`/api/rides?type=${filterType.value}`);
-    if (!res.ok) throw new Error('API Error');
-    
-    const data = await res.json();
-    if (data.results) {
-      list.value = data.results;
+    if(res.ok) {
+      const data = await res.json();
+      if (data.results) list.value = data.results;
     }
   } catch(e) {
-    console.error("Data Load Error:", e);
-    // 可选：如果是首次加载失败，显示一个 Toast 提示用户检查后端状态
-    if (list.value.length === 0) {
-      // showFailToast('连接服务器失败，请检查网络或部署状态');
-    }
+    console.warn("Fetch Error", e);
   }
   
   loading.value = false;
   finished.value = true;
 };
 
-// 获取我的发布
 const fetchMyRides = async () => {
   if(!userProfile.id) return;
   try {
@@ -362,19 +350,33 @@ const priceFormatter = (val) => {
   return val;
 };
 
+// ★★★ 修复：“立即发布”按钮逻辑 ★★★
 const onPreSubmit = () => {
-  if (!userProfile.isLogin) { uiState.showAuth=true; return; }
-  if (!postForm.origin || !postForm.destination) { showFailToast('请完善路线'); return; }
+  // 1. 基础校验
+  if (!postForm.origin || !postForm.destination) { 
+    showFailToast('请完善起终点'); 
+    return; 
+  }
+  
+  // 2. 身份校验：必须绑定手机号
+  // 如果没有手机号，无论是否登录，都强制弹出绑定框
   if (!userProfile.phone) { 
-    showDialog({ message: '发布前请绑定手机号' });
-    uiState.showAuth = true;
+    showDialog({ message: '发布行程前，请先验证手机号' }).then(() => {
+        uiState.showAuth = true;
+    });
     return;
   }
-  if (parseFloat(postForm.price) > 9999) { showFailToast('费用上限9999元'); return; }
+  
+  // 3. 价格校验
+  if (parseFloat(postForm.price) > 9999) { 
+    showFailToast('费用上限9999'); 
+    return; 
+  }
+  
+  // 4. 通过校验，打开确认支付(发布)弹窗
   uiState.showPay = true;
 };
 
-// ★★★ 核心：发布数据到 D1 ★★★
 const handleRealPublish = async () => {
   const newRide = {
     user_id: userProfile.id,
@@ -401,22 +403,20 @@ const handleRealPublish = async () => {
     if (res.ok) {
       closeToast();
       showSuccessToast('发布成功');
-      
       // 清空
       postForm.origin = '';
       postForm.destination = '';
       postForm.price = '';
       postForm.remark = [];
-      
-      // 回到首页并刷新
+      // 回到首页
       switchTab(0);
     } else {
       closeToast();
-      showFailToast('发布失败，服务器异常');
+      showFailToast('发布失败');
     }
   } catch(e) {
     closeToast();
-    showFailToast('网络请求错误');
+    showFailToast('网络错误');
   }
 };
 
@@ -441,7 +441,8 @@ const handleBindPhone = () => {
   userProfile.phone=registerForm.phone; 
   uiState.showAuth = false; 
   localStorage.setItem('user_info',JSON.stringify(userProfile)); 
-  showSuccessToast('登录成功');
+  showSuccessToast('绑定成功');
+  // 如果是在发布流程中，绑定成功后可以直接继续发布，或者让用户重新点一下
 };
 
 const onConfirmDate = ({selectedOptions}) => {
@@ -453,11 +454,8 @@ const onConfirmDate = ({selectedOptions}) => {
 };
 
 const handleCall = (p) => { 
-  if(p && p.length > 5) {
-    window.location.href = `tel:${p}`;
-  } else {
-    showFailToast('无号码');
-  }
+  if(p && p.length > 5) window.location.href = `tel:${p}`;
+  else showFailToast('无号码');
 };
 
 const formatDate = (str) => { if(!str) return ''; const d=new Date(str); return `${d.getMonth()+1}月${d.getDate()}日 ${d.getHours()}点`; };
@@ -579,7 +577,7 @@ const handlePopState = () => {
             <div class="form-row"><div class="label">费用</div><div style="flex:1"><van-field v-model="postForm.price" type="digit" :formatter="priceFormatter" placeholder="元" input-align="right" :border="false"/></div></div>
             <div class="form-row" style="align-items:flex-start;border-bottom:none;">
               <div class="label" style="margin-top:8px;">备注</div>
-              <van-field v-model="remarkDisplayText" readonly type="textarea" rows="2" placeholder="请选择下方标签或输入备注" style="background:#f9f9f9;border-radius:4px;width:100%;padding:8px;" />
+              <van-field v-model="remarkDisplayText" readonly type="textarea" rows="2" placeholder="请选择下方标签" style="background:#f9f9f9;border-radius:4px;width:100%;padding:8px;" />
             </div>
           </div>
           <div class="tags-group"><div v-for="t in currentRemarkOptions" :key="t" class="tag-item" :class="{active: postForm.remark.includes(t)}" @click="toggleRemark(t)">{{t}}</div></div>
