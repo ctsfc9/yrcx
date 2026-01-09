@@ -1,9 +1,9 @@
 <script setup>
-import { ref, reactive, computed, nextTick, onMounted } from 'vue';
+import { ref, reactive, computed, nextTick, onMounted, watch } from 'vue';
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
 // ==========================================
-// 1. 全局配置
+// 1. 全局配置 & 状态
 // ==========================================
 const sysConfig = reactive({
   platform_name: '宜人出行',
@@ -45,8 +45,7 @@ const uiState = reactive({
   showMap: false,
   showAuth: false,
   showShare: false,
-  selectedRide: null,
-  authStep: 1
+  selectedRide: null
 });
 
 // 表单数据
@@ -57,13 +56,17 @@ const postForm = reactive({
   seats: 1, price: '', remark: [], contact: '', car_model: '', is_top: false 
 });
 
-// 地图数据
+// 地图
 const mapSearchKeyword = ref('');
 const mapSearchResults = ref([]);
 const currentMapField = ref(''); 
 const hotCities = ['宜宾', '成都', '重庆', '昆明', '贵阳', '东莞', '深圳', '广州', '上海', '宁波', '温州', '嘉兴'];
 const carModelOptions = ['油车', '电车'];
 const seatColumns = Array.from({length: 6}, (_, i) => ({ text: `${i + 1}座`, value: i + 1 }));
+
+// 地图实例引用
+let mapInstance = null;
+let geocoderInstance = null;
 
 // ==========================================
 // 2. 计算属性
@@ -73,40 +76,35 @@ const safeList = computed(() => {
   return list.value.filter(item => item && item.origin && item.destination);
 });
 
+// 移除快捷线路的计算（因为首页不展示了，但保留逻辑以免报错）
+const displayQuickRoutes = computed(() => []);
+
 const bannersList = computed(() => (sysConfig.banners || '').split(',').filter(Boolean));
 const currentRemarkOptions = computed(() => {
   const str = postForm.type === 'driver' ? sysConfig.tags_driver : sysConfig.tags_passenger;
   return (str || '').split(',').filter(Boolean);
 });
-// 修复：备注显示逻辑
-const remarkDisplayText = computed(() => {
-  if (postForm.remark && postForm.remark.length > 0) return postForm.remark.join('，');
-  return ''; // 为空时不显示，让 placeholder 生效
-});
+const remarkDisplayText = computed(() => (postForm.remark || []).join('，'));
 
-// 修复：找回时间选择器配置
 const dateColumns = computed(() => {
   const y = new Date().getFullYear();
-  const m = new Date().getMonth() + 1;
-  const d = new Date().getDate();
-  // 生成简单的 [年, 月, 日, 时] 级联或独立列，这里为了兼容性使用多列选择
-  // 第一列：年
+  // 简单多列选择器
   const years = [{ text: `${y}年`, value: y }, { text: `${y+1}年`, value: y+1 }];
-  // 第二列：月
   const months = Array.from({length: 12}, (_, i) => ({ text: `${i+1}月`, value: i+1 }));
-  // 第三列：日
   const days = Array.from({length: 31}, (_, i) => ({ text: `${i+1}日`, value: i+1 }));
-  // 第四列：时
   const hours = Array.from({length: 24}, (_, i) => ({ text: `${i}点`, value: i }));
-  
   return [years, months, days, hours];
 });
 
 // ==========================================
-// 3. 初始化 & 历史记录管理 (防退出)
+// 3. 初始化
 // ==========================================
 onMounted(async () => {
   try {
+    // 1. 先让页面显示出来，避免白屏
+    appReady.value = true;
+    
+    // 2. 加载配置
     await fetchSystemConfig();
 
     if (window.location.pathname === '/admin') {
@@ -123,51 +121,20 @@ onMounted(async () => {
         if(userProfile.isLogin) fetchMyRides();
       }
       
+      // 3. 异步加载地图
       loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
-      setTimeout(() => onLoad(), 200);
-    }
-  } catch(e) { console.error(e); } 
-  finally { appReady.value = true; }
-
-  // ★★★ 核心修复：历史记录栈管理 (防误触退出) ★★★
-  // 初始化推入一个状态
-  window.history.pushState({ page: 'home' }, null, document.URL);
-  
-  window.addEventListener('popstate', (e) => {
-    // 1. 如果有弹窗/二级页面，优先关闭
-    if (uiState.showRole || uiState.showMap || uiState.showShare || uiState.selectedRide || uiState.showDate || uiState.showPay) {
-      uiState.showRole = false;
-      uiState.showMap = false;
-      uiState.showShare = false;
-      uiState.selectedRide = null;
-      uiState.showDate = false;
-      uiState.showPay = false;
-      // 阻止退出，重新推入状态保持在页面
-      window.history.pushState({ page: 'modal_close' }, null, document.URL);
-      return;
-    }
-
-    // 2. 如果不在首页 Tab，切回首页
-    if (activeTab.value !== 0) {
-      activeTab.value = 0;
-      window.history.pushState({ page: 'home' }, null, document.URL);
-      return;
-    }
-
-    // 3. 在首页，执行 3 次退出逻辑
-    exitCounter++;
-    if (exitCounter < 3) {
-      showToast(`再按 ${3 - exitCounter} 次退出`);
-      // 再次推入状态，阻止浏览器关闭
-      window.history.pushState({ page: 'home' }, null, document.URL);
-    } else {
-      // 允许退出 (不推入状态)
-      // 这里的逻辑是浏览器默认行为会执行后退，从而关闭页面
+      
+      // 4. 加载数据
+      onLoad();
     }
     
-    // 2秒后重置计数器
-    setTimeout(() => { exitCounter = 0; }, 2000);
-  });
+    // 5. 绑定返回键监听 (安全模式)
+    initHistoryState();
+    
+  } catch(e) {
+    console.error("Init Error", e);
+    appReady.value = true; // 确保出错也能渲染
+  }
 });
 
 const fetchSystemConfig = async () => {
@@ -183,32 +150,77 @@ const fetchSystemConfig = async () => {
   } catch(e) {}
 };
 
+// --- 防误触退出逻辑 ---
+const initHistoryState = () => {
+  // 替换当前状态，标记为 home
+  window.history.replaceState({ page: 'home' }, null, document.URL);
+  // 再推入一个，作为缓冲
+  window.history.pushState({ page: 'buffer' }, null, document.URL);
+
+  window.addEventListener('popstate', () => {
+    // 1. 如果有弹窗，优先关闭弹窗
+    if (uiState.showRole || uiState.showMap || uiState.showShare || uiState.selectedRide || uiState.showDate || uiState.showPay) {
+      uiState.showRole = false;
+      uiState.showMap = false;
+      uiState.showShare = false;
+      uiState.selectedRide = null;
+      uiState.showDate = false;
+      uiState.showPay = false;
+      // 保持在当前页
+      window.history.pushState({ page: 'buffer' }, null, document.URL);
+      return;
+    }
+
+    // 2. 如果不在首页，切回首页
+    if (activeTab.value !== 0) {
+      activeTab.value = 0;
+      window.history.pushState({ page: 'buffer' }, null, document.URL);
+      return;
+    }
+
+    // 3. 在首页，检测退出
+    exitCounter++;
+    if (exitCounter < 3) {
+      showToast(`再按 ${3 - exitCounter} 次退出`);
+      window.history.pushState({ page: 'buffer' }, null, document.URL);
+    } else {
+      // 允许退出 (不再 pushState)
+    }
+    setTimeout(() => { exitCounter = 0; }, 2000);
+  });
+};
+
 // ==========================================
-// 4. 地图与定位 (保持省市区)
+// 4. 地图逻辑 (修复：省+市+区 & 拖动选点)
 // ==========================================
 const loadAMapScript = (key) => {
   if (window.AMap) return;
   window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' }; 
   const script = document.createElement('script');
-  script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`;
+  script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Map,AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`;
   document.body.appendChild(script);
 };
 
+// ★ 核心：地址格式化 (仅省+市+区) ★
 const formatAddressPCD = (ac) => {
   if (!ac) return '';
   const province = ac.province || '';
   const city = ac.city || '';
   const district = ac.district || '';
+  
   let addr = province;
+  // 避免 "重庆市重庆市"
   if (city && city !== province) { addr += city; }
   if (district) { addr += district; }
-  return addr; 
+  return addr || province; 
 };
 
+// 自动定位
 const autoLocate = () => {
   if (!window.AMap) { showFailToast('地图加载中...'); return; }
   showLoadingToast({ message: '定位中...', forbidClick: true, duration: 5000 });
 
+  // 1. IP定位优先
   AMap.plugin('AMap.CitySearch', function () {
     var citySearch = new AMap.CitySearch();
     citySearch.getLocalCity(function (status, result) {
@@ -216,6 +228,7 @@ const autoLocate = () => {
         const city = result.city || result.province;
         if (!postForm.origin) postForm.origin = city; 
       }
+      // 2. GPS 覆盖
       tryGPSCorrection();
     })
   });
@@ -234,13 +247,10 @@ const tryGPSCorrection = () => {
             const ac = geoResult.regeocode.addressComponent;
             const finalAddr = formatAddressPCD(ac);
             updateOrigin(finalAddr);
-          } else {
-            const simple = (result.formattedAddress || '').substring(0, 12);
-            updateOrigin(simple);
           }
         });
       } else {
-        closeToast(); 
+        closeToast(); // 静默失败
       }
     });
   });
@@ -251,6 +261,44 @@ const updateOrigin = (addr) => {
     postForm.origin = addr;
     closeToast();
     showSuccessToast('已定位：' + addr);
+  });
+};
+
+// ★ 修复：地图选点初始化 ★
+const initMapPicker = () => {
+  if (!window.AMap) return;
+  // 每次打开都重新初始化或重置
+  if (mapInstance) {
+    mapInstance.resize(); // 确保显示
+    return;
+  }
+
+  nextTick(() => {
+    const el = document.getElementById('picker-map-container');
+    if (!el) return;
+
+    mapInstance = new AMap.Map(el, { zoom: 14, center: [104.630526, 28.766155] });
+
+    // 拖动结束回调
+    mapInstance.on('moveend', () => {
+      const center = mapInstance.getCenter();
+      if(!geocoderInstance) geocoderInstance = new AMap.Geocoder();
+      
+      geocoderInstance.getAddress(center, (status, result) => {
+        if (status === 'complete' && result.regeocode) {
+          const ac = result.regeocode.addressComponent;
+          // 应用 省+市+区 规则
+          const simple = formatAddressPCD(ac);
+          mapSearchKeyword.value = simple;
+        }
+      });
+    });
+
+    // 定位到当前
+    AMap.plugin('AMap.Geolocation', function() {
+      var g = new AMap.Geolocation();
+      g.getCurrentPosition((s, r) => { if(s==='complete') mapInstance.setCenter(r.position); });
+    });
   });
 };
 
@@ -270,29 +318,39 @@ const openMapSelector = (f) => {
   uiState.showMap = true; 
   mapSearchKeyword.value = ''; 
   mapSearchResults.value = []; 
-  // 模拟地图展示
+  // 延迟渲染地图
+  setTimeout(initMapPicker, 300);
 };
-const selectLocation = (item) => { 
-  const n = typeof item === 'string' ? item : item.name; 
-  if(currentMapField.value==='origin') postForm.origin = n; 
-  else postForm.destination = n; 
+
+const confirmMapSelection = () => {
+  if(mapSearchKeyword.value) {
+    if(currentMapField.value === 'origin') postForm.origin = mapSearchKeyword.value;
+    else postForm.destination = mapSearchKeyword.value;
+    uiState.showMap = false;
+  }
+};
+
+const selectSearchResult = (item) => { 
+  let name = item.name;
+  // 这里如果高德返回了adcode，其实可以用Geocoder再查一次详情，但为了简单直接用name
+  if(currentMapField.value==='origin') postForm.origin = name; 
+  else postForm.destination = name; 
   uiState.showMap = false; 
 };
 
 // ==========================================
-// 5. 业务逻辑 (修复刷新与电话)
+// 5. 业务逻辑 (修复数据丢失)
 // ==========================================
 const onLoad = async () => {
-  // 只有在 refreshing 或 列表为空时才显示 loading
   if (refreshing.value) {
     list.value = [];
     refreshing.value = false;
   }
   
-  if (list.value.length > 0 && !refreshing.value) {
-    loading.value = false;
+  // 如果不是刷新且有数据，不重复加载
+  if (!loading.value && list.value.length > 0) {
     finished.value = true;
-    return; // 已有数据，不重复加载
+    return;
   }
 
   loading.value = true;
@@ -310,7 +368,6 @@ const onLoad = async () => {
 
 const setFilter = (type) => { 
   filterType.value = type; 
-  // 切换类型时强制刷新
   refreshing.value = true; 
   onLoad(); 
 };
@@ -363,6 +420,11 @@ const banUserAdmin = (uid, ban) => {
 
 const toggleRemark = (tag) => { if (!postForm.remark.includes(tag)) postForm.remark.push(tag); };
 
+const priceFormatter = (val) => {
+  if(val && val.length > 4) return val.slice(0, 4); 
+  return val;
+};
+
 const onPreSubmit = () => {
   if (!userProfile.isLogin) { uiState.showAuth=true; return; }
   if (!postForm.origin || !postForm.destination) { showFailToast('请完善路线'); return; }
@@ -400,24 +462,18 @@ const handleBindPhone = () => {
 
 const onRefresh = () => { refreshing.value = true; onLoad(); };
 
-// 修复：时间选择回调
 const onConfirmDate = ({selectedOptions}) => {
-  // selectedOptions 是数组对象 [{text, value}, ...]
   const vals = selectedOptions.map(o => o.value);
   const f = n=>String(n).padStart(2,'0');
-  // 格式：年 月 日 时
   postForm.dateDisplay = `${vals[0]}年${vals[1]}月${vals[2]}日 ${vals[3]}点`;
   postForm.date = `${vals[0]}-${f(vals[1])}-${f(vals[2])}T${f(vals[3])}:00`;
   uiState.showDate = false;
 };
 
-// ★★★ 修复：电话拨打 ★★★
+// 修复：电话拨打
 const handleCall = (p) => { 
-  if(p) {
-    window.location.href = `tel:${p}`;
-  } else {
-    showFailToast('无号码');
-  }
+  if(p) window.location.href = `tel:${p}`;
+  else showFailToast('无号码');
 };
 
 const formatDate = (str) => { if(!str) return ''; const d=new Date(str); return `${d.getMonth()+1}月${d.getDate()}日 ${d.getHours()}点`; };
@@ -430,10 +486,10 @@ const fetchMyRides = async () => {
 };
 const handleUserDelete = (id) => { showDialog({title:'提示',message:'确认删除?'}).then(async(a)=>{if(a==='confirm'){await fetch(`/api/rides?id=${id}&user_id=${userProfile.id}`,{method:'DELETE'});fetchMyRides();}}); };
 
-// ★★★ 修复：首页返回逻辑 ★★★
+// ★ 修复：切换Tab不丢失数据 ★
 const switchTab = (idx) => {
   if (activeTab.value === idx && idx === 0) {
-    // 已经在首页且再次点击首页 -> 强制刷新
+    // 强制刷新
     refreshing.value = true;
     onLoad();
     return;
@@ -442,7 +498,7 @@ const switchTab = (idx) => {
   activeTab.value = idx;
   
   if (idx === 0) { 
-    // 切换回首页，检查是否有数据，无数据则加载
+    // 如果列表为空，则加载；否则保留现有数据
     if(list.value.length === 0) {
         refreshing.value = true;
         onLoad();
@@ -451,9 +507,6 @@ const switchTab = (idx) => {
   else if (idx === 2) { 
     fetchMyRides(); 
   }
-  
-  // 切换Tab时推入历史记录，便于返回逻辑拦截
-  window.history.pushState({ tab: idx }, null, document.URL);
 };
 </script>
 
@@ -513,7 +566,6 @@ const switchTab = (idx) => {
               <div style="margin:20px;"><van-button block type="primary" native-type="submit">保存</van-button></div>
             </van-form>
           </div>
-          
           <div v-if="adminActiveMenu==='rides'">
             <div v-for="item in adminRideList" :key="item.id" class="admin-list-item">
               <span style="flex:1">{{ item?.origin }}→{{ item?.destination }}</span>
@@ -550,7 +602,7 @@ const switchTab = (idx) => {
             <div class="form-row"><div class="label">座位</div><div class="seat-grid"><div v-for="n in 6" :key="n" class="seat-btn" :class="{active:postForm.seats===n}" @click="postForm.seats=n">{{n}}</div></div></div>
             <div v-if="postForm.type==='driver'" class="form-row"><div class="label">车型</div><van-radio-group v-model="postForm.car_model" direction="horizontal"><van-radio name="油车">油车</van-radio><van-radio name="电车">电车</van-radio></van-radio-group></div>
             <div class="form-row" @click="uiState.showDate=true"><div class="label">出发时间</div><div style="flex:1;text-align:right;">{{ postForm.dateDisplay || '请选择' }} <van-icon name="arrow" color="#999"/></div></div>
-            <div class="form-row"><div class="label">费用</div><div style="flex:1"><van-field v-model="postForm.price" type="digit" placeholder="元" input-align="right" :border="false"/></div></div>
+            <div class="form-row"><div class="label">费用</div><div style="flex:1"><van-field v-model="postForm.price" type="digit" :formatter="priceFormatter" placeholder="元" input-align="right" :border="false"/></div></div>
             <div class="form-row" style="align-items:flex-start;border-bottom:none;">
               <div class="label" style="margin-top:8px;">备注</div>
               <van-field v-model="remarkDisplayText" readonly type="textarea" rows="2" placeholder="请选择下方标签或输入备注" style="background:#f9f9f9;border-radius:4px;width:100%;padding:8px;" />
@@ -569,8 +621,6 @@ const switchTab = (idx) => {
           <div class="nav-btn btn-blue" :class="{active: filterType==='driver'}" @click="() => {filterType='driver'; setFilter('driver');}"><van-icon name="logistics" /> 车找人</div>
           <div class="nav-btn btn-green" :class="{active: filterType==='passenger'}" @click="() => {filterType='passenger'; setFilter('passenger');}"><van-icon name="friends" /> 人找车</div>
         </div>
-
-        <div class="quick-routes"><div class="route-tag" v-for="r in displayQuickRoutes" :key="r.from+r.to" @click="()=>{mapSearchKeyword=r.to; onRefresh();}">{{r.from}}→{{r.to}}</div></div>
 
         <van-pull-refresh v-model="refreshing" @refresh="onRefresh">
           <van-list v-model:loading="loading" :finished="finished" finished-text="无更多">
@@ -666,11 +716,11 @@ const switchTab = (idx) => {
         </div>
       </van-popup>
 
-      <van-popup v-model:show="showMapPopup" position="bottom" :style="{height:'90%'}" round>
+      <van-popup v-model:show="uiState.showMap" position="bottom" :style="{height:'90%'}" round>
         <div class="map-popup-content" style="display:flex;flex-direction:column;height:100%;">
-          <van-search v-model="mapSearchKeyword" show-action placeholder="搜索地点" @search="openMapSelector"><template #action><div @click="showMapPopup=false">关闭</div></template></van-search>
+          <van-search v-model="mapSearchKeyword" show-action placeholder="搜索地点" @search="openMapSelector"><template #action><div @click="uiState.showMap=false">关闭</div></template></van-search>
           
-          <div id="picker-map-container" style="width:100%;height:300px;position:relative;flex-shrink:0;">
+          <div id="picker-map-container" style="width:100%;height:350px;position:relative;flex-shrink:0;">
              <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-100%);z-index:999;pointer-events:none;">
                <van-icon name="location" size="32" color="#ee0a24" />
              </div>
@@ -681,14 +731,14 @@ const switchTab = (idx) => {
 
           <div style="flex:1;overflow-y:auto;">
             <van-list>
-              <van-cell v-for="(i,k) in mapSearchResults" :key="k" :title="i.name" @click="selectLocation(i)"/>
+              <van-cell v-for="(i,k) in mapSearchResults" :key="k" :title="i.name" @click="selectSearchResult(i)"/>
             </van-list>
           </div>
         </div>
       </van-popup>
 
-      <van-dialog v-model:show="showPaymentDialog" title="确认发布" show-cancel-button @confirm="handleRealPublish"><div style="padding:20px;text-align:center">置顶 <van-switch v-model="postForm.is_top" size="16px"/></div></van-dialog>
-      <van-popup v-model:show="showAuthModal" position="bottom" style="height:40%;padding:20px;">
+      <van-dialog v-model:show="uiState.showPaymentDialog" title="确认发布" show-cancel-button @confirm="handleRealPublish"><div style="padding:20px;text-align:center">置顶 <van-switch v-model="postForm.is_top" size="16px"/></div></van-dialog>
+      <van-popup v-model:show="uiState.showAuth" position="bottom" style="height:40%;padding:20px;">
         <h3 style="text-align:center">登录</h3>
         <div v-if="authStep===1"><van-button block type="primary" color="#07c160" @click="handleWeChatAuth">微信授权</van-button></div>
         <div v-else><van-field v-model="registerForm.phone" placeholder="手机号" border /><van-button block type="primary" @click="handleBindPhone" style="margin-top:10px;">确定</van-button></div>
@@ -782,7 +832,6 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .dot { width: 24px; height: 24px; border-radius: 50%; color: #fff; text-align: center; line-height: 24px; margin-right: 12px; flex-shrink: 0; font-size: 14px; }
 .dot.green { background: var(--green); } .dot.red { background: red; }
 .input-area { font-size: 16px; font-weight: bold; flex: 1; color: #333; }
-/* 修复：行间距+下划线 */
 .form-row { display: flex; align-items: center; padding: 16px 0; border-bottom: 1px solid #f0f0f0; }
 .form-row .label { width: 75px; color: #333; font-size: 15px; font-weight: bold; }
 .seat-grid { display: flex; gap: 8px; }
@@ -791,13 +840,12 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .tags-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 15px; margin-bottom: 30px; }
 .tag-item { padding: 6px 14px; background: #f0f0f0; border-radius: 4px; font-size: 14px; }
 .top-bar { display: none; }
-.home-banner { height: 140px; }
+.home-banner { height: 130px; }
 .nav-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; background: #fff; }
 .nav-btn { height: 40px; display: flex; align-items: center; justify-content: center; color: #fff; border-radius: 8px; font-weight: bold; font-size: 15px; gap: 5px; opacity: 0.9; }
 .nav-btn.btn-blue { background: #4fc1e9; } .nav-btn.btn-green { background: #a0d468; }
 .search-box { display: flex; padding: 10px; background: #fff; gap: 8px; }
 .search-box input { flex: 1; border: 1px solid #eee; padding: 10px; border-radius: 4px; text-align: center; background: #f9f9f9; font-size: 14px; }
-.quick-routes { padding: 10px; background: #fff; margin-bottom: 10px; white-space: nowrap; overflow-x: auto; }
 .route-tag { display: inline-block; padding: 6px 12px; background: #eaf5ff; color: var(--blue); border-radius: 4px; margin-right: 10px; font-size: 13px; }
 .user-card { background: var(--orange); color: #fff; padding: 40px 20px; display: flex; align-items: center; }
 .avatar { width: 60px; height: 60px; border-radius: 50%; background: #fff; margin-right: 15px; }
