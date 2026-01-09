@@ -4,7 +4,7 @@ import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToas
 import wx from 'weixin-js-sdk'; 
 
 // ==========================================
-// 1. 系统配置 (前端默认值)
+// 1. 系统配置
 // ==========================================
 const sysConfig = reactive({
   platform_name: '宜人出行',
@@ -15,24 +15,23 @@ const sysConfig = reactive({
   publish_fee_passenger: '0',
   publish_fee_driver: '0',
   top_fee: '5',
-  notice_text: '欢迎使用',
+  notice_text: '',
   tags_driver: '有行李,走高速,可吸烟,线下支付',
   tags_passenger: '有行李,走高速,只限女生,线下支付',
   banners: '',
-  // 您的 Key 已预埋，后台配置可覆盖
   amap_key: 'a4f6e1e5da68bc9fe5f984d69a3f6b2e', 
   about_us: ''
 });
 
-// 全局
+// 全局状态
 const appReady = ref(false);
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
 const adminLoginData = reactive({ username: '', password: '' });
-const adminActiveMenu = ref('basic'); 
-const adminSettingTab = ref(0); // 控制后台Tab
+const adminActiveMenu = ref('basic');
+const adminSettingTab = ref(0);
 
-// 前台
+// 前台状态
 const activeTab = ref(0);
 const filterType = ref('all'); 
 const list = ref([]); 
@@ -58,13 +57,14 @@ const registerForm = reactive({ phone: '' });
 const postForm = reactive({ type: '', origin: '', destination: '', date: '', dateDisplay: '', seats: 1, price: '', remark: [], contact: '', car_model: '' });
 const editForm = reactive({ id: '', origin: '', destination: '', date: '', price: '', contact: '', remark: '', seats: 1 });
 
-// 地图
+// 地图相关
 const mapSearchKeyword = ref('');
 const mapSearchResults = ref([]); 
 const currentMapField = ref(''); 
 const hotCities = ['宜宾', '成都', '重庆', '昆明', '贵阳', '东莞', '深圳', '广州', '上海', '宁波', '温州', '嘉兴'];
 const carModelOptions = ['油车', '电车'];
 const seatColumns = Array.from({length: 6}, (_, i) => ({ text: `${i + 1}`, value: i + 1 }));
+let geoCoder = null; 
 
 // 后台列表
 const adminUserList = ref([]);
@@ -147,76 +147,63 @@ onMounted(async () => {
   window.addEventListener('popstate', handlePopState);
 });
 
-// 数据回显修复：使用 Object.assign
 const fetchSystemConfig = async () => {
   try {
     const res = await fetch('/api/admin?action=get_config');
     const data = await res.json();
     if(data && Object.keys(data).length > 0) {
-      // 仅覆盖非空值
-      for (const key in sysConfig) {
+      Object.keys(sysConfig).forEach(key => {
         if (data[key] !== undefined && data[key] !== null) {
           sysConfig[key] = data[key];
         }
-      }
+      });
       document.title = sysConfig.platform_name || '宜人出行';
     }
   } catch(e) {}
 };
 
 // ==========================================
-// 4. 地图逻辑 (★ 隐私定位修复 ★)
+// 4. 地图逻辑 (修复：确保地址回填)
 // ==========================================
 const loadAMapScript = (key) => {
   if (window.AMap) return;
-  // ★ 安全密钥 ★
   window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' }; 
   const script = document.createElement('script');
-  script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Geolocation,AMap.AutoComplete`;
+  script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder`;
   document.body.appendChild(script);
 };
 
 const autoLocate = () => {
-  if (!window.AMap) { showFailToast('地图加载中...'); return; }
+  if (!window.AMap) { showFailToast('地图未就绪'); return; }
   showLoadingToast({ message: '定位中...', forbidClick: true, duration: 8000 });
   
   AMap.plugin('AMap.Geolocation', function() {
-    var geolocation = new AMap.Geolocation({
-      enableHighAccuracy: true,
-      timeout: 8000,
-      zoomToAccuracy: true,
-      extensions: 'all' // 获取地址组件
-    });
-
+    var geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 8000, zoomToAccuracy: true, extensions: 'all' });
     geolocation.getCurrentPosition(function(status, result) {
-      closeToast();
       if(status == 'complete'){
-        // ★★★ 隐私处理：仅拼接 区+路 ★★★
-        const ac = result.addressComponent;
+        // 1. 获取地址
         let safeAddress = "";
-        
+        const ac = result.addressComponent;
         if (ac) {
-          // 优先使用 区/县 + 街道/路
           const district = ac.district || '';
           const street = ac.street || '';
           const township = ac.township || '';
-          
-          if (street) {
-            safeAddress = district + street; // 例：翠屏区长江大道
-          } else {
-            safeAddress = district + township; // 例：翠屏区李庄镇
-          }
+          if (street) safeAddress = district + street;
+          else safeAddress = district + township;
         }
         
-        // 如果上面拼接失败，回退到 formattedAddress 但截取前10个字
-        if (!safeAddress) {
+        // 2. 兜底地址
+        if (!safeAddress || safeAddress.length < 2) {
           safeAddress = (result.formattedAddress || '位置已获取').substring(0, 15);
         }
 
+        // 3. ★★★ 强制赋值并关闭 Toast ★★★
         postForm.origin = safeAddress;
-        showSuccessToast('定位成功');
+        closeToast();
+        showSuccessToast('已定位：' + safeAddress);
       } else {
-        showFailToast('定位失败，请手动输入');
+        closeToast();
+        showFailToast('定位失败，请手动选择');
       }
     });
   });
@@ -275,7 +262,6 @@ const handleAdminLogin = async () => {
 
 const saveSystemConfig = async () => {
   showLoadingToast('保存中...');
-  // 使用 auth_token 提交
   await fetch('/api/admin?action=save_config', {
     method: 'POST', body: JSON.stringify({ auth_token: adminLoginData.password, config: sysConfig })
   });
@@ -313,8 +299,7 @@ const toggleRemark = (tag) => { if (!postForm.remark.includes(tag)) postForm.rem
 const onPreSubmit = () => {
   if (!userProfile.isLogin) { showAuthModal.value=true; return; }
   if (!postForm.origin || !postForm.destination) { showFailToast('请完善路线'); return; }
-  // ★ 费用限制 ★
-  if (parseFloat(postForm.price) > 9999) { showFailToast('费用不能超过9999元'); return; }
+  if (parseFloat(postForm.price) > 9999) { showFailToast('费用上限9999'); return; }
   showPaymentDialog.value=true;
 };
 
@@ -322,6 +307,12 @@ const handleRealPublish = async () => {
   const p = { ...postForm, remark: postForm.remark.join('，'), pay_amount: 0, user_id: userProfile.id };
   await fetch('/api/rides', { method: 'POST', body: JSON.stringify(p) });
   showSuccessToast('发布成功'); switchTab(0);
+};
+
+const selectRoleAndGo = (r) => { 
+  postForm.type=r; postForm.date=''; postForm.remark=[]; showRolePopup.value=false; 
+  switchTab(1); 
+  nextTick(() => { if(!postForm.origin) autoLocate(); });
 };
 
 const handleWeChatAuth = () => { 
@@ -340,11 +331,6 @@ const handleBindPhone = () => {
 
 const initWxConfig = () => { /* WX */ };
 const handlePublishClick = () => showRolePopup.value=true;
-const selectRoleAndGo = (r) => { 
-  postForm.type=r; postForm.date=''; postForm.remark=[]; showRolePopup.value=false; 
-  switchTab(1); 
-  nextTick(() => { if(!postForm.origin) autoLocate(); });
-};
 const searchForm = reactive({ origin: '', destination: '' });
 const onRefresh = () => { finished.value=false; onLoad(); refreshing.value=false; };
 const onConfirmDate = ({selectedOptions}) => {
@@ -504,8 +490,8 @@ const handlePopState = () => {
               </div>
               <div class="card-row-2">
                 <div style="display:flex;align-items:center;gap:10px;">
-                  <span class="time-tag">{{ formatDate(item.date) }}</span>
                   <span v-if="item.car_model" class="car-badge" :class="item.car_model.includes('电')?'electric':'gas'">{{ item.car_model }}</span>
+                  <span class="time-tag">{{ formatDate(item.date) }}</span>
                 </div>
               </div>
               <div class="card-row-3"><span class="seat-label">余座:</span><span class="seat-val">{{ item.seats }}</span></div>
@@ -618,11 +604,10 @@ const handlePopState = () => {
 :root { --blue: #1989fa; --green: #07c160; --bg: #f7f8fa; --orange: #ff6600; }
 body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 14px; padding-bottom: 70px; }
 
-/* 修复：后台布局 Flex */
-.admin-wrapper { display: flex; width: 100vw; height: 100vh; overflow: hidden; position: fixed; top: 0; left: 0; z-index: 9999; background: #fff; }
-.admin-sidebar { width: 110px; background: #001529; color: #fff; display: flex; flex-direction: column; flex-shrink: 0; height: 100%; overflow-y: auto; }
-/* ★★★ 关键修复：width:0 确保子元素(Tabs)正常渲染 ★★★ */
-.admin-main { flex: 1; width: 0; padding: 15px; overflow-y: auto; background: #fff; height: 100%; box-sizing: border-box; }
+/* 修复：后台 CSS 绝对定位布局 (彻底解决菜单不显示问题) */
+.admin-wrapper { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #fff; z-index: 9999; }
+.admin-sidebar { position: absolute; left: 0; top: 0; bottom: 0; width: 110px; background: #001529; color: #fff; z-index: 2; overflow-y: auto; }
+.admin-main { position: absolute; left: 110px; top: 0; right: 0; bottom: 0; padding: 15px; overflow-y: auto; background: #fff; z-index: 1; }
 
 .menu-item { padding: 15px 5px; text-align: center; border-bottom: 1px solid #333; font-size: 13px; cursor: pointer; }
 .menu-item.active { background: #1890ff; }
