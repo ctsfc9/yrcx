@@ -3,7 +3,7 @@ import { ref, reactive, computed, nextTick, onMounted, watch } from 'vue';
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
 // ==========================================
-// 1. 全局配置 (扁平化结构)
+// 1. 全局配置 (扁平化，防白屏)
 // ==========================================
 const sysConfig = reactive({
   platform_name: '宜人出行',
@@ -12,13 +12,11 @@ const sysConfig = reactive({
   tags_driver: '有行李,走高速,可吸烟,线下支付',
   tags_passenger: '有行李,走高速,只限女生,线下支付',
   banners: '',
-  // 您的 Key 和 安全密钥
   amap_key: 'a4f6e1e5da68bc9fe5f984d69a3f6b2e',
   about_us: ''
 });
 
-// 全局状态
-const appReady = ref(false);
+const appReady = ref(false); 
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
 
@@ -38,7 +36,7 @@ const loading = ref(false);
 const refreshing = ref(false);
 const finished = ref(false);
 
-// 弹窗
+// 弹窗控制
 const showRolePopup = ref(false);
 const showDatePicker = ref(false);
 const showPaymentDialog = ref(false);
@@ -125,7 +123,6 @@ onMounted(async () => {
         if(userProfile.isLogin) fetchMyRides();
       }
       
-      // 立即加载地图脚本
       loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
       setTimeout(() => onLoad(), 200);
     }
@@ -153,64 +150,64 @@ const fetchSystemConfig = async () => {
 };
 
 // ==========================================
-// 4. 地图逻辑 (修复：定位保障与回显)
+// 4. 地图逻辑 (★ 定位双重保障修复 ★)
 // ==========================================
 const loadAMapScript = (key) => {
   if (window.AMap) return;
-  // ★ 安全密钥 ★
+  // 安全密钥
   window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' }; 
   const script = document.createElement('script');
   script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`;
-  script.onload = () => { console.log('AMap loaded'); }; // 调试用
   document.body.appendChild(script);
 };
 
 const autoLocate = () => {
-  // 如果地图未加载，等待1秒后重试
-  if (!window.AMap) { 
-    showLoadingToast('地图加载中...');
-    setTimeout(autoLocate, 1000);
-    return; 
-  }
+  if (!window.AMap) { showFailToast('地图加载中...请稍候'); return; }
+  showLoadingToast({ message: '获取位置...', forbidClick: true, duration: 5000 });
   
-  showLoadingToast({ message: '获取位置...', forbidClick: true, duration: 8000 });
-  
-  // 1. 尝试高精度定位
+  // 定义失败后的 IP 兜底逻辑
+  const fallbackToCity = () => {
+    AMap.plugin('AMap.CitySearch', function () {
+      var citySearch = new AMap.CitySearch();
+      citySearch.getLocalCity(function (status, result) {
+        if (status === 'complete' && result.info === 'OK') {
+          nextTick(() => {
+            postForm.origin = result.city; // 填入城市名
+            closeToast();
+            showSuccessToast('已定位到城市：' + result.city);
+          });
+        } else {
+          closeToast();
+          showFailToast('定位失败，请手动输入');
+        }
+      });
+    });
+  };
+
+  // 尝试 GPS 精确定位
   AMap.plugin('AMap.Geolocation', function() {
     var geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 5000, zoomToAccuracy: true, extensions: 'all' });
     geolocation.getCurrentPosition(function(status, result) {
       if(status == 'complete'){
+        // 隐私过滤逻辑
         let safeAddr = "";
-        // 隐私过滤：只取 区 + 街道
         const ac = result.addressComponent;
         if (ac) {
           safeAddr = (ac.district||'') + (ac.street||ac.township||'');
         }
         if (!safeAddr) safeAddr = (result.formattedAddress || '').substring(0, 15);
-        
-        // ★ 强制更新 ★
+        // 去除门牌号
+        safeAddr = safeAddr.replace(/[0-9]+[号室栋楼]/g, '').replace(/单元/g, '');
+
         nextTick(() => {
-          postForm.origin = safeAddr;
+          postForm.origin = safeAddr || result.formattedAddress;
           closeToast();
-          showSuccessToast('定位成功');
+          showSuccessToast('已定位：' + postForm.origin);
         });
       } else {
-        // 2. 失败则尝试 IP 城市定位 (兜底)
-        AMap.plugin('AMap.CitySearch', function () {
-          var citySearch = new AMap.CitySearch();
-          citySearch.getLocalCity(function (status, result) {
-            if (status === 'complete' && result.info === 'OK') {
-              nextTick(() => {
-                postForm.origin = result.city;
-                closeToast();
-                showSuccessToast('大概位置：' + result.city);
-              });
-            } else {
-              closeToast();
-              showFailToast('定位失败，请手动输入');
-            }
-          })
-        })
+        // GPS 失败 -> 转 IP 定位
+        console.warn("GPS failed, trying IP location...");
+        fallbackToCity();
       }
     });
   });
@@ -307,7 +304,7 @@ const banUserAdmin = (uid, ban) => {
 const toggleRemark = (tag) => { if (!postForm.remark.includes(tag)) postForm.remark.push(tag); };
 
 const priceFormatter = (val) => {
-  if(val && val.length > 4) return val.slice(0, 4); // 限制4位
+  if(val && val.length > 4) return val.slice(0, 4); 
   return val;
 };
 
@@ -329,8 +326,7 @@ const selectRoleAndGo = (r) => {
   postForm.type=r; postForm.date=''; postForm.remark=[]; 
   showRolePopup.value=false; 
   switchTab(1); 
-  // ★★★ 确保进入发布页后自动触发定位 ★★★
-  setTimeout(() => { if(!postForm.origin) autoLocate(); }, 500);
+  nextTick(() => { if(!postForm.origin) autoLocate(); });
 };
 
 const handleWeChatAuth = () => { 
@@ -365,6 +361,9 @@ const fetchMyRides = async () => {
   }
 };
 const handleUserDelete = (id) => { showDialog({title:'提示',message:'确认删除?'}).then(async(a)=>{if(a==='confirm'){await fetch(`/api/rides?id=${id}&user_id=${userProfile.id}`,{method:'DELETE'});fetchMyRides();}}); };
+
+const openDetail = (item) => selectedRide.value = item;
+const closeDetail = () => selectedRide.value = null;
 
 const switchTab = (idx) => {
   if (activeTab.value === idx) return;
@@ -511,7 +510,6 @@ const handlePopState = () => {
               </div>
 
               <div class="card-row-3" v-if="item.remark">{{ item.remark }}</div>
-              
               <div class="call-btn" @click.stop="handleCall(item.contact)"><van-icon name="phone-o" /></div>
             </div>
           </van-list>
@@ -567,8 +565,8 @@ const handlePopState = () => {
         <div class="tab-item" :class="{active: activeTab===0}" @click="switchTab(0)"><van-icon name="wap-home-o"/>首页</div>
         <div class="tab-item publish-wrap" @click="showRolePopup=true">
           <div class="publish-float-btn">
-            <van-icon name="plus" size="18" />
-            <span style="font-size:12px;font-weight:900;">发布</span>
+            <van-icon name="plus" size="20" />
+            <span style="font-size:13px;font-weight:900;">发布</span>
           </div>
         </div>
         <div class="tab-item" :class="{active: activeTab===2}" @click="switchTab(2)"><van-icon name="user-o"/>我的</div>
@@ -652,11 +650,12 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .card-row-2 { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; color: #666; font-size: 15px; }
 .info-item { display: flex; align-items: center; gap: 4px; }
 .info-item.center { flex: 1; justify-content: center; color: #333; font-weight: 500; }
-.price-val { color: #ff6600; font-size: 22px; font-weight: bold; }
+/* 修复：金额颜色为黑色 */
+.price-val { color: #333; font-size: 20px; font-weight: bold; }
 /* 第三排 */
 .card-row-3 { font-size: 13px; color: #999; background: #f8f8f8; padding: 8px; border-radius: 6px; }
 /* 电话按钮 */
-.call-btn { position: absolute; right: 10px; top: 50px; font-size: 32px; color: orange; background: #fff9f0; padding: 10px; border-radius: 50%; z-index: 10; cursor: pointer; }
+.call-btn { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 32px; color: orange; background: #fff9f0; padding: 10px; border-radius: 50%; z-index: 10; cursor: pointer; }
 
 /* 底部发布按钮 (修复：小巧精致) */
 .custom-tabbar { position: fixed; bottom: 0; width: 100%; height: 65px; background: #fff; display: flex; border-top: 1px solid #eee; z-index: 999; padding-bottom: constant(safe-area-inset-bottom); padding-bottom: env(safe-area-inset-bottom); }
@@ -690,7 +689,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .seat-btn { width: 30px; height: 30px; background: #f0f0f0; display: flex; align-items: center; justify-content: center; border-radius: 4px; }
 .seat-btn.active { background: var(--blue); color: #fff; }
 /* 修复：标签样式加大，增加底部距离 */
-.tags-group { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; margin-bottom: 30px; }
+.tags-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; margin-bottom: 30px; }
 .tag-item { padding: 6px 14px; background: #f0f0f0; border-radius: 4px; font-size: 14px; }
 .top-bar { text-align: center; padding: 12px; background: #fff; font-weight: bold; font-size: 18px; }
 /* 修复：广告高度 125px */
