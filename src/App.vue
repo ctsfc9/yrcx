@@ -46,7 +46,7 @@ const authStep = ref(1);
 const showShareGuide = ref(false);
 const selectedRide = ref(null);
 
-// 表单
+// 表单数据
 const userProfile = reactive({ id: '', nickname: '未登录', avatar: '', phone: '', balance: '0.00', isLogin: false });
 const registerForm = reactive({ phone: '' });
 const postForm = reactive({ 
@@ -54,7 +54,7 @@ const postForm = reactive({
   seats: 1, price: '', remark: [], contact: '', car_model: '', is_top: false 
 });
 
-// 地图
+// 地图数据
 const mapSearchKeyword = ref('');
 const mapSearchResults = ref([]);
 const currentMapField = ref(''); 
@@ -150,69 +150,65 @@ const fetchSystemConfig = async () => {
 };
 
 // ==========================================
-// 4. 地图逻辑 (★ 强力修复定位 ★)
+// 4. 地图逻辑 (★ 强力修复版 ★)
 // ==========================================
 const loadAMapScript = (key) => {
   if (window.AMap) return;
   window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' }; 
   const script = document.createElement('script');
-  // 必须显示声明 CitySearch 插件
   script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`;
   document.body.appendChild(script);
 };
 
 const autoLocate = () => {
   if (!window.AMap) { 
-    showFailToast('地图加载中...'); 
-    setTimeout(autoLocate, 1500); // 延迟重试
+    showFailToast('加载中...'); 
+    // 地图未加载完成时，延迟重试
+    setTimeout(autoLocate, 1000);
     return; 
   }
   
-  showLoadingToast({ message: '定位中...', forbidClick: true, duration: 5000 });
+  showLoadingToast({ message: '获取位置...', forbidClick: true, duration: 3000 });
 
-  // 1. 【IP 定位优先】 (确保有值)
+  // 1. IP定位 (最快，兜底)
   AMap.plugin('AMap.CitySearch', function () {
     var citySearch = new AMap.CitySearch();
     citySearch.getLocalCity(function (status, result) {
       if (status === 'complete' && result.info === 'OK') {
         const city = result.city || result.province;
-        // 立即填入，防止留白
-        if (!postForm.origin) {
+        
+        // ★ 核心修复：直接强制赋值，确保 UI 刷新 ★
+        nextTick(() => {
           postForm.origin = city;
           closeToast();
-          showSuccessToast('已定位到: ' + city);
-        }
-        
-        // 2. 【GPS 定位修正】 (异步获取更准的位置)
-        tryGPSLocation(); 
+          showSuccessToast('已定位：' + city);
+        });
+
+        // 2. 后台尝试 GPS 修正 (静默)
+        tryGPSCorrection();
       } else {
-        // IP 定位都失败，直接尝试 GPS
-        tryGPSLocation();
+        tryGPSCorrection(); // IP失败直接试GPS
       }
-    });
+    })
   });
 };
 
-const tryGPSLocation = () => {
+const tryGPSCorrection = () => {
   AMap.plugin('AMap.Geolocation', function() {
-    var geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 5000 });
+    var geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 4000 });
     geolocation.getCurrentPosition(function(status, result) {
       if(status == 'complete'){
-        let safeAddr = "";
+        // 提取区+街道
         const ac = result.addressComponent;
-        if (ac) {
-          safeAddr = (ac.district||'') + (ac.street||ac.township||'');
-        }
+        let safeAddr = (ac.district||'') + (ac.street||ac.township||'');
         if (!safeAddr) safeAddr = (result.formattedAddress || '').substring(0, 15);
-        // 去除门牌
         safeAddr = safeAddr.replace(/[0-9]+[号室栋楼]/g, '').replace(/单元/g, '');
 
-        // 覆盖之前可能不准的IP定位
-        nextTick(() => {
-          postForm.origin = safeAddr;
-          closeToast();
-          showSuccessToast('已精确定位');
-        });
+        if(safeAddr) {
+          nextTick(() => {
+            postForm.origin = safeAddr; // 覆盖之前的城市名
+          });
+        }
       }
     });
   });
@@ -331,7 +327,7 @@ const selectRoleAndGo = (r) => {
   postForm.type=r; postForm.date=''; postForm.remark=[]; 
   showRolePopup.value=false; 
   switchTab(1); 
-  // 进入页面自动定位
+  // 进发布页自动定位
   nextTick(() => { if(!postForm.origin) autoLocate(); });
 };
 
@@ -471,9 +467,7 @@ const handlePopState = () => {
             <div class="form-row"><div class="label">座位</div><div class="seat-grid"><div v-for="n in 6" :key="n" class="seat-btn" :class="{active:postForm.seats===n}" @click="postForm.seats=n">{{n}}</div></div></div>
             <div v-if="postForm.type==='driver'" class="form-row"><div class="label">车型</div><van-radio-group v-model="postForm.car_model" direction="horizontal"><van-radio name="油车">油车</van-radio><van-radio name="电车">电车</van-radio></van-radio-group></div>
             <van-cell title="时间" is-link :value="postForm.dateDisplay||'请选择'" @click="showDatePicker=true" />
-            
             <div class="form-row"><div class="label">费用</div><div style="flex:1"><van-field v-model="postForm.price" type="digit" :formatter="priceFormatter" placeholder="元" input-align="right"/></div></div>
-            
             <div class="form-row" style="flex-direction:column;align-items:flex-start;">
               <div class="label" style="margin-bottom:5px;">备注</div>
               <van-field v-model="remarkDisplayText" readonly type="textarea" rows="2" style="background:#f9f9f9;border-radius:4px;width:100%;" />
@@ -569,8 +563,8 @@ const handlePopState = () => {
         <div class="tab-item" :class="{active: activeTab===0}" @click="switchTab(0)"><van-icon name="wap-home-o"/>首页</div>
         <div class="tab-item publish-wrap" @click="showRolePopup=true">
           <div class="publish-float-btn">
-            <van-icon name="plus" size="20" />
-            <span style="font-size:13px;font-weight:900;">发布</span>
+            <van-icon name="plus" size="18" />
+            <span style="font-size:12px;font-weight:900;">发布</span>
           </div>
         </div>
         <div class="tab-item" :class="{active: activeTab===2}" @click="switchTab(2)"><van-icon name="user-o"/>我的</div>
@@ -695,7 +689,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 /* 修复：标签样式加大，增加底部距离 */
 .tags-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; margin-bottom: 30px; }
 .tag-item { padding: 6px 14px; background: #f0f0f0; border-radius: 4px; font-size: 14px; }
-.top-bar { text-align: center; padding: 12px; background: #fff; font-weight: bold; font-size: 18px; }
+.top-bar { display: none; /* 修复：隐藏标题 */ }
 /* 修复：广告高度 140px */
 .home-banner { height: 140px; }
 .nav-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; background: #fff; }
