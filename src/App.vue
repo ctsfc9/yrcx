@@ -3,7 +3,7 @@ import { ref, reactive, computed, nextTick, onMounted, watch } from 'vue';
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
 // ==========================================
-// 1. 全局配置 (扁平化，防白屏)
+// 1. 全局配置
 // ==========================================
 const sysConfig = reactive({
   platform_name: '宜人出行',
@@ -12,6 +12,7 @@ const sysConfig = reactive({
   tags_driver: '有行李,走高速,可吸烟,线下支付',
   tags_passenger: '有行李,走高速,只限女生,线下支付',
   banners: '',
+  // 您的 Key
   amap_key: 'a4f6e1e5da68bc9fe5f984d69a3f6b2e',
   about_us: ''
 });
@@ -36,7 +37,7 @@ const loading = ref(false);
 const refreshing = ref(false);
 const finished = ref(false);
 
-// 弹窗控制
+// 弹窗
 const showRolePopup = ref(false);
 const showDatePicker = ref(false);
 const showPaymentDialog = ref(false);
@@ -46,7 +47,7 @@ const authStep = ref(1);
 const showShareGuide = ref(false);
 const selectedRide = ref(null);
 
-// 表单数据
+// 表单
 const userProfile = reactive({ id: '', nickname: '未登录', avatar: '', phone: '', balance: '0.00', isLogin: false });
 const registerForm = reactive({ phone: '' });
 const postForm = reactive({ 
@@ -54,7 +55,7 @@ const postForm = reactive({
   seats: 1, price: '', remark: [], contact: '', car_model: '', is_top: false 
 });
 
-// 地图数据
+// 地图
 const mapSearchKeyword = ref('');
 const mapSearchResults = ref([]);
 const currentMapField = ref(''); 
@@ -150,64 +151,68 @@ const fetchSystemConfig = async () => {
 };
 
 // ==========================================
-// 4. 地图逻辑 (★ 定位双重保障修复 ★)
+// 4. 地图逻辑 (★ 强力修复版 ★)
 // ==========================================
 const loadAMapScript = (key) => {
   if (window.AMap) return;
-  // 安全密钥
   window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' }; 
   const script = document.createElement('script');
+  // 必须加载 CitySearch 用于兜底
   script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`;
   document.body.appendChild(script);
 };
 
 const autoLocate = () => {
-  if (!window.AMap) { showFailToast('地图加载中...请稍候'); return; }
-  showLoadingToast({ message: '获取位置...', forbidClick: true, duration: 5000 });
+  if (!window.AMap) { 
+    showFailToast('地图加载中...'); 
+    // 没加载完也尝试重载一次
+    loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
+    return; 
+  }
   
-  // 定义失败后的 IP 兜底逻辑
-  const fallbackToCity = () => {
-    AMap.plugin('AMap.CitySearch', function () {
-      var citySearch = new AMap.CitySearch();
-      citySearch.getLocalCity(function (status, result) {
-        if (status === 'complete' && result.info === 'OK') {
-          nextTick(() => {
-            postForm.origin = result.city; // 填入城市名
-            closeToast();
-            showSuccessToast('已定位到城市：' + result.city);
-          });
-        } else {
-          closeToast();
-          showFailToast('定位失败，请手动输入');
-        }
-      });
-    });
-  };
+  showLoadingToast({ message: '获取中...', forbidClick: true, duration: 5000 });
 
-  // 尝试 GPS 精确定位
+  // 1. 先用 CitySearch 拿大概位置 (速度快，成功率高)
+  AMap.plugin('AMap.CitySearch', function () {
+    var citySearch = new AMap.CitySearch();
+    citySearch.getLocalCity(function (status, result) {
+      if (status === 'complete' && result.info === 'OK') {
+        // 立即填入，保证不为空
+        postForm.origin = result.city; 
+        
+        // 2. 然后尝试 GPS 精确定位覆盖
+        tryHighAccuracyLocation();
+      } else {
+        // CitySearch 都失败，直接报 GPS
+        tryHighAccuracyLocation(); 
+      }
+    });
+  });
+};
+
+const tryHighAccuracyLocation = () => {
   AMap.plugin('AMap.Geolocation', function() {
-    var geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 5000, zoomToAccuracy: true, extensions: 'all' });
+    var geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 5000 });
     geolocation.getCurrentPosition(function(status, result) {
+      closeToast(); // 关闭 Loading
       if(status == 'complete'){
-        // 隐私过滤逻辑
+        // 隐私过滤：只取 区 + 街道
         let safeAddr = "";
         const ac = result.addressComponent;
         if (ac) {
           safeAddr = (ac.district||'') + (ac.street||ac.township||'');
         }
         if (!safeAddr) safeAddr = (result.formattedAddress || '').substring(0, 15);
-        // 去除门牌号
-        safeAddr = safeAddr.replace(/[0-9]+[号室栋楼]/g, '').replace(/单元/g, '');
-
+        
+        // 再次强制更新为更精确的地址
         nextTick(() => {
-          postForm.origin = safeAddr || result.formattedAddress;
-          closeToast();
-          showSuccessToast('已定位：' + postForm.origin);
+          postForm.origin = safeAddr;
+          showSuccessToast('已精确定位');
         });
       } else {
-        // GPS 失败 -> 转 IP 定位
-        console.warn("GPS failed, trying IP location...");
-        fallbackToCity();
+        // 如果 GPS 失败，但之前 CitySearch 成功了，就不报错了
+        if(!postForm.origin) showFailToast('定位失败，请手动输入');
+        else showSuccessToast('已定位到城市');
       }
     });
   });
@@ -480,7 +485,6 @@ const handlePopState = () => {
       </div>
 
       <div v-show="activeTab === 0" class="page-home">
-        <div class="top-bar">{{ sysConfig.platform_name }}</div>
         <van-swipe :autoplay="3000" class="home-banner"><van-swipe-item v-for="i in bannersList" :key="i"><img :src="i" style="width:100%;height:100%;object-fit:cover;"/></van-swipe-item></van-swipe>
         <van-notice-bar left-icon="volume-o" :text="sysConfig.notice_text" />
         
@@ -510,6 +514,7 @@ const handlePopState = () => {
               </div>
 
               <div class="card-row-3" v-if="item.remark">{{ item.remark }}</div>
+              
               <div class="call-btn" @click.stop="handleCall(item.contact)"><van-icon name="phone-o" /></div>
             </div>
           </van-list>
@@ -689,11 +694,11 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .seat-btn { width: 30px; height: 30px; background: #f0f0f0; display: flex; align-items: center; justify-content: center; border-radius: 4px; }
 .seat-btn.active { background: var(--blue); color: #fff; }
 /* 修复：标签样式加大，增加底部距离 */
-.tags-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; margin-bottom: 30px; }
+.tags-group { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; margin-bottom: 30px; }
 .tag-item { padding: 6px 14px; background: #f0f0f0; border-radius: 4px; font-size: 14px; }
 .top-bar { text-align: center; padding: 12px; background: #fff; font-weight: bold; font-size: 18px; }
-/* 修复：广告高度 125px */
-.home-banner { height: 125px; }
+/* 修复：广告高度 130px */
+.home-banner { height: 130px; }
 .nav-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; background: #fff; }
 .nav-btn { height: 50px; display: flex; align-items: center; justify-content: center; color: #fff; border-radius: 8px; font-weight: bold; font-size: 16px; gap: 5px; opacity: 0.9; }
 .nav-btn.btn-blue { background: #4fc1e9; } .nav-btn.btn-green { background: #a0d468; }
