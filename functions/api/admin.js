@@ -7,15 +7,16 @@ export async function onRequest(context) {
   const url = new URL(request.url);
   const action = url.searchParams.get("action");
 
-  // 1. 获取配置 (公开接口)
-  // 修复：增加异常捕获，防止数据库空值导致前端崩
+  // 1. 获取配置 (公开，增加容错)
   if (request.method === "GET" && action === 'get_config') {
     try {
       const { results } = await db.prepare("SELECT * FROM system_config").all();
       const config = {};
+      // 必须确保返回的是 JSON 对象
       if(results) results.forEach(item => { config[item.key] = item.value; });
       return Response.json(config);
     } catch (e) {
+      // 数据库报错也返回空对象，防止前端崩
       return Response.json({});
     }
   }
@@ -29,30 +30,25 @@ export async function onRequest(context) {
     return Response.json({ error: "账号或密码错误" }, { status: 401 });
   }
 
-  // --- 鉴权 ---
-  const verifyBody = async () => {
-    try { const b = await request.clone().json(); return b.auth_token === ADMIN_PWD; } catch { return false; }
-  };
-
-  // 3. 保存配置 (修复：强制转字符串，防止存入 null)
+  // 3. 保存配置
   if (request.method === "POST" && action === 'save_config') {
      const body = await request.json();
      if (body.auth_token !== ADMIN_PWD) return Response.json({ error: "无权" }, { status: 403 });
      
      const stmt = db.prepare("INSERT INTO system_config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
      const batch = [];
+     // 强制转字符串存储
      for (const [k, v] of Object.entries(body.config)) {
-       // 关键修复：确保 value 是字符串，否则某些字段会丢失
        batch.push(stmt.bind(k, String(v === undefined || v === null ? '' : v)));
      }
      await db.batch(batch);
      return Response.json({ success: true });
   }
 
-  // 4. 数据管理 (列表/删除/封禁)
+  // 4. 数据管理 (列表/删除/封禁) - 需鉴权
+  const token = url.searchParams.get("token");
   if (request.method === "GET") {
-    const token = url.searchParams.get("token");
-    if (token !== ADMIN_PWD) return Response.json({ error: "无权" }, { status: 403 });
+    if (token !== ADMIN_PWD) return Response.json({ error: "无权", list: [] }, { status: 403 });
     
     if (action === 'get_rides') {
       const { results } = await db.prepare("SELECT * FROM rides ORDER BY id DESC LIMIT 50").all();
@@ -70,8 +66,8 @@ export async function onRequest(context) {
   }
 
   if (request.method === "POST") {
-    if (!await verifyBody()) return Response.json({ error: "无权" }, { status: 403 });
     const body = await request.json();
+    if (body.auth_token !== ADMIN_PWD) return Response.json({ error: "无权" }, { status: 403 });
     
     if (action === 'manage_ride' && body.type === 'delete') {
       await db.prepare("DELETE FROM rides WHERE id=?").bind(body.id).run();
