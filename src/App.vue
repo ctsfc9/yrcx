@@ -3,25 +3,20 @@ import { ref, reactive, computed, nextTick, onMounted, watch } from 'vue';
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
 // ==========================================
-// 1. 全局配置 (保持扁平化)
+// 1. 全局配置 (扁平化，防白屏)
 // ==========================================
 const sysConfig = reactive({
   platform_name: '宜人出行',
   kefu_wechat: 'keea02',
-  show_expired: 'false',
-  verify_driver: 'false',
-  publish_fee_passenger: '0',
-  publish_fee_driver: '0',
-  top_fee: '5',
   notice_text: '',
   tags_driver: '有行李,走高速,可吸烟,线下支付',
   tags_passenger: '有行李,走高速,只限女生,线下支付',
   banners: '',
-  amap_key: 'a4f6e1e5da68bc9fe5f984d69a3f6b2e',
+  amap_key: 'a4f6e1e5da68bc9fe5f984d69a3f6b2e', // 您的Key
   about_us: ''
 });
 
-const appReady = ref(false);
+const appReady = ref(false); 
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
 
@@ -41,7 +36,7 @@ const loading = ref(false);
 const refreshing = ref(false);
 const finished = ref(false);
 
-// 弹窗
+// 弹窗控制
 const showRolePopup = ref(false);
 const showDatePicker = ref(false);
 const showPaymentDialog = ref(false);
@@ -51,7 +46,7 @@ const authStep = ref(1);
 const showShareGuide = ref(false);
 const selectedRide = ref(null);
 
-// 表单
+// 表单数据
 const userProfile = reactive({ id: '', nickname: '未登录', avatar: '', phone: '', balance: '0.00', isLogin: false });
 const registerForm = reactive({ phone: '' });
 const postForm = reactive({ 
@@ -59,7 +54,7 @@ const postForm = reactive({
   seats: 1, price: '', remark: [], contact: '', car_model: '', is_top: false 
 });
 
-// 地图
+// 地图数据
 const mapSearchKeyword = ref('');
 const mapSearchResults = ref([]);
 const currentMapField = ref(''); 
@@ -107,7 +102,7 @@ const dateColumns = computed(() => {
 });
 
 // ==========================================
-// 3. 初始化
+// 3. 初始化 (稳健加载)
 // ==========================================
 onMounted(async () => {
   try {
@@ -128,9 +123,7 @@ onMounted(async () => {
         if(userProfile.isLogin) fetchMyRides();
       }
       
-      // 加载地图 (添加 CitySearch 插件作为定位备份)
       loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
-      
       setTimeout(() => onLoad(), 200);
     }
   } catch(e) {
@@ -157,57 +150,58 @@ const fetchSystemConfig = async () => {
 };
 
 // ==========================================
-// 4. 地图功能 (双重定位保障)
+// 4. 地图定位 (修复回显问题)
 // ==========================================
 const loadAMapScript = (key) => {
   if (window.AMap) return;
   window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' }; 
   const script = document.createElement('script');
-  // 增加 CitySearch 插件
   script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`;
   document.body.appendChild(script);
 };
 
 const autoLocate = () => {
-  if (!window.AMap) { showFailToast('地图未就绪'); return; }
-  showLoadingToast({ message: '定位中...', forbidClick: true, duration: 5000 });
+  if (!window.AMap) { showFailToast('地图未就绪，请刷新'); return; }
+  showLoadingToast({ message: '正在定位...', forbidClick: true, duration: 8000 });
   
-  // 1. 尝试高精度定位
   AMap.plugin('AMap.Geolocation', function() {
-    var geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 5000 });
+    var geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 6000, extensions: 'all' });
     geolocation.getCurrentPosition(function(status, result) {
       if(status == 'complete'){
-        // 成功：格式化地址
-        let addr = result.formattedAddress;
-        // 隐私处理
-        if (result.addressComponent) {
-          const ac = result.addressComponent;
-          addr = (ac.district||'') + (ac.street||ac.township||'');
+        // 隐私过滤：只取 区 + 街道
+        let safeAddr = "";
+        const ac = result.addressComponent;
+        if (ac) {
+          safeAddr = (ac.district||'') + (ac.street||ac.township||'');
         }
-        updateOrigin(addr || '位置已获取');
+        if (!safeAddr) safeAddr = (result.formattedAddress || '').substring(0, 15);
+        
+        // ★★★ 核心修复：强制在下一次 DOM 更新循环中赋值，确保文字上屏 ★★★
+        nextTick(() => {
+          postForm.origin = safeAddr;
+          closeToast();
+          showSuccessToast('已定位：' + safeAddr);
+        });
       } else {
-        // 失败：尝试 IP 城市定位 (备用方案)
+        // 失败尝试 IP 定位兜底
         AMap.plugin('AMap.CitySearch', function () {
           var citySearch = new AMap.CitySearch();
           citySearch.getLocalCity(function (status, result) {
             if (status === 'complete' && result.info === 'OK') {
-              updateOrigin(result.city + " (大致位置)");
+              nextTick(() => {
+                postForm.origin = result.city;
+                closeToast();
+                showSuccessToast('大致位置：' + result.city);
+              });
             } else {
               closeToast();
-              showFailToast('定位失败，请手动输入');
+              showFailToast('定位失败，请手动点击');
             }
           })
         })
       }
     });
   });
-};
-
-// 强制更新视图
-const updateOrigin = (addr) => {
-  postForm.origin = addr;
-  closeToast();
-  showSuccessToast('已定位：' + addr);
 };
 
 watch(mapSearchKeyword, (newVal) => {
@@ -299,14 +293,14 @@ const banUserAdmin = (uid, ban) => {
 const toggleRemark = (tag) => { if (!postForm.remark.includes(tag)) postForm.remark.push(tag); };
 
 const priceFormatter = (val) => {
-  if(val && val.length > 4) return val.slice(0, 4); // 物理限制输入4位
+  if(val && val.length > 4) return val.slice(0, 4); 
   return val;
 };
 
 const onPreSubmit = () => {
   if (!userProfile.isLogin) { showAuthModal.value=true; return; }
   if (!postForm.origin || !postForm.destination) { showFailToast('请完善路线'); return; }
-  if (parseFloat(postForm.price) > 9999) { showFailToast('费用上限9999元'); return; }
+  if (parseFloat(postForm.price) > 9999) { showFailToast('费用上限9999'); return; }
   showPaymentDialog.value=true;
 };
 
@@ -389,6 +383,7 @@ const handlePopState = () => {
           <div style="margin:20px;"><van-button block type="primary" native-type="submit">登录</van-button></div>
         </van-form>
       </div>
+      
       <div v-else class="admin-dashboard">
         <div class="admin-sidebar">
           <div class="menu-item" :class="{active:adminActiveMenu==='basic'}" @click="switchAdminMenu('basic')">系统设置</div>
@@ -396,9 +391,10 @@ const handlePopState = () => {
           <div class="menu-item" :class="{active:adminActiveMenu==='users'}" @click="switchAdminMenu('users')">用户管理</div>
           <div class="menu-item logout" @click="()=>location.href='/'">退出</div>
         </div>
+        
         <div class="admin-main">
           <div v-if="adminActiveMenu==='basic'">
-            <h3 style="margin:0 0 15px 0;">参数配置</h3>
+            <h3 style="margin:0 0 15px 0;">配置</h3>
             <van-form @submit="saveSystemConfig">
               <van-tabs v-model:active="adminSettingTab" type="card">
                 <van-tab title="基础">
@@ -411,7 +407,7 @@ const handlePopState = () => {
                 </van-tab>
                 <van-tab title="费用">
                   <van-cell-group inset style="margin-top:10px;">
-                    <van-cell center title="显示过期"><template #right-icon><van-switch v-model="sysConfig.show_expired" size="20" active-value="true" inactive-value="false"/></template></van-cell>
+                    <van-cell center title="过期"><template #right-icon><van-switch v-model="sysConfig.show_expired" size="20" active-value="true" inactive-value="false"/></template></van-cell>
                     <van-field v-model="sysConfig.publish_fee_passenger" label="乘客费" />
                     <van-field v-model="sysConfig.publish_fee_driver" label="司机费" />
                     <van-field v-model="sysConfig.top_fee" label="置顶费" />
@@ -419,15 +415,16 @@ const handlePopState = () => {
                 </van-tab>
                 <van-tab title="其他">
                   <van-cell-group inset style="margin-top:10px;">
-                    <van-field v-model="sysConfig.banners" label="轮播图" type="textarea" />
-                    <van-field v-model="sysConfig.tags_driver" label="车主标签" type="textarea" />
-                    <van-field v-model="sysConfig.tags_passenger" label="乘客标签" type="textarea" />
+                    <van-field v-model="sysConfig.banners" label="轮播" type="textarea" />
+                    <van-field v-model="sysConfig.tags_driver" label="车主标" type="textarea" />
+                    <van-field v-model="sysConfig.tags_passenger" label="乘客标" type="textarea" />
                   </van-cell-group>
                 </van-tab>
               </van-tabs>
               <div style="margin:20px;"><van-button block type="primary" native-type="submit">保存</van-button></div>
             </van-form>
           </div>
+          
           <div v-if="adminActiveMenu==='rides'">
             <div v-for="item in adminRideList" :key="item.id" class="admin-list-item">
               <span style="flex:1">{{ item?.origin }}→{{ item?.destination }}</span>
@@ -457,9 +454,7 @@ const handlePopState = () => {
             <div class="form-row"><div class="label">座位</div><div class="seat-grid"><div v-for="n in 6" :key="n" class="seat-btn" :class="{active:postForm.seats===n}" @click="postForm.seats=n">{{n}}</div></div></div>
             <div v-if="postForm.type==='driver'" class="form-row"><div class="label">车型</div><van-radio-group v-model="postForm.car_model" direction="horizontal"><van-radio name="油车">油车</van-radio><van-radio name="电车">电车</van-radio></van-radio-group></div>
             <van-cell title="时间" is-link :value="postForm.dateDisplay||'请选择'" @click="showDatePicker=true" />
-            
             <div class="form-row"><div class="label">费用</div><div style="flex:1"><van-field v-model="postForm.price" type="digit" :formatter="priceFormatter" placeholder="元 (Max 9999)" input-align="right"/></div></div>
-            
             <div class="form-row" style="flex-direction:column;align-items:flex-start;">
               <div class="label" style="margin-bottom:5px;">备注</div>
               <van-field v-model="remarkDisplayText" readonly type="textarea" rows="2" style="background:#f9f9f9;border-radius:4px;width:100%;" />
@@ -472,8 +467,8 @@ const handlePopState = () => {
 
       <div v-show="activeTab === 0" class="page-home">
         <div class="top-bar">{{ sysConfig.platform_name }}</div>
-        <van-notice-bar left-icon="volume-o" :text="sysConfig.notice_text" style="height:36px;margin-bottom:5px;" />
         <van-swipe :autoplay="3000" class="home-banner"><van-swipe-item v-for="i in bannersList" :key="i"><img :src="i" style="width:100%;height:100%;object-fit:cover;"/></van-swipe-item></van-swipe>
+        <van-notice-bar left-icon="volume-o" :text="sysConfig.notice_text" />
         
         <div class="nav-grid two-cols">
           <div class="nav-btn btn-blue" :class="{active: filterType==='driver'}" @click="() => {filterType='driver'; onLoad();}"><van-icon name="logistics" /> 车找人</div>
@@ -493,15 +488,12 @@ const handlePopState = () => {
                 </div>
                 <span v-if="item.car_model" class="car-badge" :class="item.car_model.includes('电')?'electric':'gas'">{{ item.car_model }}</span>
               </div>
-              
               <div class="card-row-2">
                 <div class="info-item"><van-icon name="clock-o" /> {{ formatDate(item.date) }}</div>
                 <div class="info-item center">{{ item.seats }}座</div>
                 <div class="price-val">¥{{ item.price || '面议' }}</div>
               </div>
-
               <div class="card-row-3" v-if="item.remark">{{ item.remark }}</div>
-              
               <div class="call-btn" @click.stop="handleCall(item.contact)"><van-icon name="phone-o" /></div>
             </div>
           </van-list>
@@ -557,8 +549,8 @@ const handlePopState = () => {
         <div class="tab-item" :class="{active: activeTab===0}" @click="switchTab(0)"><van-icon name="wap-home-o"/>首页</div>
         <div class="tab-item publish-wrap" @click="showRolePopup=true">
           <div class="publish-float-btn">
-            <van-icon name="plus" size="24" />
-            <span style="font-size:16px;font-weight:bold;">发布</span>
+            <van-icon name="plus" size="20" />
+            <span style="font-size:13px;font-weight:900;">发布</span>
           </div>
         </div>
         <div class="tab-item" :class="{active: activeTab===2}" @click="switchTab(2)"><van-icon name="user-o"/>我的</div>
@@ -568,17 +560,11 @@ const handlePopState = () => {
         <div style="padding:30px;display:flex;flex-direction:column;gap:20px;height:100%;justify-content:center;">
           <div class="role-select-card driver" @click="selectRoleAndGo('driver')">
             <van-icon name="logistics" size="40" />
-            <div>
-              <div style="font-size:20px;">我是车主</div>
-              <div style="font-size:13px;opacity:0.8;">车找人 (我要载客)</div>
-            </div>
+            <div><div style="font-size:20px;">我是车主</div><div style="font-size:13px;opacity:0.8;">车找人 (我要载客)</div></div>
           </div>
           <div class="role-select-card passenger" @click="selectRoleAndGo('passenger')">
             <van-icon name="friends" size="40" />
-            <div>
-              <div style="font-size:20px;">我是乘客</div>
-              <div style="font-size:13px;opacity:0.8;">人找车 (我要坐车)</div>
-            </div>
+            <div><div style="font-size:20px;">我是乘客</div><div style="font-size:13px;opacity:0.8;">人找车 (我要坐车)</div></div>
           </div>
         </div>
       </van-popup>
@@ -622,7 +608,7 @@ const handlePopState = () => {
 body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16px; padding-bottom: 70px; }
 .loading-screen { display: flex; justify-content: center; align-items: center; height: 100vh; background: #fff; }
 
-/* 后台绝对布局 (修复菜单问题) */
+/* 后台绝对定位 */
 .admin-wrapper { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #fff; z-index: 9999; }
 .admin-sidebar { position: absolute; left: 0; top: 0; bottom: 0; width: 110px; background: #001529; color: #fff; overflow-y: auto; }
 .admin-main { position: absolute; left: 110px; top: 0; right: 0; bottom: 0; padding: 20px; overflow-y: auto; background: #fff; }
@@ -633,7 +619,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 
 /* 首页布局 */
 .page-home { padding: 10px; }
-.ride-card { background: #fff; margin: 10px; padding: 15px; border-radius: 12px; position: relative; box-shadow: 0 2px 8px rgba(0,0,0,0.02); }
+.ride-card { background: #fff; margin: 10px; padding: 15px; border-radius: 12px; position: relative; box-shadow: 0 2px 8px rgba(0,0,0,0.02); padding-right: 60px; /* 修复：防止遮挡 */ }
 /* 第一排 */
 .card-row-1 { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .row-left { display: flex; align-items: center; gap: 8px; flex: 1; overflow: hidden; }
@@ -644,26 +630,26 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .car-badge.electric { background: #f0f9eb; color: var(--green); border: 1px solid #c2e7b0; }
 .car-badge.gas { background: #fef0f0; color: #f56c6c; border: 1px solid #fbc4c4; }
 /* 第二排 */
-.card-row-2 { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; color: #666; font-size: 15px; }
+.card-row-2 { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; color: #666; font-size: 15px; }
 .info-item { display: flex; align-items: center; gap: 4px; }
 .info-item.center { flex: 1; justify-content: center; color: #333; font-weight: 500; }
 .price-val { color: #ff6600; font-size: 22px; font-weight: bold; }
 /* 第三排 */
 .card-row-3 { font-size: 13px; color: #999; background: #f8f8f8; padding: 8px; border-radius: 6px; }
 /* 电话按钮 */
-.call-btn { position: absolute; right: 10px; top: 50px; font-size: 32px; color: orange; background: #fff9f0; padding: 10px; border-radius: 50%; z-index: 10; cursor: pointer; }
+.call-btn { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 32px; color: orange; background: #fff9f0; padding: 10px; border-radius: 50%; z-index: 10; cursor: pointer; }
 
-/* 底部导航 & 悬浮按钮 */
+/* 底部发布按钮 (修复：小巧精致) */
 .custom-tabbar { position: fixed; bottom: 0; width: 100%; height: 65px; background: #fff; display: flex; border-top: 1px solid #eee; z-index: 999; padding-bottom: constant(safe-area-inset-bottom); padding-bottom: env(safe-area-inset-bottom); }
 .tab-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 14px; color: #666; font-weight: 500; }
 .tab-item.active { color: var(--orange); font-weight: bold; }
-.publish-wrap { position: relative; width: 90px; }
+.publish-wrap { position: relative; width: 70px; }
 .publish-float-btn { 
-  position: absolute; top: -25px; left: 50%; transform: translateX(-50%);
+  position: absolute; top: -20px; left: 50%; transform: translateX(-50%);
   width: 56px; height: 56px; border-radius: 50%; 
   background: linear-gradient(135deg, #ff6034, #ee0a24); color: #fff; 
   display: flex; flex-direction: column; align-items: center; justify-content: center; 
-  box-shadow: 0 6px 16px rgba(238, 10, 36, 0.4); border: 3px solid #fff;
+  box-shadow: 0 4px 12px rgba(238, 10, 36, 0.4); border: 3px solid #fff;
 }
 
 /* 身份选择卡片 */
@@ -672,7 +658,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .role-select-card.driver { color: var(--green); border: 2px solid var(--green); background: #f0f9eb; }
 .role-select-card.passenger { color: var(--orange); border: 2px solid var(--orange); background: #fffbe8; }
 
-/* 其他通用 */
+/* 通用 */
 .page-post { padding: 10px; }
 .post-card { background: #fff; border-radius: 8px; padding: 15px; margin-bottom: 15px; }
 .location-group .loc-row { display: flex; align-items: center; margin-bottom: 10px; border-bottom: 1px dashed #eee; padding-bottom: 10px; }
@@ -684,8 +670,10 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .seat-grid { display: flex; gap: 8px; }
 .seat-btn { width: 30px; height: 30px; background: #f0f0f0; display: flex; align-items: center; justify-content: center; border-radius: 4px; }
 .seat-btn.active { background: var(--blue); color: #fff; }
-.tags-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.tag-item { padding: 4px 8px; background: #f0f0f0; border-radius: 4px; font-size: 12px; margin-bottom: 30px; } /* 增加间距防止误触 */
+.tags-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; margin-bottom: 30px; /* 修复：增加底部安全距离 */ }
+.tag-item { padding: 6px 14px; background: #f0f0f0; border-radius: 4px; font-size: 14px; /* 修复：字体变大 */ margin-bottom: 8px; margin-right: 8px; }
+.top-bar { text-align: center; padding: 12px; background: #fff; font-weight: bold; font-size: 18px; }
+.home-banner { height: 100px; /* 修复：高度缩小 */ }
 .nav-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; background: #fff; }
 .nav-btn { height: 50px; display: flex; align-items: center; justify-content: center; color: #fff; border-radius: 8px; font-weight: bold; font-size: 16px; gap: 5px; opacity: 0.9; }
 .nav-btn.btn-blue { background: #4fc1e9; } .nav-btn.btn-green { background: #a0d468; }
