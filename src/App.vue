@@ -3,7 +3,7 @@ import { ref, reactive, computed, nextTick, onMounted, watch } from 'vue';
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
 // ==========================================
-// 1. 全局配置 (修复：内置默认广告)
+// 1. 全局配置
 // ==========================================
 const sysConfig = reactive({
   platform_name: '宜人出行',
@@ -11,18 +11,17 @@ const sysConfig = reactive({
   notice_text: '欢迎使用宜人出行，真实发布，拒绝虚假信息。',
   tags_driver: '有行李,走高速,可吸烟,线下支付',
   tags_passenger: '有行李,走高速,只限女生,线下支付',
-  // 修复：默认给两张图，防止空白
   banners: 'https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg,https://fastly.jsdelivr.net/npm/@vant/assets/apple-2.jpeg',
   amap_key: 'a4f6e1e5da68bc9fe5f984d69a3f6b2e',
   about_us: ''
 });
 
+// ★★★ 防白屏关键变量 ★★★
 const appReady = ref(false); 
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
 let exitCounter = 0;
 
-// 本地数据库 Key
 const DB_KEY = 'yiren_rides_real_db';
 
 // 后台数据
@@ -35,8 +34,8 @@ const adminRideList = ref([]);
 // 前台数据
 const activeTab = ref(0);
 const filterType = ref('all');
-const list = ref([]); // 列表
-const myRidesList = ref([]); // 我的
+const list = ref([]); 
+const myRidesList = ref([]); 
 const loading = ref(false);
 const refreshing = ref(false);
 const finished = ref(false);
@@ -95,53 +94,49 @@ const dateColumns = computed(() => {
 });
 
 // ==========================================
-// 3. 初始化
+// 3. 初始化 (★ 防白屏重构 ★)
 // ==========================================
-onMounted(async () => {
-  try {
-    await fetchSystemConfig();
+onMounted(() => {
+  // 1. 无论如何，500ms后强制显示界面，防止白屏
+  setTimeout(() => { appReady.value = true; }, 500);
 
+  try {
+    // 2. 加载用户
+    const u = localStorage.getItem('user_info');
+    if (u) {
+      try { Object.assign(userProfile, JSON.parse(u)); } catch(e){}
+    } else {
+      userProfile.id = 'u_' + Date.now();
+      localStorage.setItem('user_info', JSON.stringify(userProfile));
+    }
+
+    // 3. 加载本地数据 (同步操作，很快)
+    loadLocalData();
+
+    // 4. 判断后台路由
     if (window.location.pathname === '/admin') {
       isSystemAdmin.value = true;
       if(localStorage.getItem('admin_token')) {
         adminLoginData.password = localStorage.getItem('admin_token');
         isLogined.value = true;
       }
-      appReady.value = true;
     } else {
-      // 加载用户
-      const u = localStorage.getItem('user_info');
-      if (u) {
-        try { Object.assign(userProfile, JSON.parse(u)); } catch(e){}
-      } else {
-        // 默认初始化一个用户ID，防止发布报错
-        userProfile.id = 'u_' + Date.now();
-        localStorage.setItem('user_info', JSON.stringify(userProfile));
-      }
-      
-      // 加载本地数据
-      loadLocalData();
-
-      // 加载地图
-      loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
-      
-      appReady.value = true;
+      // 5. 异步加载地图 (不阻塞UI)
+      setTimeout(() => {
+        loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
+      }, 800);
     }
   } catch(e) {
     console.error("Init Error", e);
-    appReady.value = true;
   }
 
+  // 历史记录栈
   window.history.replaceState({ page: 'home' }, null, document.URL);
   window.addEventListener('popstate', handlePopState);
 });
 
-const fetchSystemConfig = async () => {
-  // 模拟配置加载
-};
-
 // ==========================================
-// 4. 本地数据库逻辑 (★ 确保发布成功 ★)
+// 4. 本地数据库 (核心)
 // ==========================================
 const loadLocalData = () => {
   loading.value = true;
@@ -164,11 +159,8 @@ const loadLocalData = () => {
 };
 
 const saveDataToLocal = (newRide) => {
-  // 插入到最前面
   list.value.unshift(newRide);
-  // 保存到 LocalStorage
   localStorage.setItem(DB_KEY, JSON.stringify(list.value));
-  // 更新我的发布
   myRidesList.value.unshift(newRide);
 };
 
@@ -186,9 +178,11 @@ const loadAMapScript = (key) => {
   window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' }; 
   const script = document.createElement('script');
   script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Map,AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`;
+  script.onload = () => { console.log('AMap Ready'); };
   document.body.appendChild(script);
 };
 
+// 格式化：省+市+区
 const formatAddressPCD = (ac) => {
   if (!ac) return '';
   const province = ac.province || '';
@@ -201,7 +195,7 @@ const formatAddressPCD = (ac) => {
 };
 
 const autoLocate = () => {
-  if (!window.AMap) { showFailToast('地图加载中...'); return; }
+  if (!window.AMap) { showFailToast('地图组件加载中...'); return; }
   showLoadingToast({ message: '定位中...', forbidClick: true, duration: 5000 });
 
   AMap.plugin('AMap.CitySearch', function () {
@@ -249,7 +243,10 @@ const updateOrigin = (addr) => {
 const initMapPicker = () => {
   if (!window.AMap || mapInstance) return;
   nextTick(() => {
-    mapInstance = new AMap.Map('picker-map-container', { zoom: 14, center: [104.630526, 28.766155] });
+    const el = document.getElementById('picker-map-container');
+    if(!el) return;
+    
+    mapInstance = new AMap.Map(el, { zoom: 14, center: [104.630526, 28.766155] });
     mapInstance.on('moveend', () => {
       const center = mapInstance.getCenter();
       if(!geocoderInstance) geocoderInstance = new AMap.Geocoder();
@@ -281,7 +278,7 @@ watch(mapSearchKeyword, (newVal) => {
 
 const openMapSelector = (f) => { 
   currentMapField.value = f; 
-  showMapPopup.value = true; 
+  uiState.showMap = true; 
   mapSearchKeyword.value = ''; 
   mapSearchResults.value = []; 
   setTimeout(initMapPicker, 300);
@@ -291,7 +288,9 @@ const confirmMapSelection = () => {
   if(mapSearchKeyword.value) {
     if(currentMapField.value === 'origin') postForm.origin = mapSearchKeyword.value;
     else postForm.destination = mapSearchKeyword.value;
-    showMapPopup.value = false;
+    uiState.showMap = false;
+  } else {
+    showToast('请移动地图选择');
   }
 };
 
@@ -299,7 +298,7 @@ const selectSearchResult = (item) => {
   let name = item.name;
   if(currentMapField.value==='origin') postForm.origin = name; 
   else postForm.destination = name; 
-  showMapPopup.value=false; 
+  uiState.showMap = false; 
 };
 
 // ==========================================
@@ -307,18 +306,30 @@ const selectSearchResult = (item) => {
 // ==========================================
 const onRefresh = () => { refreshing.value = true; loadLocalData(); };
 
-const setFilter = (type) => { filterType.value = type; }; // 本地过滤
+const setFilter = (type) => { filterType.value = type; }; 
 
-// ★★★ 修复：标签反选功能 ★★★
+const handleAdminLogin = async () => {
+  if(adminLoginData.username === 'admin' && adminLoginData.password === '123456') {
+    isLogined.value = true;
+    localStorage.setItem('admin_token', 'mock_token');
+  } else {
+    showFailToast('密码错误');
+  }
+};
+
+const saveSystemConfig = async () => {
+  showLoadingToast('保存中...');
+  setTimeout(() => showSuccessToast('保存成功'), 500);
+};
+
+const switchAdminMenu = (menu) => adminActiveMenu.value = menu;
+const deleteRideAdmin = (id) => { removeDataFromLocal(id); showSuccessToast('删除成功'); };
+const banUserAdmin = () => showSuccessToast('操作成功');
+
 const toggleRemark = (tag) => { 
   const index = postForm.remark.indexOf(tag);
-  if (index > -1) {
-    // 存在则删除
-    postForm.remark.splice(index, 1);
-  } else {
-    // 不存在则添加
-    postForm.remark.push(tag);
-  }
+  if (index > -1) postForm.remark.splice(index, 1);
+  else postForm.remark.push(tag);
 };
 
 const priceFormatter = (val) => {
@@ -327,20 +338,18 @@ const priceFormatter = (val) => {
 };
 
 const onPreSubmit = () => {
+  if (!userProfile.isLogin) { uiState.showAuth=true; return; }
   if (!postForm.origin || !postForm.destination) { showFailToast('请完善路线'); return; }
-  // 必须填电话
   if (!userProfile.phone) { 
-    showDialog({ message: '发布前请先绑定手机号，方便乘客联系您。' });
+    showDialog({ message: '发布前需绑定手机号，方便联系' });
     uiState.showAuth = true;
     return;
   }
-  if (parseFloat(postForm.price) > 9999) { showFailToast('费用上限9999元'); return; }
+  if (parseFloat(postForm.price) > 9999) { showFailToast('费用上限9999'); return; }
   uiState.showPay = true;
 };
 
-// ★★★ 核心修复：真实发布逻辑 ★★★
 const handleRealPublish = async () => {
-  // 1. 构造真实数据对象
   const newRide = {
     id: Date.now(),
     user_id: userProfile.id,
@@ -351,39 +360,32 @@ const handleRealPublish = async () => {
     seats: postForm.seats,
     price: postForm.price || '面议',
     remark: postForm.remark.join('，') || '无备注',
-    contact: userProfile.phone, // 写入电话
+    contact: userProfile.phone, 
     car_model: postForm.car_model || '油车'
   };
 
   showLoadingToast('发布中...');
-  
-  // 2. 存入本地数据库
   setTimeout(() => {
     closeToast();
     saveDataToLocal(newRide);
     showSuccessToast('发布成功');
-    
-    // 3. 重置表单
     postForm.origin = '';
     postForm.destination = '';
     postForm.price = '';
     postForm.remark = [];
-    
-    // 4. 跳转首页
     switchTab(0);
   }, 300);
 };
 
 const selectRoleAndGo = (r) => { 
   postForm.type=r; 
-  // 切换角色不重置地点，仅重置备注
+  postForm.date=''; 
   postForm.remark=[]; 
   uiState.showRole = false; 
   switchTab(1); 
   nextTick(() => { if(!postForm.origin) autoLocate(); });
 };
 
-// 登录相关
 const handleWeChatAuth = () => { 
   const id=Date.now(); 
   const avatars = ['https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg', 'https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg'];
@@ -417,6 +419,11 @@ const handleCall = (p) => {
 
 const formatDate = (str) => { if(!str) return ''; const d=new Date(str); return `${d.getMonth()+1}月${d.getDate()}日 ${d.getHours()}点`; };
 
+const fetchMyRides = () => {
+  if (userProfile.id) {
+    myRidesList.value = list.value.filter(item => item.user_id === userProfile.id);
+  }
+};
 const handleUserDelete = (id) => { 
   showDialog({title:'提示',message:'确认删除?'}).then(()=>{
     removeDataFromLocal(id);
@@ -424,17 +431,16 @@ const handleUserDelete = (id) => {
   }); 
 };
 
-// 切换Tab
 const switchTab = (idx) => {
+  if (activeTab.value === idx && idx === 0) {
+    onRefresh();
+    return;
+  }
   activeTab.value = idx;
   if (idx === 0) {
-    // 切换回首页，强制重新读取数据
     loadLocalData();
   } else if (idx === 2) {
-    // 切换回我的，筛选数据
-    if (userProfile.id) {
-      myRidesList.value = list.value.filter(item => item.user_id === userProfile.id);
-    }
+    fetchMyRides();
   }
   window.history.pushState({ tab: idx }, null, document.URL);
 };
@@ -462,28 +468,11 @@ const handlePopState = () => {
   }
   setTimeout(() => { exitCounter = 0; }, 2000);
 };
-
-// 后台登录逻辑保留但简化
-const handleAdminLogin = async () => {
-  if(adminLoginData.username === 'admin' && adminLoginData.password === '123456') {
-    isLogined.value = true;
-    localStorage.setItem('admin_token', 'mock_token');
-  } else {
-    showFailToast('密码错误');
-  }
-};
-const saveSystemConfig = async () => {
-  showLoadingToast('保存中...');
-  setTimeout(() => showSuccessToast('保存成功'), 500);
-};
-const switchAdminMenu = (menu) => adminActiveMenu.value = menu;
-const deleteRideAdmin = (id) => { removeDataFromLocal(id); showSuccessToast('删除成功'); };
-const banUserAdmin = () => showSuccessToast('操作成功');
 </script>
 
 <template>
   <div v-if="!appReady" style="display:flex;justify-content:center;align-items:center;height:100vh;background:#f7f8fa;">
-    <van-loading size="24px" vertical>加载中...</van-loading>
+    <van-loading size="24px" vertical color="#1989fa">正在加载...</van-loading>
   </div>
 
   <div v-else>
@@ -514,6 +503,21 @@ const banUserAdmin = () => showSuccessToast('操作成功');
                     <van-field v-model="sysConfig.kefu_wechat" label="微信" />
                     <van-field v-model="sysConfig.amap_key" label="地图Key" />
                     <van-field v-model="sysConfig.notice_text" label="公告" type="textarea" />
+                  </van-cell-group>
+                </van-tab>
+                <van-tab title="费用">
+                  <van-cell-group inset style="margin-top:10px;">
+                    <van-cell center title="显示过期"><template #right-icon><van-switch v-model="sysConfig.show_expired" size="20" active-value="true" inactive-value="false"/></template></van-cell>
+                    <van-field v-model="sysConfig.publish_fee_passenger" label="乘客费" />
+                    <van-field v-model="sysConfig.publish_fee_driver" label="司机费" />
+                    <van-field v-model="sysConfig.top_fee" label="置顶费" />
+                  </van-cell-group>
+                </van-tab>
+                <van-tab title="其他">
+                  <van-cell-group inset style="margin-top:10px;">
+                    <van-field v-model="sysConfig.banners" label="轮播图" type="textarea" />
+                    <van-field v-model="sysConfig.tags_driver" label="车主标签" type="textarea" />
+                    <van-field v-model="sysConfig.tags_passenger" label="乘客标签" type="textarea" />
                   </van-cell-group>
                 </van-tab>
               </van-tabs>
@@ -795,7 +799,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .tag-item { padding: 6px 14px; background: #f0f0f0; border-radius: 4px; font-size: 14px; }
 .tag-item.active { background: #eaf5ff; color: var(--blue); border: 1px solid var(--blue); }
 .top-bar { display: none; }
-.home-banner { height: 140px; }
+.home-banner { height: 130px; }
 .nav-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; background: #fff; }
 .nav-btn { height: 40px; display: flex; align-items: center; justify-content: center; color: #fff; border-radius: 8px; font-weight: bold; font-size: 15px; gap: 5px; opacity: 0.9; }
 .nav-btn.btn-blue { background: #4fc1e9; } .nav-btn.btn-green { background: #a0d468; }
