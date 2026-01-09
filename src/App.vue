@@ -3,7 +3,7 @@ import { ref, reactive, computed, nextTick, onMounted, watch } from 'vue';
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
 // ==========================================
-// 1. 全局配置 (扁平化，防白屏)
+// 1. 全局配置 (扁平化结构)
 // ==========================================
 const sysConfig = reactive({
   platform_name: '宜人出行',
@@ -12,11 +12,13 @@ const sysConfig = reactive({
   tags_driver: '有行李,走高速,可吸烟,线下支付',
   tags_passenger: '有行李,走高速,只限女生,线下支付',
   banners: '',
-  amap_key: 'a4f6e1e5da68bc9fe5f984d69a3f6b2e', // 您的Key
+  // 您的 Key 和 安全密钥
+  amap_key: 'a4f6e1e5da68bc9fe5f984d69a3f6b2e',
   about_us: ''
 });
 
-const appReady = ref(false); 
+// 全局状态
+const appReady = ref(false);
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
 
@@ -36,7 +38,7 @@ const loading = ref(false);
 const refreshing = ref(false);
 const finished = ref(false);
 
-// 弹窗控制
+// 弹窗
 const showRolePopup = ref(false);
 const showDatePicker = ref(false);
 const showPaymentDialog = ref(false);
@@ -102,7 +104,7 @@ const dateColumns = computed(() => {
 });
 
 // ==========================================
-// 3. 初始化 (稳健加载)
+// 3. 初始化
 // ==========================================
 onMounted(async () => {
   try {
@@ -123,6 +125,7 @@ onMounted(async () => {
         if(userProfile.isLogin) fetchMyRides();
       }
       
+      // 立即加载地图脚本
       loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
       setTimeout(() => onLoad(), 200);
     }
@@ -150,40 +153,49 @@ const fetchSystemConfig = async () => {
 };
 
 // ==========================================
-// 4. 地图定位 (修复回显问题)
+// 4. 地图逻辑 (修复：定位保障与回显)
 // ==========================================
 const loadAMapScript = (key) => {
   if (window.AMap) return;
+  // ★ 安全密钥 ★
   window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' }; 
   const script = document.createElement('script');
   script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`;
+  script.onload = () => { console.log('AMap loaded'); }; // 调试用
   document.body.appendChild(script);
 };
 
 const autoLocate = () => {
-  if (!window.AMap) { showFailToast('地图未就绪，请刷新'); return; }
-  showLoadingToast({ message: '正在定位...', forbidClick: true, duration: 8000 });
+  // 如果地图未加载，等待1秒后重试
+  if (!window.AMap) { 
+    showLoadingToast('地图加载中...');
+    setTimeout(autoLocate, 1000);
+    return; 
+  }
   
+  showLoadingToast({ message: '获取位置...', forbidClick: true, duration: 8000 });
+  
+  // 1. 尝试高精度定位
   AMap.plugin('AMap.Geolocation', function() {
-    var geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 6000, extensions: 'all' });
+    var geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 5000, zoomToAccuracy: true, extensions: 'all' });
     geolocation.getCurrentPosition(function(status, result) {
       if(status == 'complete'){
-        // 隐私过滤：只取 区 + 街道
         let safeAddr = "";
+        // 隐私过滤：只取 区 + 街道
         const ac = result.addressComponent;
         if (ac) {
           safeAddr = (ac.district||'') + (ac.street||ac.township||'');
         }
         if (!safeAddr) safeAddr = (result.formattedAddress || '').substring(0, 15);
         
-        // ★★★ 核心修复：强制在下一次 DOM 更新循环中赋值，确保文字上屏 ★★★
+        // ★ 强制更新 ★
         nextTick(() => {
           postForm.origin = safeAddr;
           closeToast();
-          showSuccessToast('已定位：' + safeAddr);
+          showSuccessToast('定位成功');
         });
       } else {
-        // 失败尝试 IP 定位兜底
+        // 2. 失败则尝试 IP 城市定位 (兜底)
         AMap.plugin('AMap.CitySearch', function () {
           var citySearch = new AMap.CitySearch();
           citySearch.getLocalCity(function (status, result) {
@@ -191,11 +203,11 @@ const autoLocate = () => {
               nextTick(() => {
                 postForm.origin = result.city;
                 closeToast();
-                showSuccessToast('大致位置：' + result.city);
+                showSuccessToast('大概位置：' + result.city);
               });
             } else {
               closeToast();
-              showFailToast('定位失败，请手动点击');
+              showFailToast('定位失败，请手动输入');
             }
           })
         })
@@ -243,6 +255,8 @@ const onLoad = async () => {
   loading.value = false;
   finished.value = true;
 };
+
+const setFilter = (type) => { filterType.value = type; onLoad(); };
 
 const handleAdminLogin = async () => {
   try {
@@ -293,14 +307,14 @@ const banUserAdmin = (uid, ban) => {
 const toggleRemark = (tag) => { if (!postForm.remark.includes(tag)) postForm.remark.push(tag); };
 
 const priceFormatter = (val) => {
-  if(val && val.length > 4) return val.slice(0, 4); 
+  if(val && val.length > 4) return val.slice(0, 4); // 限制4位
   return val;
 };
 
 const onPreSubmit = () => {
   if (!userProfile.isLogin) { showAuthModal.value=true; return; }
   if (!postForm.origin || !postForm.destination) { showFailToast('请完善路线'); return; }
-  if (parseFloat(postForm.price) > 9999) { showFailToast('费用上限9999'); return; }
+  if (parseFloat(postForm.price) > 9999) { showFailToast('费用上限9999元'); return; }
   showPaymentDialog.value=true;
 };
 
@@ -315,7 +329,8 @@ const selectRoleAndGo = (r) => {
   postForm.type=r; postForm.date=''; postForm.remark=[]; 
   showRolePopup.value=false; 
   switchTab(1); 
-  nextTick(() => { if(!postForm.origin) autoLocate(); });
+  // ★★★ 确保进入发布页后自动触发定位 ★★★
+  setTimeout(() => { if(!postForm.origin) autoLocate(); }, 500);
 };
 
 const handleWeChatAuth = () => { 
@@ -407,7 +422,7 @@ const handlePopState = () => {
                 </van-tab>
                 <van-tab title="费用">
                   <van-cell-group inset style="margin-top:10px;">
-                    <van-cell center title="过期"><template #right-icon><van-switch v-model="sysConfig.show_expired" size="20" active-value="true" inactive-value="false"/></template></van-cell>
+                    <van-cell center title="显示过期"><template #right-icon><van-switch v-model="sysConfig.show_expired" size="20" active-value="true" inactive-value="false"/></template></van-cell>
                     <van-field v-model="sysConfig.publish_fee_passenger" label="乘客费" />
                     <van-field v-model="sysConfig.publish_fee_driver" label="司机费" />
                     <van-field v-model="sysConfig.top_fee" label="置顶费" />
@@ -415,9 +430,9 @@ const handlePopState = () => {
                 </van-tab>
                 <van-tab title="其他">
                   <van-cell-group inset style="margin-top:10px;">
-                    <van-field v-model="sysConfig.banners" label="轮播" type="textarea" />
-                    <van-field v-model="sysConfig.tags_driver" label="车主标" type="textarea" />
-                    <van-field v-model="sysConfig.tags_passenger" label="乘客标" type="textarea" />
+                    <van-field v-model="sysConfig.banners" label="轮播图" type="textarea" />
+                    <van-field v-model="sysConfig.tags_driver" label="车主标签" type="textarea" />
+                    <van-field v-model="sysConfig.tags_passenger" label="乘客标签" type="textarea" />
                   </van-cell-group>
                 </van-tab>
               </van-tabs>
@@ -488,12 +503,15 @@ const handlePopState = () => {
                 </div>
                 <span v-if="item.car_model" class="car-badge" :class="item.car_model.includes('电')?'electric':'gas'">{{ item.car_model }}</span>
               </div>
+              
               <div class="card-row-2">
                 <div class="info-item"><van-icon name="clock-o" /> {{ formatDate(item.date) }}</div>
                 <div class="info-item center">{{ item.seats }}座</div>
                 <div class="price-val">¥{{ item.price || '面议' }}</div>
               </div>
+
               <div class="card-row-3" v-if="item.remark">{{ item.remark }}</div>
+              
               <div class="call-btn" @click.stop="handleCall(item.contact)"><van-icon name="phone-o" /></div>
             </div>
           </van-list>
@@ -549,8 +567,8 @@ const handlePopState = () => {
         <div class="tab-item" :class="{active: activeTab===0}" @click="switchTab(0)"><van-icon name="wap-home-o"/>首页</div>
         <div class="tab-item publish-wrap" @click="showRolePopup=true">
           <div class="publish-float-btn">
-            <van-icon name="plus" size="20" />
-            <span style="font-size:13px;font-weight:900;">发布</span>
+            <van-icon name="plus" size="18" />
+            <span style="font-size:12px;font-weight:900;">发布</span>
           </div>
         </div>
         <div class="tab-item" :class="{active: activeTab===2}" @click="switchTab(2)"><van-icon name="user-o"/>我的</div>
@@ -617,9 +635,10 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .menu-item.logout { position: absolute; bottom: 0; width: 100%; background: #d00; }
 .admin-list-item { display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid #eee; }
 
-/* 首页布局 */
+/* 首页布局优化 */
 .page-home { padding: 10px; }
-.ride-card { background: #fff; margin: 10px; padding: 15px; border-radius: 12px; position: relative; box-shadow: 0 2px 8px rgba(0,0,0,0.02); padding-right: 60px; /* 修复：防止遮挡 */ }
+/* 修复：卡片右边距增加到90px */
+.ride-card { background: #fff; margin: 10px; padding: 15px; padding-right: 90px; border-radius: 12px; position: relative; box-shadow: 0 2px 8px rgba(0,0,0,0.02); }
 /* 第一排 */
 .card-row-1 { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .row-left { display: flex; align-items: center; gap: 8px; flex: 1; overflow: hidden; }
@@ -637,7 +656,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 /* 第三排 */
 .card-row-3 { font-size: 13px; color: #999; background: #f8f8f8; padding: 8px; border-radius: 6px; }
 /* 电话按钮 */
-.call-btn { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 32px; color: orange; background: #fff9f0; padding: 10px; border-radius: 50%; z-index: 10; cursor: pointer; }
+.call-btn { position: absolute; right: 10px; top: 50px; font-size: 32px; color: orange; background: #fff9f0; padding: 10px; border-radius: 50%; z-index: 10; cursor: pointer; }
 
 /* 底部发布按钮 (修复：小巧精致) */
 .custom-tabbar { position: fixed; bottom: 0; width: 100%; height: 65px; background: #fff; display: flex; border-top: 1px solid #eee; z-index: 999; padding-bottom: constant(safe-area-inset-bottom); padding-bottom: env(safe-area-inset-bottom); }
@@ -649,7 +668,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
   width: 56px; height: 56px; border-radius: 50%; 
   background: linear-gradient(135deg, #ff6034, #ee0a24); color: #fff; 
   display: flex; flex-direction: column; align-items: center; justify-content: center; 
-  box-shadow: 0 4px 12px rgba(238, 10, 36, 0.4); border: 3px solid #fff;
+  box-shadow: 0 6px 16px rgba(238, 10, 36, 0.4); border: 3px solid #fff;
 }
 
 /* 身份选择卡片 */
@@ -670,10 +689,12 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .seat-grid { display: flex; gap: 8px; }
 .seat-btn { width: 30px; height: 30px; background: #f0f0f0; display: flex; align-items: center; justify-content: center; border-radius: 4px; }
 .seat-btn.active { background: var(--blue); color: #fff; }
-.tags-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; margin-bottom: 30px; /* 修复：增加底部安全距离 */ }
-.tag-item { padding: 6px 14px; background: #f0f0f0; border-radius: 4px; font-size: 14px; /* 修复：字体变大 */ margin-bottom: 8px; margin-right: 8px; }
+/* 修复：标签样式加大，增加底部距离 */
+.tags-group { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; margin-bottom: 30px; }
+.tag-item { padding: 6px 14px; background: #f0f0f0; border-radius: 4px; font-size: 14px; }
 .top-bar { text-align: center; padding: 12px; background: #fff; font-weight: bold; font-size: 18px; }
-.home-banner { height: 100px; /* 修复：高度缩小 */ }
+/* 修复：广告高度 125px */
+.home-banner { height: 125px; }
 .nav-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; background: #fff; }
 .nav-btn { height: 50px; display: flex; align-items: center; justify-content: center; color: #fff; border-radius: 8px; font-weight: bold; font-size: 16px; gap: 5px; opacity: 0.9; }
 .nav-btn.btn-blue { background: #4fc1e9; } .nav-btn.btn-green { background: #a0d468; }
