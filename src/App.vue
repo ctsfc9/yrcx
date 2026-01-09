@@ -39,11 +39,11 @@ const refreshing = ref(false);
 const finished = ref(false);
 const submitLoading = ref(false);
 
-// ★★★ 统一弹窗状态 (修复发布按钮点不动的问题) ★★★
+// 弹窗状态
 const uiState = reactive({
   showRole: false,
   showDate: false,
-  showPayment: false, // 统一使用这个变量控制发布确认弹窗
+  showPay: false, 
   showMap: false,
   showAuth: false,
   showShare: false,
@@ -350,19 +350,19 @@ const swapLocation = () => {
   postForm.destination = temp;
 };
 
-// ★★★ 修复：点击发布逻辑 ★★★
 const onPreSubmit = () => {
   if (!postForm.origin || !postForm.destination) { showFailToast('请完善路线'); return; }
   
   if (!userProfile.phone) { 
-    showDialog({ message: '发布前请绑定手机号' }).then(() => { uiState.showAuth = true; });
+    showDialog({ message: '发布前请绑定手机号' }).then(() => {
+        uiState.showAuth = true;
+    });
     return;
   }
   
   if (parseFloat(postForm.price) > 9999) { showFailToast('费用上限9999元'); return; }
   
-  // 核心：使用 uiState.showPayment
-  uiState.showPayment = true; 
+  uiState.showPay = true; 
 };
 
 const handleRealPublish = async () => {
@@ -438,7 +438,15 @@ const handleCall = (p) => {
   else showFailToast('无号码');
 };
 
-const formatDate = (str) => { if(!str) return ''; const d=new Date(str); return `${d.getMonth()+1}月${d.getDate()}日 ${d.getHours()}点`; };
+const formatDate = (str) => { 
+  if(!str) return ''; 
+  const d=new Date(str); 
+  const m = d.getMonth() + 1;
+  const da = d.getDate();
+  const h = d.getHours();
+  // 简单格式化: 1月17日 22点
+  return `${m}月${da}日 ${h}点`; 
+};
 
 const handleUserDelete = (id) => { 
   showDialog({title:'提示',message:'确认删除?'}).then(async ()=>{
@@ -456,13 +464,13 @@ const switchTab = (idx) => {
 };
 
 const handlePopState = () => {
-  if (uiState.showRole || uiState.showMap || uiState.showShare || uiState.selectedRide || uiState.showDate || uiState.showPayment) {
+  if (uiState.showRole || uiState.showMap || uiState.showShare || selectedRide.value || uiState.showDate || uiState.showPay) {
     uiState.showRole = false;
     uiState.showMap = false;
     uiState.showShare = false;
-    uiState.selectedRide = null;
+    selectedRide.value = null;
     uiState.showDate = false;
-    uiState.showPayment = false;
+    uiState.showPay = false;
     window.history.pushState({ page: 'buffer' }, null, document.URL);
     return;
   }
@@ -587,18 +595,22 @@ const handlePopState = () => {
             <div>暂无信息，快来发布第一条吧</div>
           </div>
           <van-list v-else v-model:loading="loading" :finished="finished" finished-text="没有更多了">
-            <div v-for="item in safeList" :key="item.id" class="ride-card" @click="uiState.selectedRide = item">
+            <div v-for="item in safeList" :key="item.id" class="ride-card" @click="selectedRide = item">
               <div class="card-row-1">
-                <span class="badge" :class="item.type">{{ item.type==='driver'?'车主':'乘客' }}</span>
-                <span class="route">{{ item.origin }} <van-icon name="arrow" /> {{ item.destination }}</span>
+                <div class="row-left">
+                  <span class="badge" :class="item.type">{{ item.type==='driver'?'车主':'乘客' }}</span>
+                  <span class="route">{{ item.origin }} <van-icon name="arrow" /> {{ item.destination }}</span>
+                </div>
                 <div class="call-btn" @click.stop="handleCall(item.contact)"><van-icon name="phone" color="#fff" size="18" /></div>
               </div>
               
               <div class="card-row-2">
-                <div class="info-item"><van-icon name="clock-o" /> {{ formatDate(item.date) }}</div>
-                <div class="info-item center">{{ item.seats }}座</div>
-                <div class="price-val">¥{{ item.price || '面议' }}</div>
-                <span v-if="item.car_model" class="car-badge" :class="getCarClass(item.car_model)">{{ item.car_model }}</span>
+                <div class="info-group-left">
+                  <span class="info-text"><van-icon name="clock-o" /> {{ formatDate(item.date) }}</span>
+                  <span class="info-text">{{ item.seats }}座</span>
+                  <span class="price-val">¥{{ item.price || '面议' }}</span>
+                  <span v-if="item.car_model" class="car-badge" :class="getCarClass(item.car_model)">{{ item.car_model }}</span>
+                </div>
               </div>
 
               <div class="card-row-3" v-if="item.remark">{{ item.remark }}</div>
@@ -624,7 +636,7 @@ const handlePopState = () => {
         <div class="me-menu-grid">
           <van-grid :column-num="3" clickable>
             <van-grid-item icon="service-o" text="客服" @click="showDialog({message: '微信: '+sysConfig.kefu_wechat})" />
-            <van-grid-item icon="share-o" text="分享" @click="uiState.showShareGuide=true" />
+            <van-grid-item icon="share-o" text="分享" @click="uiState.showShare=true" />
             <van-grid-item icon="info-o" text="关于" @click="showDialog({title:'关于', message: sysConfig.about_us})" />
           </van-grid>
         </div>
@@ -695,7 +707,7 @@ const handlePopState = () => {
         </div>
       </van-popup>
 
-      <van-dialog v-model:show="uiState.showPayment" title="确认发布" show-cancel-button @confirm="handleRealPublish"><div style="padding:20px;text-align:center">置顶 <van-switch v-model="postForm.is_top" size="16px"/></div></van-dialog>
+      <van-dialog v-model:show="uiState.showPay" title="确认发布" show-cancel-button @confirm="handleRealPublish"><div style="padding:20px;text-align:center">置顶 <van-switch v-model="postForm.is_top" size="16px"/></div></van-dialog>
       
       <van-popup v-model:show="uiState.showAuth" position="bottom" style="height:40%;padding:20px;">
         <h3 style="text-align:center">绑定手机</h3>
@@ -720,13 +732,13 @@ const handlePopState = () => {
             </div>
             <div style="padding:20px;display:flex;gap:10px;">
               <van-button block round type="primary" color="#ff6600" @click="handleCall(selectedRide.contact)" style="flex:1;">拨打</van-button>
-              <van-button block round type="warning" @click="uiState.showShareGuide=true" style="flex:1;">分享</van-button>
+              <van-button block round type="warning" @click="uiState.showShare=true" style="flex:1;">分享</van-button>
             </div>
           </div>
         </div>
       </van-popup>
       
-      <div v-if="uiState.showShareGuide" class="share-guide" @click="uiState.showShareGuide=false">
+      <div v-if="uiState.showShare" class="share-guide" @click="uiState.showShare=false">
         <div class="share-arrow">
           <svg viewBox="0 0 1024 1024" width="80" height="80" fill="#fff" style="transform: rotate(-90deg);">
             <path d="M512 64a448 448 0 1 1 0 896 448 448 0 0 1 0-896z m0 832a384 384 0 1 0 0-768 384 384 0 0 0 0 768z" opacity=".1"></path>
@@ -759,25 +771,30 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 
 /* 首页布局优化 */
 .page-home { padding: 10px; }
-.ride-card { background: #fff; margin: 10px; padding: 15px; padding-right: 90px; border-radius: 12px; position: relative; box-shadow: 0 2px 8px rgba(0,0,0,0.02); }
-/* ★★★ 第一排：Flex布局，让电话按钮靠右 ★★★ */
-.card-row-1 { display: flex; align-items: center; margin-bottom: 12px; }
-/* row-left 占据剩余空间 */
+.ride-card { background: #fff; margin: 10px; padding: 15px; padding-right: 15px; border-radius: 12px; position: relative; box-shadow: 0 2px 8px rgba(0,0,0,0.02); }
+
+/* ★★★ 第一排：Flex布局，justify-content: space-between ★★★ */
+.card-row-1 { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .row-left { display: flex; align-items: center; gap: 8px; flex: 1; overflow: hidden; margin-right: 10px; }
 .badge { padding: 2px 6px; font-size: 14px; color: #fff; border-radius: 4px; font-weight: bold; flex-shrink: 0; }
 .badge.driver { background: var(--green); } .badge.passenger { background: orange; }
 .route { font-size: 17px; font-weight: bold; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.car-badge { margin-left: 8px; padding: 2px 8px; border-radius: 4px; font-size: 13px; font-weight: bold; flex-shrink: 0; }
+
+/* ★★★ 第二排：左侧信息组 + 右侧无内容(对齐用) ★★★ */
+.card-row-2 { display: flex; align-items: center; margin-bottom: 8px; color: #666; font-size: 15px; }
+.info-group-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.info-text { display: flex; align-items: center; gap: 4px; }
+.price-val { color: #000; font-size: 20px; font-weight: bold; margin-left: 5px; }
+
+/* ★★★ 车型标签：紧跟价格后 ★★★ */
+.car-badge { margin-left: 5px; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-weight: bold; }
 .car-badge.electric { background: #f0f9eb; color: var(--green); border: 1px solid #c2e7b0; }
 .car-badge.gas { background: #fef0f0; color: #f56c6c; border: 1px solid #fbc4c4; }
-.car-badge.hybrid { background: #f3e5f5; color: #9c27b0; border: 1px solid #e1bee7; } 
-/* ★★★ 第二排：车型显示 ★★★ */
-.card-row-2 { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; color: #666; font-size: 15px; }
-.info-item { display: flex; align-items: center; gap: 4px; }
-.info-item.center { flex: 1; justify-content: center; color: #333; font-weight: 500; }
-.price-val { color: #000; font-size: 20px; font-weight: bold; }
+.car-badge.hybrid { background: #f3e5f5; color: #9c27b0; border: 1px solid #e1bee7; }
+
 .card-row-3 { font-size: 13px; color: #999; background: #f8f8f8; padding: 8px; border-radius: 6px; }
-/* ★★★ 实心电话按钮 (36px) ★★★ */
+
+/* ★★★ 电话按钮：实心小圆 (36px) ★★★ */
 .call-btn { flex-shrink: 0; font-size: 20px; color: #fff; background: #ff6600; padding: 0; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; }
 
 /* 底部发布按钮 */
