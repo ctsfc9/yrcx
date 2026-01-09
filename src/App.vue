@@ -39,17 +39,16 @@ const refreshing = ref(false);
 const finished = ref(false);
 const submitLoading = ref(false);
 
-// 弹窗管理
-const uiState = reactive({
-  showRole: false,
-  showDate: false,
-  showPay: false,
-  showMap: false,
-  showAuth: false,
-  showShare: false,
-  selectedRide: null,
-  authStep: 1
-});
+// ★★★ 弹窗状态管理 (修复变量名冲突) ★★★
+// 使用独立的 ref，避免 reactive 对象深层监听失效
+const showRolePopup = ref(false);
+const showDatePicker = ref(false);
+const showPaymentDialog = ref(false); // 核心修复：发布弹窗控制
+const showMapPopup = ref(false);
+const showAuthModal = ref(false);
+const showShareGuide = ref(false);
+const selectedRide = ref(null);
+const authStep = ref(1);
 
 // 表单
 const userProfile = reactive({ id: '', nickname: '未登录', avatar: '', phone: '', balance: '0.00', isLogin: false });
@@ -97,6 +96,7 @@ const dateColumns = computed(() => {
 // 3. 初始化
 // ==========================================
 onMounted(async () => {
+  // 防白屏保险丝
   setTimeout(() => { if(!appReady.value) appReady.value = true; }, 300);
 
   try {
@@ -247,7 +247,7 @@ watch(mapSearchKeyword, (newVal) => {
 
 const openMapSelector = (f) => { 
   currentMapField.value = f; 
-  uiState.showMap = true; 
+  showMapPopup.value = true; 
   mapSearchKeyword.value = ''; 
   mapSearchResults.value = []; 
   setTimeout(initMapPicker, 300);
@@ -257,7 +257,7 @@ const confirmMapSelection = () => {
   if(mapSearchKeyword.value) {
     if(currentMapField.value === 'origin') postForm.origin = mapSearchKeyword.value;
     else postForm.destination = mapSearchKeyword.value;
-    uiState.showMap = false;
+    showMapPopup.value = false;
   } else {
     showToast('请移动地图选择');
   }
@@ -267,7 +267,7 @@ const selectSearchResult = (item) => {
   let name = item.name;
   if(currentMapField.value==='origin') postForm.origin = name; 
   else postForm.destination = name; 
-  uiState.showMap = false; 
+  showMapPopup.value = false; 
 };
 
 // ==========================================
@@ -342,26 +342,21 @@ const swapLocation = () => {
   postForm.destination = temp;
 };
 
-// ★★★ 修复：发布按钮点击逻辑 ★★★
+// ★★★ 核心修复：绑定正确的控制变量 ★★★
 const onPreSubmit = () => {
-  console.log("PreSubmit clicked"); // 调试点
+  if (!postForm.origin || !postForm.destination) { showFailToast('请完善路线'); return; }
   
-  if (!postForm.origin || !postForm.destination) { 
-    showFailToast('请完善路线'); 
-    return; 
-  }
-  
-  // 必须绑定手机
   if (!userProfile.phone) { 
     showDialog({ message: '发布前请绑定手机号' }).then(() => {
-        uiState.showAuth = true;
+        showAuthModal.value = true;
     });
     return;
   }
   
   if (parseFloat(postForm.price) > 9999) { showFailToast('费用上限9999元'); return; }
   
-  uiState.showPay = true; // 唤起支付确认弹窗
+  // 修正：直接控制 showPaymentDialog 变量
+  showPaymentDialog.value = true; 
 };
 
 const handleRealPublish = async () => {
@@ -404,7 +399,7 @@ const selectRoleAndGo = (r) => {
   postForm.type=r; 
   postForm.date=''; 
   postForm.remark=[]; 
-  uiState.showRole = false; 
+  showRolePopup.value = false; 
   switchTab(1); 
   nextTick(() => { if(!postForm.origin) autoLocate(); });
 };
@@ -414,12 +409,12 @@ const handleWeChatAuth = () => {
   const avatars = ['https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg', 'https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg'];
   Object.assign(userProfile,{ id:`u${id}`, nickname:`用户${id.toString().slice(-4)}`, avatar: avatars[id % 2], isLogin:true }); 
   localStorage.setItem('user_info',JSON.stringify(userProfile)); 
-  uiState.authStep = 2; 
+  authStep.value = 2; 
 };
 const handleBindPhone = () => { 
   if(!registerForm.phone){ showFailToast('请输入手机号'); return; }
   userProfile.phone=registerForm.phone; 
-  uiState.showAuth = false; 
+  showAuthModal.value = false; 
   localStorage.setItem('user_info',JSON.stringify(userProfile)); 
   showSuccessToast('登录成功');
 };
@@ -429,7 +424,7 @@ const onConfirmDate = ({selectedOptions}) => {
   const f = n=>String(n).padStart(2,'0');
   postForm.dateDisplay = `${vals[0]}年${vals[1]}月${vals[2]}日 ${vals[3]}点`;
   postForm.date = `${vals[0]}-${f(vals[1])}-${f(vals[2])}T${f(vals[3])}:00`;
-  uiState.showDate = false;
+  showDatePicker.value = false;
 };
 
 const handleCall = (p) => { 
@@ -455,13 +450,13 @@ const switchTab = (idx) => {
 };
 
 const handlePopState = () => {
-  if (uiState.showRole || uiState.showMap || uiState.showShare || uiState.selectedRide || uiState.showDate || uiState.showPay) {
-    uiState.showRole = false;
-    uiState.showMap = false;
-    uiState.showShare = false;
-    uiState.selectedRide = null;
-    uiState.showDate = false;
-    uiState.showPay = false;
+  if (showRolePopup.value || showMapPopup.value || showShareGuide.value || selectedRide.value || showDatePicker.value || showPaymentDialog.value) {
+    showRolePopup.value = false;
+    showMapPopup.value = false;
+    showShareGuide.value = false;
+    selectedRide.value = null;
+    showDatePicker.value = false;
+    showPaymentDialog.value = false;
     window.history.pushState({ page: 'buffer' }, null, document.URL);
     return;
   }
@@ -557,7 +552,7 @@ const handlePopState = () => {
               </van-radio-group>
             </div>
 
-            <div class="form-row" @click="uiState.showDate=true"><div class="label">出发时间</div><div style="flex:1;text-align:right;">{{ postForm.dateDisplay || '请选择' }} <van-icon name="arrow" color="#999"/></div></div>
+            <div class="form-row" @click="showDatePicker=true"><div class="label">出发时间</div><div style="flex:1;text-align:right;">{{ postForm.dateDisplay || '请选择' }} <van-icon name="arrow" color="#999"/></div></div>
             <div class="form-row"><div class="label">费用</div><div style="flex:1"><van-field v-model="postForm.price" type="digit" :formatter="priceFormatter" placeholder="元" input-align="right" :border="false"/></div></div>
             <div class="form-row" style="align-items:flex-start;border-bottom:none;">
               <div class="label" style="margin-top:8px;">备注</div>
@@ -586,7 +581,7 @@ const handlePopState = () => {
             <div>暂无信息，快来发布第一条吧</div>
           </div>
           <van-list v-else v-model:loading="loading" :finished="finished" finished-text="没有更多了">
-            <div v-for="item in safeList" :key="item.id" class="ride-card" @click="uiState.selectedRide = item">
+            <div v-for="item in safeList" :key="item.id" class="ride-card" @click="selectedRide = item">
               <div class="card-row-1">
                 <div class="row-left">
                   <span class="badge" :class="item.type">{{ item.type==='driver'?'车主':'乘客' }}</span>
@@ -626,7 +621,7 @@ const handlePopState = () => {
         <div class="me-menu-grid">
           <van-grid :column-num="3" clickable>
             <van-grid-item icon="service-o" text="客服" @click="showDialog({message: '微信: '+sysConfig.kefu_wechat})" />
-            <van-grid-item icon="share-o" text="分享" @click="uiState.showShare=true" />
+            <van-grid-item icon="share-o" text="分享" @click="showShareGuide=true" />
             <van-grid-item icon="info-o" text="关于" @click="showDialog({title:'关于', message: sysConfig.about_us})" />
           </van-grid>
         </div>
@@ -656,7 +651,7 @@ const handlePopState = () => {
 
       <div class="custom-tabbar" v-if="activeTab!==1">
         <div class="tab-item" :class="{active: activeTab===0}" @click="switchTab(0)"><van-icon name="wap-home-o"/>首页</div>
-        <div class="tab-item publish-wrap" @click="uiState.showRole=true">
+        <div class="tab-item publish-wrap" @click="showRolePopup=true">
           <div class="publish-float-btn">
             <van-icon name="plus" size="20" />
             <span style="font-size:13px;font-weight:900;">发布</span>
@@ -665,7 +660,7 @@ const handlePopState = () => {
         <div class="tab-item" :class="{active: activeTab===2}" @click="switchTab(2)"><van-icon name="user-o"/>我的</div>
       </div>
       
-      <van-popup v-model:show="uiState.showRole" position="bottom" style="height:45%;background:#f7f8fa;">
+      <van-popup v-model:show="showRolePopup" position="bottom" style="height:45%;background:#f7f8fa;">
         <div style="padding:30px;display:flex;flex-direction:column;gap:20px;height:100%;justify-content:center;">
           <div class="role-select-card driver" @click="selectRoleAndGo('driver')">
             <van-icon name="logistics" size="40" />
@@ -678,9 +673,9 @@ const handlePopState = () => {
         </div>
       </van-popup>
 
-      <van-popup v-model:show="uiState.showMap" position="bottom" :style="{height:'90%'}" round>
+      <van-popup v-model:show="showMapPopup" position="bottom" :style="{height:'90%'}" round>
         <div class="map-popup-content" style="display:flex;flex-direction:column;height:100%;">
-          <van-search v-model="mapSearchKeyword" show-action placeholder="搜索地点" @search="openMapSelector"><template #action><div @click="uiState.showMap=false">关闭</div></template></van-search>
+          <van-search v-model="mapSearchKeyword" show-action placeholder="搜索地点" @search="openMapSelector"><template #action><div @click="showMapPopup=false">关闭</div></template></van-search>
           <div id="picker-map-container" style="width:100%;height:300px;position:relative;flex-shrink:0;">
              <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-100%);z-index:999;pointer-events:none;">
                <van-icon name="location" size="32" color="#ee0a24" />
@@ -697,38 +692,38 @@ const handlePopState = () => {
         </div>
       </van-popup>
 
-      <van-dialog v-model:show="uiState.showPaymentDialog" title="确认发布" show-cancel-button @confirm="handleRealPublish"><div style="padding:20px;text-align:center">置顶 <van-switch v-model="postForm.is_top" size="16px"/></div></van-dialog>
+      <van-dialog v-model:show="showPaymentDialog" title="确认发布" show-cancel-button @confirm="handleRealPublish"><div style="padding:20px;text-align:center">置顶 <van-switch v-model="postForm.is_top" size="16px"/></div></van-dialog>
       
-      <van-popup v-model:show="uiState.showAuth" position="bottom" style="height:40%;padding:20px;">
+      <van-popup v-model:show="showAuthModal" position="bottom" style="height:40%;padding:20px;">
         <h3 style="text-align:center">绑定手机</h3>
         <div style="text-align:center;margin-bottom:15px;color:#999;font-size:12px;">方便乘客与您联系</div>
         <div v-if="authStep===1"><van-button block type="primary" color="#07c160" @click="handleWeChatAuth">微信快捷登录</van-button></div>
         <div v-else><van-field v-model="registerForm.phone" placeholder="请输入手机号" border /><van-button block type="primary" @click="handleBindPhone" style="margin-top:10px;">确定绑定</van-button></div>
       </van-popup>
       
-      <van-popup v-model:show="uiState.showDate" position="bottom"><van-picker :columns="dateColumns" @confirm="onConfirmDate" @cancel="uiState.showDate=false"/></van-popup>
+      <van-popup v-model:show="showDatePicker" position="bottom"><van-picker :columns="dateColumns" @confirm="onConfirmDate" @cancel="showDatePicker=false"/></van-popup>
 
-      <van-popup v-if="uiState.selectedRide" v-model:show="uiState.selectedRide" position="right" :style="{width:'100%',height:'100%'}">
+      <van-popup v-if="selectedRide" v-model:show="selectedRide" position="right" :style="{width:'100%',height:'100%'}">
         <div class="detail-page">
-          <van-nav-bar title="详情" left-arrow @click-left="uiState.selectedRide=null"/>
+          <van-nav-bar title="详情" left-arrow @click-left="selectedRide=null"/>
           <div class="detail-content">
             <div class="detail-card">
-              <div class="detail-header"><span class="badge" :class="uiState.selectedRide.type">{{ uiState.selectedRide.type==='driver'?'车主':'乘客' }}</span><span class="detail-route">{{ uiState.selectedRide.origin }} → {{ uiState.selectedRide.destination }}</span></div>
+              <div class="detail-header"><span class="badge" :class="selectedRide.type">{{ selectedRide.type==='driver'?'车主':'乘客' }}</span><span class="detail-route">{{ selectedRide.origin }} → {{ selectedRide.destination }}</span></div>
               <van-divider />
-              <div class="detail-item"><van-icon name="clock-o" /> 时间：{{ formatDate(uiState.selectedRide.date) }}</div>
-              <div class="detail-item"><van-icon name="friends-o" /> 数量：{{ uiState.selectedRide.seats }}</div>
-              <div class="detail-item"><van-icon name="gold-coin-o" /> 费用：<span class="price-big">¥{{ uiState.selectedRide.price || '面议' }}</span></div>
-              <div class="detail-item" v-if="uiState.selectedRide.remark"><van-icon name="label-o" /> 备注：{{ uiState.selectedRide.remark }}</div>
+              <div class="detail-item"><van-icon name="clock-o" /> 时间：{{ formatDate(selectedRide.date) }}</div>
+              <div class="detail-item"><van-icon name="friends-o" /> 数量：{{ selectedRide.seats }}</div>
+              <div class="detail-item"><van-icon name="gold-coin-o" /> 费用：<span class="price-big">¥{{ selectedRide.price || '面议' }}</span></div>
+              <div class="detail-item" v-if="selectedRide.remark"><van-icon name="label-o" /> 备注：{{ selectedRide.remark }}</div>
             </div>
             <div style="padding:20px;display:flex;gap:10px;">
-              <van-button block round type="primary" color="#ff6600" @click="handleCall(uiState.selectedRide.contact)" style="flex:1;">拨打</van-button>
-              <van-button block round type="warning" @click="uiState.showShare=true" style="flex:1;">分享</van-button>
+              <van-button block round type="primary" color="#ff6600" @click="handleCall(selectedRide.contact)" style="flex:1;">拨打</van-button>
+              <van-button block round type="warning" @click="showShareGuide=true" style="flex:1;">分享</van-button>
             </div>
           </div>
         </div>
       </van-popup>
       
-      <div v-if="uiState.showShare" class="share-guide" @click="uiState.showShare=false">
+      <div v-if="showShareGuide" class="share-guide" @click="showShareGuide=false">
         <div class="share-arrow">
           <svg viewBox="0 0 1024 1024" width="80" height="80" fill="#fff" style="transform: rotate(-90deg);">
             <path d="M512 64a448 448 0 1 1 0 896 448 448 0 0 1 0-896z m0 832a384 384 0 1 0 0-768 384 384 0 0 0 0 768z" opacity=".1"></path>
@@ -777,7 +772,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .card-row-3 { font-size: 13px; color: #999; background: #f8f8f8; padding: 8px; border-radius: 6px; }
 .call-btn { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 32px; color: orange; background: #fff9f0; padding: 10px; border-radius: 50%; z-index: 10; cursor: pointer; }
 
-/* 底部发布按钮 - 修复z-index */
+/* 底部发布按钮 */
 .custom-tabbar { position: fixed; bottom: 0; width: 100%; height: 65px; background: #fff; display: flex; border-top: 1px solid #eee; z-index: 999; padding-bottom: constant(safe-area-inset-bottom); padding-bottom: env(safe-area-inset-bottom); }
 .tab-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 14px; color: #666; font-weight: 500; }
 .tab-item.active { color: var(--orange); font-weight: bold; }
@@ -799,15 +794,14 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 /* 发布页布局 */
 .page-post { padding: 10px; }
 .post-card { background: #fff; border-radius: 8px; padding: 15px; margin-bottom: 15px; }
-/* 修复：相对定位以支持互换按钮 */
-.location-group { position: relative; }
+.location-group { position: relative; } /* 修复：给互换按钮定位基准 */
 .location-group .loc-row { display: flex; align-items: center; margin-bottom: 10px; border-bottom: 1px dashed #eee; padding-bottom: 10px; }
 /* 大圆点 */
 .dot { width: 24px; height: 24px; border-radius: 50%; color: #fff; text-align: center; line-height: 24px; margin-right: 12px; flex-shrink: 0; font-size: 14px; }
 .dot.green { background: var(--green); } .dot.red { background: red; }
 .input-area { font-size: 16px; font-weight: bold; flex: 1; color: #333; }
-/* 修复：互换按钮样式 */
-.swap-icon { position: absolute; right: 20px; top: 50%; transform: translateY(-50%); z-index: 10; background: #fff; padding: 8px; border-radius: 50%; box-shadow: 0 2px 8px rgba(0,0,0,0.1); cursor: pointer; }
+/* ★★★ 修复：互换按钮样式调整 (right: 40px) ★★★ */
+.swap-icon { position: absolute; right: 40px; top: 50%; transform: translateY(-50%); z-index: 10; background: #fff; padding: 8px; border-radius: 50%; box-shadow: 0 2px 8px rgba(0,0,0,0.1); cursor: pointer; }
 .form-row { display: flex; align-items: center; padding: 16px 0; border-bottom: 1px solid #f0f0f0; }
 .form-row .label { width: 75px; color: #333; font-size: 15px; font-weight: bold; }
 .seat-grid { display: flex; gap: 8px; }
@@ -838,6 +832,6 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .share-guide { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; display: flex; justify-content: center; }
 .share-arrow { position: absolute; right: 20px; top: 20px; }
 .share-text { margin-top: 100px; color: #fff; text-align: center; font-size: 18px; line-height: 1.6; }
-/* 修复：发布按钮容器，确保层级最高 */
+/* ★★★ 修复：底部按钮层级 ★★★ */
 .bottom-action { position: relative; z-index: 999; }
 </style>
