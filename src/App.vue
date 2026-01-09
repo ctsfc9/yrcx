@@ -70,20 +70,6 @@ const safeList = computed(() => {
   return list.value.filter(item => item && item.origin && item.destination);
 });
 
-const displayQuickRoutes = computed(() => {
-  if (safeList.value.length === 0) return [ { from: '高县', to: '宁波' }, { from: '筠连', to: '嘉兴' } ];
-  const counts = {};
-  safeList.value.forEach(item => {
-    if (item?.origin && item?.destination) {
-      const k = `${item.origin.substring(0,2)}→${item.destination.substring(0,2)}`;
-      counts[k] = (counts[k] || 0) + 1;
-    }
-  });
-  return Object.keys(counts).sort((a,b)=>counts[b]-counts[a]).slice(0,8).map(k=>{
-    const [f,t]=k.split('→'); return {from:f, to:t};
-  });
-});
-
 const bannersList = computed(() => (sysConfig.banners || '').split(',').filter(Boolean));
 const currentRemarkOptions = computed(() => {
   const str = postForm.type === 'driver' ? sysConfig.tags_driver : sysConfig.tags_passenger;
@@ -150,15 +136,32 @@ const fetchSystemConfig = async () => {
 };
 
 // ==========================================
-// 4. 地图逻辑
+// 4. 地图逻辑 (★ 规则调整：省+市+区 ★)
 // ==========================================
 const loadAMapScript = (key) => {
   if (window.AMap) return;
   window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' }; 
   const script = document.createElement('script');
-  // 加载 Geocoder
   script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`;
   document.body.appendChild(script);
+};
+
+// ★★★ 地址格式化新规则：省+市+区 (无街道) ★★★
+const formatAddressPCD = (ac) => {
+  if (!ac) return '';
+  const province = ac.province || '';
+  const city = ac.city || '';
+  const district = ac.district || '';
+  
+  // 拼接逻辑
+  let addr = province;
+  if (city && city !== province) {
+    addr += city;
+  }
+  if (district) {
+    addr += district;
+  }
+  return addr; // 仅返回 省市区
 };
 
 const autoLocate = () => {
@@ -168,52 +171,44 @@ const autoLocate = () => {
     return; 
   }
   
-  showLoadingToast({ message: '获取位置...', forbidClick: true, duration: 8000 });
+  showLoadingToast({ message: '获取位置...', forbidClick: true, duration: 5000 });
 
-  // 1. IP 定位兜底
+  // 1. IP 定位优先 (兜底，通常只到城市)
   AMap.plugin('AMap.CitySearch', function () {
     var citySearch = new AMap.CitySearch();
     citySearch.getLocalCity(function (status, result) {
       if (status === 'complete' && result.info === 'OK') {
         const city = result.city || result.province;
-        if (!postForm.origin) postForm.origin = city; 
+        if (!postForm.origin) postForm.origin = city; // 填个大概
       }
-      // 2. 启动 GPS
-      tryGPS();
+      // 2. GPS 修正 (获取区县)
+      tryGPSCorrection();
     })
   });
 };
 
-const tryGPS = () => {
+const tryGPSCorrection = () => {
   AMap.plugin(['AMap.Geolocation', 'AMap.Geocoder'], function() {
     var geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 6000 });
     var geocoder = new AMap.Geocoder();
 
     geolocation.getCurrentPosition(function(status, result) {
       if(status == 'complete'){
-        // ★★★ 核心调整：解析详细地址，但只取到“路” ★★★
         const lnglat = [result.position.lng, result.position.lat];
         geocoder.getAddress(lnglat, function(status, geoResult) {
           if (status === 'complete' && geoResult.regeocode) {
             const ac = geoResult.regeocode.addressComponent;
-            // 拼接：区/县 + 街道/路 (不要门牌号)
-            let simpleAddr = (ac.district || '') + (ac.street || ac.township || '');
-            
-            // 如果只有区没有路，就显示区+乡镇或商圈
-            if (!ac.street && !ac.township) {
-                simpleAddr = geoResult.regeocode.formattedAddress.substring(0, 15); // 降级
-            }
-            
-            updateOrigin(simpleAddr);
+            // 使用新规则格式化
+            const finalAddr = formatAddressPCD(ac);
+            updateOrigin(finalAddr);
           } else {
-            // 降级：如果没有解析出结构化地址，用 formattedAddress
-            updateOrigin(result.formattedAddress);
+            // 降级：如果只有 formattedAddress，截取前段大概率也是省市区
+            const simple = (result.formattedAddress || '').substring(0, 12);
+            updateOrigin(simple);
           }
         });
       } else {
-        closeToast();
-        if(!postForm.origin) showFailToast('位置获取失败');
-        else showSuccessToast('已定位城市范围');
+        closeToast(); // IP定位已保底
       }
     });
   });
@@ -450,7 +445,6 @@ const handlePopState = () => {
               <div style="margin:20px;"><van-button block type="primary" native-type="submit">保存</van-button></div>
             </van-form>
           </div>
-          
           <div v-if="adminActiveMenu==='rides'">
             <div v-for="item in adminRideList" :key="item.id" class="admin-list-item">
               <span style="flex:1">{{ item?.origin }}→{{ item?.destination }}</span>
@@ -497,8 +491,8 @@ const handlePopState = () => {
           <div class="nav-btn btn-green" :class="{active: filterType==='passenger'}" @click="() => {filterType='passenger'; onLoad();}"><van-icon name="friends" /> 人找车</div>
         </div>
 
-        <div class="quick-routes"><div class="route-tag" v-for="r in displayQuickRoutes" :key="r.from+r.to" @click="()=>{mapSearchKeyword=r.to; onRefresh();}">{{r.from}}→{{r.to}}</div></div>
-
+        <div class="search-box"><input v-model="mapSearchKeyword" placeholder="快捷搜索..." /><button @click="onRefresh">搜</button></div>
+        
         <van-pull-refresh v-model="refreshing" @refresh="onRefresh">
           <van-list v-model:loading="loading" :finished="finished" finished-text="无更多">
             <div v-for="item in safeList" :key="item?.id || Math.random()" class="ride-card" @click="selectedRide = item">
@@ -641,7 +635,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .menu-item.logout { position: absolute; bottom: 0; width: 100%; background: #d00; }
 .admin-list-item { display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid #eee; }
 
-/* 首页布局优化 */
+/* 首页布局 */
 .page-home { padding: 10px; }
 /* 修复：卡片右边距增加到90px */
 .ride-card { background: #fff; margin: 10px; padding: 15px; padding-right: 90px; border-radius: 12px; position: relative; box-shadow: 0 2px 8px rgba(0,0,0,0.02); }
@@ -665,7 +659,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 /* 电话按钮 */
 .call-btn { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 32px; color: orange; background: #fff9f0; padding: 10px; border-radius: 50%; z-index: 10; cursor: pointer; }
 
-/* 底部发布按钮 (修复：小巧精致) */
+/* 底部发布按钮 */
 .custom-tabbar { position: fixed; bottom: 0; width: 100%; height: 65px; background: #fff; display: flex; border-top: 1px solid #eee; z-index: 999; padding-bottom: constant(safe-area-inset-bottom); padding-bottom: env(safe-area-inset-bottom); }
 .tab-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 14px; color: #666; font-weight: 500; }
 .tab-item.active { color: var(--orange); font-weight: bold; }
@@ -701,6 +695,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 /* 修复：标签样式加大，增加底部距离 */
 .tags-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; margin-bottom: 30px; }
 .tag-item { padding: 6px 14px; background: #f0f0f0; border-radius: 4px; font-size: 14px; }
+.top-bar { display: none; /* 隐藏标题 */ }
 /* 修复：广告高度 140px */
 .home-banner { height: 140px; }
 /* 修复：筛选按钮高度减小 */
