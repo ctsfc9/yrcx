@@ -3,12 +3,12 @@ import { ref, reactive, computed, nextTick, onMounted, watch } from 'vue';
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
 // ==========================================
-// 1. 全局配置
+// 1. 全局配置与状态
 // ==========================================
 const sysConfig = reactive({
   platform_name: '宜人出行',
   kefu_wechat: 'keea02',
-  notice_text: '欢迎使用宜人出行，数据实时同步 D1 数据库。',
+  notice_text: '欢迎使用宜人出行，数据连接中...',
   tags_driver: '有行李,走高速,可吸烟,线下支付',
   tags_passenger: '有行李,走高速,只限女生,线下支付',
   banners: 'https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg,https://fastly.jsdelivr.net/npm/@vant/assets/apple-2.jpeg',
@@ -16,7 +16,8 @@ const sysConfig = reactive({
   about_us: ''
 });
 
-const appReady = ref(false); 
+// ★★★ 核心修复：默认为 true，绝不让页面白屏 ★★★
+const appReady = ref(true); 
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
 let exitCounter = 0;
@@ -31,21 +32,23 @@ const adminRideList = ref([]);
 // 前台数据
 const activeTab = ref(0);
 const filterType = ref('all');
-const list = ref([]); // 来自 D1 的真实数据
+const list = ref([]); 
 const myRidesList = ref([]); 
 const loading = ref(false);
 const refreshing = ref(false);
 const finished = ref(false);
 
 // 弹窗
-const showRolePopup = ref(false);
-const showDatePicker = ref(false);
-const showPaymentDialog = ref(false);
-const showMapPopup = ref(false);
-const showAuthModal = ref(false);
-const authStep = ref(1);
-const showShareGuide = ref(false);
-const selectedRide = ref(null);
+const uiState = reactive({
+  showRole: false,
+  showDate: false,
+  showPay: false,
+  showMap: false,
+  showAuth: false,
+  showShare: false,
+  selectedRide: null,
+  authStep: 1
+});
 
 // 表单
 const userProfile = reactive({ id: '', nickname: '未登录', avatar: '', phone: '', balance: '0.00', isLogin: false });
@@ -70,7 +73,6 @@ let geocoderInstance = null;
 // ==========================================
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
-  // 接口已经过滤了，前端做兜底
   return list.value;
 });
 
@@ -91,24 +93,13 @@ const dateColumns = computed(() => {
 });
 
 // ==========================================
-// 3. 初始化 (连接 D1 数据库)
+// 3. 初始化 (非阻塞式)
 // ==========================================
-onMounted(async () => {
-  // 强制显示，防止白屏
-  setTimeout(() => { appReady.value = true; }, 500);
-
-  try {
-    // 1. 获取配置
-    await fetchSystemConfig();
-
-    if (window.location.pathname === '/admin') {
-      isSystemAdmin.value = true;
-      if(localStorage.getItem('admin_token')) {
-        adminLoginData.password = localStorage.getItem('admin_token');
-        isLogined.value = true;
-      }
-    } else {
-      // 2. 用户信息
+onMounted(() => {
+  // 1. 初始化逻辑放在 setTimeout 中，确保 Vue 渲染周期完成，避免报错阻塞 UI
+  setTimeout(async () => {
+    try {
+      // 1.1 读取本地缓存的用户信息
       const u = localStorage.getItem('user_info');
       if (u) {
         try { Object.assign(userProfile, JSON.parse(u)); } catch(e){}
@@ -116,18 +107,29 @@ onMounted(async () => {
         userProfile.id = 'u_' + Date.now();
         localStorage.setItem('user_info', JSON.stringify(userProfile));
       }
-      
-      // 3. ★★★ 拉取 D1 真实数据 ★★★
-      onLoad(); 
 
-      // 4. 加载地图
-      setTimeout(() => {
-        loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
-      }, 500);
+      // 1.2 尝试获取配置 (失败不影响主流程)
+      fetchSystemConfig();
+
+      // 1.3 尝试初始化 D1 表结构 (如果是第一次部署)
+      fetch('/api/rides?init=true').catch(e => console.warn('DB Init check skipped'));
+
+      // 1.4 加载列表数据
+      onLoad();
+
+      // 1.5 延迟加载地图 (完全不影响白屏)
+      loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
+
+      // 1.6 管理员登录状态
+      if (window.location.pathname === '/admin' && localStorage.getItem('admin_token')) {
+        isSystemAdmin.value = true;
+        isLogined.value = true;
+      }
+    } catch(e) {
+      console.error("Setup Error:", e);
+      // 即使出错，UI 依然会显示
     }
-  } catch(e) {
-    console.error("Init Error", e);
-  }
+  }, 100);
 
   window.history.replaceState({ page: 'home' }, null, document.URL);
   window.addEventListener('popstate', handlePopState);
@@ -136,11 +138,13 @@ onMounted(async () => {
 const fetchSystemConfig = async () => {
   try {
     const res = await fetch('/api/admin?action=get_config');
-    if(res.ok) {
+    if (res.ok) {
       const data = await res.json();
       if(data && Object.keys(data).length > 0) Object.assign(sysConfig, data);
     }
-  } catch(e) {}
+  } catch(e) {
+    // 静默失败，使用默认配置
+  }
 };
 
 // ==========================================
@@ -151,10 +155,10 @@ const loadAMapScript = (key) => {
   window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' }; 
   const script = document.createElement('script');
   script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Map,AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`;
+  script.onerror = () => showFailToast('地图服务连接失败');
   document.body.appendChild(script);
 };
 
-// 格式化：省+市+区 (无门牌)
 const formatAddressPCD = (ac) => {
   if (!ac) return '';
   const province = ac.province || '';
@@ -219,7 +223,6 @@ const initMapPicker = () => {
     if(!el) return;
     
     mapInstance = new AMap.Map(el, { zoom: 13, center: [104.630526, 28.766155] });
-    // 自动定位中心
     AMap.plugin('AMap.CitySearch', function () {
         new AMap.CitySearch().getLocalCity((s, r) => { if(s==='complete'&&r.bounds) mapInstance.setBounds(r.bounds); });
     });
@@ -275,11 +278,11 @@ const selectSearchResult = (item) => {
 };
 
 // ==========================================
-// 5. 业务交互 (★ D1 数据库交互 ★)
+// 5. 业务交互 (★ D1 数据库连接 ★)
 // ==========================================
 const onRefresh = () => { refreshing.value = true; onLoad(); };
 
-// ★ 核心：从后端 /api/rides 获取数据 ★
+// ★★★ 核心：调用 Cloudflare Functions 获取数据 ★★★
 const onLoad = async () => {
   if (refreshing.value) {
     list.value = [];
@@ -289,21 +292,25 @@ const onLoad = async () => {
   loading.value = true;
   try {
     const res = await fetch(`/api/rides?type=${filterType.value}`);
-    const data = await res.json();
+    if (!res.ok) throw new Error('API Error');
     
+    const data = await res.json();
     if (data.results) {
-      list.value = data.results; // 真实数据填充
+      list.value = data.results;
     }
   } catch(e) {
-    console.error("D1 Fetch Error", e);
-    // showFailToast('数据加载失败'); 
+    console.error("Data Load Error:", e);
+    // 可选：如果是首次加载失败，显示一个 Toast 提示用户检查后端状态
+    if (list.value.length === 0) {
+      // showFailToast('连接服务器失败，请检查网络或部署状态');
+    }
   }
   
   loading.value = false;
   finished.value = true;
 };
 
-// 获取我的发布 (复用接口)
+// 获取我的发布
 const fetchMyRides = async () => {
   if(!userProfile.id) return;
   try {
@@ -338,7 +345,7 @@ const saveSystemConfig = async () => {
 const switchAdminMenu = (menu) => adminActiveMenu.value = menu;
 
 const deleteRideAdmin = async (id) => { 
-  await fetch(`/api/rides?id=${id}`, { method: 'DELETE' }); // 管理员删除
+  await fetch(`/api/rides?id=${id}`, { method: 'DELETE' }); 
   onLoad(); 
   showSuccessToast('删除成功');
 };
@@ -367,7 +374,7 @@ const onPreSubmit = () => {
   uiState.showPay = true;
 };
 
-// ★ 核心：POST 到 Functions (D1) ★
+// ★★★ 核心：发布数据到 D1 ★★★
 const handleRealPublish = async () => {
   const newRide = {
     user_id: userProfile.id,
@@ -405,7 +412,7 @@ const handleRealPublish = async () => {
       switchTab(0);
     } else {
       closeToast();
-      showFailToast('发布失败，请检查网络');
+      showFailToast('发布失败，服务器异常');
     }
   } catch(e) {
     closeToast();
@@ -445,7 +452,6 @@ const onConfirmDate = ({selectedOptions}) => {
   uiState.showDate = false;
 };
 
-// ★ 修复：电话拨打 ★
 const handleCall = (p) => { 
   if(p && p.length > 5) {
     window.location.href = `tel:${p}`;
@@ -456,7 +462,6 @@ const handleCall = (p) => {
 
 const formatDate = (str) => { if(!str) return ''; const d=new Date(str); return `${d.getMonth()+1}月${d.getDate()}日 ${d.getHours()}点`; };
 
-// 删除也是调用 D1 接口
 const handleUserDelete = (id) => { 
   showDialog({title:'提示',message:'确认删除?'}).then(async ()=>{
     await fetch(`/api/rides?id=${id}&user_id=${userProfile.id}`, { method: 'DELETE' });
@@ -468,7 +473,6 @@ const handleUserDelete = (id) => {
 const switchTab = (idx) => {
   activeTab.value = idx;
   if (idx === 0) {
-    // 强制刷新首页数据
     refreshing.value = true;
     onLoad();
   } else if (idx === 2) {
@@ -597,7 +601,7 @@ const handlePopState = () => {
         <van-pull-refresh v-model="refreshing" @refresh="onRefresh">
           <div v-if="safeList.length === 0" style="text-align:center;padding:40px;color:#999;font-size:14px;">
             <van-icon name="description" size="48" style="margin-bottom:10px;color:#eee;" />
-            <div>暂无拼车信息</div>
+            <div>暂无信息，快来发布第一条吧</div>
           </div>
           <van-list v-else v-model:loading="loading" :finished="finished" finished-text="没有更多了">
             <div v-for="item in safeList" :key="item.id" class="ride-card" @click="uiState.selectedRide = item">
