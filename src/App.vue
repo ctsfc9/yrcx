@@ -3,9 +3,9 @@ import { ref, reactive, computed, nextTick, onMounted, onBeforeUnmount, watch } 
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 import wx from 'weixin-js-sdk'; 
 
-// ============================================================
-// [公共] 系统配置
-// ============================================================
+// ==========================================
+// 1. 系统配置 (前端默认值)
+// ==========================================
 const sysConfig = reactive({
   platform_name: '宜人出行',
   platform_logo: '',
@@ -15,77 +15,24 @@ const sysConfig = reactive({
   publish_fee_passenger: '0',
   publish_fee_driver: '0',
   top_fee: '5',
-  notice_text: '',
+  notice_text: '欢迎使用',
   tags_driver: '有行李,走高速,可吸烟,线下支付',
   tags_passenger: '有行李,走高速,只限女生,线下支付',
   banners: '',
+  // 您的 Key 已预埋，后台配置可覆盖
   amap_key: 'a4f6e1e5da68bc9fe5f984d69a3f6b2e', 
   about_us: ''
 });
 
-// 全局控制
+// 全局
 const appReady = ref(false);
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
-
-// ============================================================
-// [后台] Admin 逻辑模块
-// ============================================================
 const adminLoginData = reactive({ username: '', password: '' });
-const adminActiveMenu = ref('basic');
-const adminSettingTab = ref(0);
-const adminUserList = ref([]);
-const adminRideList = ref([]);
+const adminActiveMenu = ref('basic'); 
+const adminSettingTab = ref(0); // 控制后台Tab
 
-const handleAdminLogin = async () => {
-  try {
-    const res = await fetch('/api/admin?action=login', { method: 'POST', body: JSON.stringify(adminLoginData) });
-    const data = await res.json();
-    if (data.success) {
-      isLogined.value = true;
-      localStorage.setItem('admin_token', data.token);
-      fetchSystemConfig();
-    } else { showFailToast('密码错误'); }
-  } catch(e) { showFailToast('网络错误'); }
-};
-
-const saveSystemConfig = async () => {
-  showLoadingToast('保存中...');
-  await fetch('/api/admin?action=save_config', {
-    method: 'POST', body: JSON.stringify({ auth_token: adminLoginData.password, config: sysConfig })
-  });
-  showSuccessToast('保存成功');
-};
-
-const switchAdminMenu = (menu) => { 
-  adminActiveMenu.value = menu;
-  if(menu==='rides') fetchAdminData('get_rides', adminRideList);
-  if(menu==='users') fetchAdminData('get_users', adminUserList);
-};
-
-const fetchAdminData = async (act, refVar) => {
-  const res = await fetch(`/api/admin?action=${act}&token=${adminLoginData.password}`);
-  const d = await res.json();
-  refVar.value = d.list || [];
-};
-
-const deleteRideAdmin = (id) => {
-  showDialog({title:'删除',message:'确定删除?'}).then(()=>{
-    fetch('/api/admin?action=manage_ride', { method: 'POST', body: JSON.stringify({ auth_token: adminLoginData.password, type: 'delete', id }) })
-    .then(()=>{ showSuccessToast('已删除'); fetchAdminData('get_rides', adminRideList); });
-  });
-};
-
-const banUserAdmin = (uid, ban) => {
-  showDialog({title:'操作',message:'确定执行?'}).then(()=>{
-    fetch('/api/admin?action=manage_user', { method: 'POST', body: JSON.stringify({ auth_token: adminLoginData.password, type: ban?'ban':'unban', user_id: uid }) })
-    .then(()=>{ showSuccessToast('成功'); fetchAdminData('get_users', adminUserList); });
-  });
-};
-
-// ============================================================
-// [前台] User App 逻辑模块
-// ============================================================
+// 前台
 const activeTab = ref(0);
 const filterType = ref('all'); 
 const list = ref([]); 
@@ -102,12 +49,14 @@ const showRolePopup = ref(false);
 const showDatePicker = ref(false); 
 const showPaymentDialog = ref(false);
 const showMapPopup = ref(false);
+const showEditDialog = ref(false);
 const showShareGuide = ref(false);
 
-// 业务对象
+// 业务数据
 const userProfile = reactive({ id: '', nickname: '未登录', avatar: '', phone: '', balance: '0.00', isLogin: false });
 const registerForm = reactive({ phone: '' });
 const postForm = reactive({ type: '', origin: '', destination: '', date: '', dateDisplay: '', seats: 1, price: '', remark: [], contact: '', car_model: '' });
+const editForm = reactive({ id: '', origin: '', destination: '', date: '', price: '', contact: '', remark: '', seats: 1 });
 
 // 地图
 const mapSearchKeyword = ref('');
@@ -116,9 +65,14 @@ const currentMapField = ref('');
 const hotCities = ['宜宾', '成都', '重庆', '昆明', '贵阳', '东莞', '深圳', '广州', '上海', '宁波', '温州', '嘉兴'];
 const carModelOptions = ['油车', '电车'];
 const seatColumns = Array.from({length: 6}, (_, i) => ({ text: `${i + 1}`, value: i + 1 }));
-let geoCoder = null;
 
-// --- 计算属性 ---
+// 后台列表
+const adminUserList = ref([]);
+const adminRideList = ref([]);
+
+// ==========================================
+// 2. 计算属性
+// ==========================================
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
   return list.value.filter(item => item && item.origin && item.destination);
@@ -158,10 +112,12 @@ const dateColumns = computed(() => {
   ];
 });
 
-// --- 初始化 ---
+// ==========================================
+// 3. 初始化
+// ==========================================
 onMounted(async () => {
   try {
-    await fetchSystemConfig(); 
+    await fetchSystemConfig();
 
     if (window.location.pathname === '/admin') {
       isSystemAdmin.value = true;
@@ -181,8 +137,7 @@ onMounted(async () => {
         if(userProfile.isLogin) fetchMyRides();
       }
 
-      if(sysConfig.amap_key) loadAMapScript(sysConfig.amap_key);
-      
+      loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
       setTimeout(() => { onLoad(); }, 200);
     }
   } catch(e) { console.error(e); } 
@@ -192,26 +147,32 @@ onMounted(async () => {
   window.addEventListener('popstate', handlePopState);
 });
 
+// 数据回显修复：使用 Object.assign
 const fetchSystemConfig = async () => {
   try {
     const res = await fetch('/api/admin?action=get_config');
     const data = await res.json();
     if(data && Object.keys(data).length > 0) {
-      Object.keys(sysConfig).forEach(key => {
-        if (data[key] !== undefined) sysConfig[key] = data[key];
-      });
+      // 仅覆盖非空值
+      for (const key in sysConfig) {
+        if (data[key] !== undefined && data[key] !== null) {
+          sysConfig[key] = data[key];
+        }
+      }
       document.title = sysConfig.platform_name || '宜人出行';
     }
   } catch(e) {}
 };
 
-// --- 地图逻辑 (隐私修复版) ---
+// ==========================================
+// 4. 地图逻辑 (★ 隐私定位修复 ★)
+// ==========================================
 const loadAMapScript = (key) => {
   if (window.AMap) return;
-  // ★★★ 这里填你的安全密钥 ★★★
+  // ★ 安全密钥 ★
   window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' }; 
   const script = document.createElement('script');
-  script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder`;
+  script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Geolocation,AMap.AutoComplete`;
   document.body.appendChild(script);
 };
 
@@ -220,25 +181,42 @@ const autoLocate = () => {
   showLoadingToast({ message: '定位中...', forbidClick: true, duration: 8000 });
   
   AMap.plugin('AMap.Geolocation', function() {
-    var geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 8000, zoomToAccuracy: true, extensions: 'all' });
+    var geolocation = new AMap.Geolocation({
+      enableHighAccuracy: true,
+      timeout: 8000,
+      zoomToAccuracy: true,
+      extensions: 'all' // 获取地址组件
+    });
+
     geolocation.getCurrentPosition(function(status, result) {
+      closeToast();
       if(status == 'complete'){
-        // ★★★ 隐私修复：仅保留区/县/街道，去除详细门牌 ★★★
+        // ★★★ 隐私处理：仅拼接 区+路 ★★★
         const ac = result.addressComponent;
+        let safeAddress = "";
+        
         if (ac) {
-          // 拼接格式：区/县 + 街道/乡镇
-          let safeAddr = (ac.district||'') + (ac.township||'') + (ac.street||'');
-          if (!safeAddr) safeAddr = result.formattedAddress; // 降级
-          postForm.origin = safeAddr;
-          showSuccessToast('定位成功');
-        } else {
-          postForm.origin = result.formattedAddress;
-          showSuccessToast('已获取位置');
+          // 优先使用 区/县 + 街道/路
+          const district = ac.district || '';
+          const street = ac.street || '';
+          const township = ac.township || '';
+          
+          if (street) {
+            safeAddress = district + street; // 例：翠屏区长江大道
+          } else {
+            safeAddress = district + township; // 例：翠屏区李庄镇
+          }
         }
-        closeToast();
+        
+        // 如果上面拼接失败，回退到 formattedAddress 但截取前10个字
+        if (!safeAddress) {
+          safeAddress = (result.formattedAddress || '位置已获取').substring(0, 15);
+        }
+
+        postForm.origin = safeAddress;
+        showSuccessToast('定位成功');
       } else {
-        closeToast();
-        showFailToast('定位失败，请手动选择');
+        showFailToast('定位失败，请手动输入');
       }
     });
   });
@@ -264,7 +242,9 @@ const selectLocation = (item) => {
   showMapPopup.value=false; 
 };
 
-// --- 业务逻辑 (费用限制修复) ---
+// ==========================================
+// 5. 业务逻辑
+// ==========================================
 const onLoad = async () => {
   loading.value = true;
   try {
@@ -280,20 +260,60 @@ const onLoad = async () => {
 };
 
 const setFilter = (type) => { filterType.value = type; onLoad(); };
-const toggleRemark = (tag) => { if (!postForm.remark.includes(tag)) postForm.remark.push(tag); };
 
-// ★★★ 费用限制逻辑 ★★★
-const checkPriceLimit = () => {
-  if (postForm.price > 9999) {
-    postForm.price = 9999;
-    showToast('费用上限 9999 元');
-  }
+const handleAdminLogin = async () => {
+  try {
+    const res = await fetch('/api/admin?action=login', { method: 'POST', body: JSON.stringify(adminLoginData) });
+    const data = await res.json();
+    if (data.success) {
+      isLogined.value = true;
+      localStorage.setItem('admin_token', data.token);
+      fetchSystemConfig();
+    } else { showFailToast('密码错误'); }
+  } catch(e) {}
 };
+
+const saveSystemConfig = async () => {
+  showLoadingToast('保存中...');
+  // 使用 auth_token 提交
+  await fetch('/api/admin?action=save_config', {
+    method: 'POST', body: JSON.stringify({ auth_token: adminLoginData.password, config: sysConfig })
+  });
+  showSuccessToast('保存成功');
+};
+
+const switchAdminMenu = (menu) => { 
+  adminActiveMenu.value = menu;
+  if(menu==='rides') fetchAdminData('get_rides', adminRideList);
+  if(menu==='users') fetchAdminData('get_users', adminUserList);
+};
+
+const fetchAdminData = async (act, refVar) => {
+  const res = await fetch(`/api/admin?action=${act}&token=${adminLoginData.password}`);
+  const d = await res.json();
+  refVar.value = d.list || [];
+};
+
+const deleteRideAdmin = (id) => {
+  showDialog({title:'删除',message:'确认删除?'}).then(()=>{
+    fetch('/api/admin?action=manage_ride', { method: 'POST', body: JSON.stringify({ auth_token: adminLoginData.password, type: 'delete', id }) })
+    .then(()=>{ showSuccessToast('已删除'); fetchAdminData('get_rides', adminRideList); });
+  });
+};
+
+const banUserAdmin = (uid, ban) => {
+  showDialog({title:'提示',message:'确认操作?'}).then(()=>{
+    fetch('/api/admin?action=manage_user', { method: 'POST', body: JSON.stringify({ auth_token: adminLoginData.password, type: ban?'ban':'unban', user_id: uid }) })
+    .then(()=>{ showSuccessToast('成功'); fetchAdminData('get_users', adminUserList); });
+  });
+};
+
+const toggleRemark = (tag) => { if (!postForm.remark.includes(tag)) postForm.remark.push(tag); };
 
 const onPreSubmit = () => {
   if (!userProfile.isLogin) { showAuthModal.value=true; return; }
   if (!postForm.origin || !postForm.destination) { showFailToast('请完善路线'); return; }
-  // 二次校验
+  // ★ 费用限制 ★
   if (parseFloat(postForm.price) > 9999) { showFailToast('费用不能超过9999元'); return; }
   showPaymentDialog.value=true;
 };
@@ -304,12 +324,6 @@ const handleRealPublish = async () => {
   showSuccessToast('发布成功'); switchTab(0);
 };
 
-// ... (其他通用方法保持不变) ...
-const selectRoleAndGo = (r) => { 
-  postForm.type=r; postForm.date=''; postForm.remark=[]; showRolePopup.value=false; 
-  switchTab(1); 
-  nextTick(() => { if(!postForm.origin) autoLocate(); });
-};
 const handleWeChatAuth = () => { 
   const id=Date.now(); 
   const avatars = ['https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg', 'https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg'];
@@ -323,8 +337,14 @@ const handleBindPhone = () => {
   localStorage.setItem('user_info',JSON.stringify(userProfile)); 
   showSuccessToast('登录成功');
 };
+
 const initWxConfig = () => { /* WX */ };
 const handlePublishClick = () => showRolePopup.value=true;
+const selectRoleAndGo = (r) => { 
+  postForm.type=r; postForm.date=''; postForm.remark=[]; showRolePopup.value=false; 
+  switchTab(1); 
+  nextTick(() => { if(!postForm.origin) autoLocate(); });
+};
 const searchForm = reactive({ origin: '', destination: '' });
 const onRefresh = () => { finished.value=false; onLoad(); refreshing.value=false; };
 const onConfirmDate = ({selectedOptions}) => {
@@ -336,11 +356,19 @@ const onConfirmDate = ({selectedOptions}) => {
 };
 const handleCall = (p) => location.href=`tel:${p}`;
 const formatDate = (str) => { if(!str) return ''; const d=new Date(str); return `${d.getMonth()+1}月${d.getDate()}日 ${d.getHours()}点`; };
-const fetchMyRides = async () => { if(userProfile.id) { const res=await fetch(`/api/rides?filter_user_id=${userProfile.id}`); myRidesList.value=(await res.json()).results||[]; }};
+
+const fetchMyRides = async () => { 
+  if(userProfile.id) { 
+    const res=await fetch(`/api/rides?filter_user_id=${userProfile.id}`); 
+    myRidesList.value=(await res.json()).results||[]; 
+  }
+};
 const handleUserDelete = (id) => { showDialog({title:'提示',message:'确认删除?'}).then(async(a)=>{if(a==='confirm'){await fetch(`/api/rides?id=${id}&user_id=${userProfile.id}`,{method:'DELETE'});fetchMyRides();}}); };
+
 const selectedRide = ref(null);
 const openDetail = (item) => selectedRide.value = item;
 const closeDetail = () => selectedRide.value = null;
+
 const switchTab = (idx) => {
   if (activeTab.value === idx) return;
   activeTab.value = idx;
@@ -443,7 +471,7 @@ const handlePopState = () => {
             <div class="form-row"><div class="label">座位</div><div class="seat-grid"><div v-for="n in 6" :key="n" class="seat-btn" :class="{active:postForm.seats===n}" @click="postForm.seats=n">{{n}}</div></div></div>
             <div v-if="postForm.type==='driver'" class="form-row"><div class="label">车型</div><van-radio-group v-model="postForm.car_model" direction="horizontal"><van-radio v-for="c in carModelOptions" :key="c" :name="c">{{c}}</van-radio></van-radio-group></div>
             <van-cell title="时间" is-link :value="postForm.dateDisplay||'请选择'" @click="showDatePicker=true" />
-            <div class="form-row"><div class="label">费用</div><div style="flex:1"><van-field v-model="postForm.price" type="number" placeholder="元" input-align="right" @input="checkPriceLimit"/></div></div>
+            <div class="form-row"><div class="label">费用</div><div style="flex:1"><van-field v-model="postForm.price" type="number" placeholder="元" input-align="right"/></div></div>
             <div class="form-row" style="flex-direction:column;align-items:flex-start;">
               <div class="label" style="margin-bottom:5px;">备注</div>
               <van-field v-model="remarkDisplayText" readonly type="textarea" rows="2" style="background:#f9f9f9;border-radius:4px;width:100%;" />
@@ -475,7 +503,7 @@ const handlePopState = () => {
                 <span class="route">{{ item?.origin }} → {{ item?.destination }}</span>
               </div>
               <div class="card-row-2">
-                <div style="display:flex;align-items:center;gap:8px;">
+                <div style="display:flex;align-items:center;gap:10px;">
                   <span class="time-tag">{{ formatDate(item.date) }}</span>
                   <span v-if="item.car_model" class="car-badge" :class="item.car_model.includes('电')?'electric':'gas'">{{ item.car_model }}</span>
                 </div>
