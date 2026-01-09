@@ -7,14 +7,17 @@ export async function onRequest(context) {
   const url = new URL(request.url);
   const action = url.searchParams.get("action");
 
-  // 1. 获取配置 (完全公开，确保前台能读到 Key)
+  // 1. 获取配置 (公开接口)
+  // 修复：增加异常捕获，防止数据库空值导致前端崩
   if (request.method === "GET" && action === 'get_config') {
     try {
       const { results } = await db.prepare("SELECT * FROM system_config").all();
       const config = {};
       if(results) results.forEach(item => { config[item.key] = item.value; });
       return Response.json(config);
-    } catch (e) { return Response.json({}); }
+    } catch (e) {
+      return Response.json({});
+    }
   }
 
   // 2. 登录
@@ -26,12 +29,12 @@ export async function onRequest(context) {
     return Response.json({ error: "账号或密码错误" }, { status: 401 });
   }
 
-  // 鉴权
+  // --- 鉴权 ---
   const verifyBody = async () => {
     try { const b = await request.clone().json(); return b.auth_token === ADMIN_PWD; } catch { return false; }
   };
 
-  // 3. 保存配置
+  // 3. 保存配置 (修复：强制转字符串，防止存入 null)
   if (request.method === "POST" && action === 'save_config') {
      const body = await request.json();
      if (body.auth_token !== ADMIN_PWD) return Response.json({ error: "无权" }, { status: 403 });
@@ -39,13 +42,14 @@ export async function onRequest(context) {
      const stmt = db.prepare("INSERT INTO system_config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
      const batch = [];
      for (const [k, v] of Object.entries(body.config)) {
-       batch.push(stmt.bind(k, String(v || '')));
+       // 关键修复：确保 value 是字符串，否则某些字段会丢失
+       batch.push(stmt.bind(k, String(v === undefined || v === null ? '' : v)));
      }
      await db.batch(batch);
      return Response.json({ success: true });
   }
 
-  // 4. 数据管理
+  // 4. 数据管理 (列表/删除/封禁)
   if (request.method === "GET") {
     const token = url.searchParams.get("token");
     if (token !== ADMIN_PWD) return Response.json({ error: "无权" }, { status: 403 });
