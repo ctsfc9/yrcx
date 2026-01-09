@@ -3,7 +3,7 @@ import { ref, reactive, computed, nextTick, onMounted, watch } from 'vue';
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
 // ==========================================
-// 1. 全局配置
+// 1. 全局配置 & 状态
 // ==========================================
 const sysConfig = reactive({
   platform_name: '宜人出行',
@@ -16,8 +16,8 @@ const sysConfig = reactive({
   about_us: ''
 });
 
-// ★ 防白屏：默认直接渲染
-const appReady = ref(true); 
+// ★ 防白屏：默认为 false，通过安全阀机制翻转
+const appReady = ref(false); 
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
 let exitCounter = 0;
@@ -39,15 +39,15 @@ const refreshing = ref(false);
 const finished = ref(false);
 const submitLoading = ref(false);
 
-// ★★★ 核心修复：回归最简单的变量控制，避免错乱 ★★★
+// 弹窗
 const showRolePopup = ref(false);
 const showDatePicker = ref(false);
-const showPaymentDialog = ref(false); // 修复发布点不动
+const showPaymentDialog = ref(false);
 const showMapPopup = ref(false);
 const showAuthModal = ref(false);
-const showShareGuide = ref(false);
-const selectedRide = ref(null); // 修复详情页点不开
 const authStep = ref(1);
+const showShareGuide = ref(false);
+const selectedRide = ref(null);
 
 // 表单
 const userProfile = reactive({ id: '', nickname: '未登录', avatar: '', phone: '', balance: '0.00', isLogin: false });
@@ -61,7 +61,7 @@ const postForm = reactive({
 const mapSearchKeyword = ref('');
 const mapSearchResults = ref([]);
 const currentMapField = ref(''); 
-const carModelOptions = ['油车', '电车', '油电混合'];
+const carModelOptions = ['油车', '电车', '油电混合']; 
 const seatColumns = Array.from({length: 6}, (_, i) => ({ text: `${i + 1}座`, value: i + 1 }));
 
 let mapInstance = null;
@@ -72,7 +72,7 @@ let geocoderInstance = null;
 // ==========================================
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
-  // 按出发时间正序排列 (最近出发排最前)
+  // 强制按出发时间排序 (最近的在前面)
   return list.value.slice().sort((a, b) => new Date(a.date) - new Date(b.date));
 });
 
@@ -93,38 +93,46 @@ const dateColumns = computed(() => {
 });
 
 // ==========================================
-// 3. 初始化
+// 3. 初始化 (强制防白屏)
 // ==========================================
 onMounted(async () => {
-  setTimeout(() => { appReady.value = true; }, 300);
+  // 安全阀：300毫秒后强制显示
+  setTimeout(() => { 
+    if(!appReady.value) {
+      appReady.value = true; 
+    }
+  }, 300);
 
   try {
+    // 加载用户
+    const u = localStorage.getItem('user_info');
+    if (u) {
+      try { 
+        Object.assign(userProfile, JSON.parse(u));
+        if(userProfile.id) userProfile.isLogin = true; 
+      } catch(e){}
+    } else {
+      userProfile.id = 'u_' + Date.now();
+      userProfile.isLogin = true; 
+      localStorage.setItem('user_info', JSON.stringify(userProfile));
+    }
+
+    // 异步任务
+    fetchSystemConfig();
+    onLoad(); 
+    
+    setTimeout(() => {
+      loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
+    }, 500);
+
     if (window.location.pathname === '/admin') {
       isSystemAdmin.value = true;
       if(localStorage.getItem('admin_token')) {
         adminLoginData.password = localStorage.getItem('admin_token');
         isLogined.value = true;
       }
-    } else {
-      const u = localStorage.getItem('user_info');
-      if (u) {
-        try { 
-          Object.assign(userProfile, JSON.parse(u));
-          if(userProfile.id) userProfile.isLogin = true; 
-        } catch(e){}
-      } else {
-        userProfile.id = 'u_' + Date.now();
-        userProfile.isLogin = true; 
-        localStorage.setItem('user_info', JSON.stringify(userProfile));
-      }
-      
-      fetchSystemConfig();
-      onLoad(); 
-      
-      setTimeout(() => {
-        loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
-      }, 500);
     }
+
   } catch(e) {
     console.error("Init Error", e);
   }
@@ -144,7 +152,7 @@ const fetchSystemConfig = async () => {
 };
 
 // ==========================================
-// 4. 地图逻辑
+// 4. 地图逻辑 (★ 核心修改：地址解析优化 ★)
 // ==========================================
 const loadAMapScript = (key) => {
   if (window.AMap) return;
@@ -153,18 +161,26 @@ const loadAMapScript = (key) => {
     const script = document.createElement('script');
     script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Map,AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`;
     document.body.appendChild(script);
-  } catch(e){}
+  } catch(e) { console.error("Map Load Error", e); }
 };
 
+// ★★★ 修改处：只取区县，没有区县取市，不要省和街道 ★★★
 const formatAddressPCD = (ac) => {
   if (!ac) return '';
-  const province = ac.province || '';
-  const city = ac.city || '';
-  const district = ac.district || '';
-  let addr = province;
-  if (city && city !== province) { addr += city; }
-  if (district) { addr += district; }
-  return addr; 
+  
+  // 1. 优先返回 区/县 (例如 "翠屏区")
+  if (ac.district && typeof ac.district === 'string' && ac.district.length > 0) {
+    return ac.district;
+  }
+  
+  // 2. 如果没有区县，返回 市 (例如 "东莞市", "中山市")
+  // 注意：直辖市的 city 字段可能为空，此时 citycode 会指向直辖市
+  if (ac.city && typeof ac.city === 'string' && ac.city.length > 0) {
+    return ac.city;
+  }
+  
+  // 3. 兜底返回省 (极少情况)
+  return ac.province || '位置';
 };
 
 const autoLocate = () => {
@@ -194,6 +210,7 @@ const tryGPSCorrection = () => {
         geocoder.getAddress(lnglat, function(status, geoResult) {
           if (status === 'complete' && geoResult.regeocode) {
             const ac = geoResult.regeocode.addressComponent;
+            // 使用简化后的地址逻辑
             const finalAddr = formatAddressPCD(ac);
             updateOrigin(finalAddr);
           }
@@ -230,7 +247,7 @@ const initMapPicker = () => {
       geocoderInstance.getAddress(center, (status, result) => {
         if (status === 'complete' && result.regeocode) {
           const ac = result.regeocode.addressComponent;
-          const simple = formatAddressPCD(ac);
+          const simple = formatAddressPCD(ac); // 同样应用简化逻辑
           mapSearchKeyword.value = simple;
         }
       });
@@ -251,7 +268,7 @@ watch(mapSearchKeyword, (newVal) => {
 
 const openMapSelector = (f) => { 
   currentMapField.value = f; 
-  showMapPopup.value = true; 
+  uiState.showMap = true; 
   mapSearchKeyword.value = ''; 
   mapSearchResults.value = []; 
   setTimeout(initMapPicker, 300);
@@ -261,7 +278,7 @@ const confirmMapSelection = () => {
   if(mapSearchKeyword.value) {
     if(currentMapField.value === 'origin') postForm.origin = mapSearchKeyword.value;
     else postForm.destination = mapSearchKeyword.value;
-    showMapPopup.value = false;
+    uiState.showMap = false;
   } else {
     showToast('请移动地图选择');
   }
@@ -271,7 +288,7 @@ const selectSearchResult = (item) => {
   let name = item.name;
   if(currentMapField.value==='origin') postForm.origin = name; 
   else postForm.destination = name; 
-  showMapPopup.value = false; 
+  uiState.showMap = false; 
 };
 
 // ==========================================
@@ -355,21 +372,19 @@ const swapLocation = () => {
   postForm.destination = temp;
 };
 
-// ★★★ 修复：点击立即发布 ★★★
 const onPreSubmit = () => {
   if (!postForm.origin || !postForm.destination) { showFailToast('请完善路线'); return; }
   
   // 必须绑定手机
   if (!userProfile.phone) { 
     showDialog({ message: '发布前请绑定手机号' }).then(() => {
-        showAuthModal.value = true; // 弹出绑定框
+        showAuthModal.value = true;
     });
     return;
   }
   
   if (parseFloat(postForm.price) > 9999) { showFailToast('费用上限9999元'); return; }
   
-  // 弹出支付确认框
   showPaymentDialog.value = true; 
 };
 
@@ -403,7 +418,6 @@ const handleRealPublish = async () => {
     
     if (res.ok) {
       showSuccessToast('发布成功');
-      // 重置
       postForm.origin = '';
       postForm.destination = '';
       postForm.price = '';
