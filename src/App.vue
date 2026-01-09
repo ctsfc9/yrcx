@@ -46,7 +46,7 @@ const authStep = ref(1);
 const showShareGuide = ref(false);
 const selectedRide = ref(null);
 
-// 表单数据
+// 表单
 const userProfile = reactive({ id: '', nickname: '未登录', avatar: '', phone: '', balance: '0.00', isLogin: false });
 const registerForm = reactive({ phone: '' });
 const postForm = reactive({ 
@@ -54,7 +54,7 @@ const postForm = reactive({
   seats: 1, price: '', remark: [], contact: '', car_model: '', is_top: false 
 });
 
-// 地图数据
+// 地图
 const mapSearchKeyword = ref('');
 const mapSearchResults = ref([]);
 const currentMapField = ref(''); 
@@ -150,46 +150,71 @@ const fetchSystemConfig = async () => {
 };
 
 // ==========================================
-// 4. 地图逻辑 (★ 极速 IP 定位 ★)
+// 4. 地图逻辑 (★ 强力修复定位 ★)
 // ==========================================
 const loadAMapScript = (key) => {
   if (window.AMap) return;
   window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' }; 
   const script = document.createElement('script');
-  // 加载 CitySearch 插件
-  script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.CitySearch,AMap.AutoComplete`;
+  // 必须显示声明 CitySearch 插件
+  script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`;
   document.body.appendChild(script);
 };
 
 const autoLocate = () => {
   if (!window.AMap) { 
     showFailToast('地图加载中...'); 
-    // 重试机制
-    setTimeout(() => { if(!postForm.origin && window.AMap) autoLocate(); }, 1000);
+    setTimeout(autoLocate, 1500); // 延迟重试
     return; 
   }
   
-  showLoadingToast({ message: '定位中...', forbidClick: true, duration: 3000 });
+  showLoadingToast({ message: '定位中...', forbidClick: true, duration: 5000 });
 
-  // ★★★ 使用 CitySearch 进行秒级 IP 定位 ★★★
+  // 1. 【IP 定位优先】 (确保有值)
   AMap.plugin('AMap.CitySearch', function () {
     var citySearch = new AMap.CitySearch();
     citySearch.getLocalCity(function (status, result) {
-      closeToast();
       if (status === 'complete' && result.info === 'OK') {
-        // 直接获取 IP 所在的城市/区县
-        // result.city 或 result.province
-        const loc = result.city || result.province;
+        const city = result.city || result.province;
+        // 立即填入，防止留白
+        if (!postForm.origin) {
+          postForm.origin = city;
+          closeToast();
+          showSuccessToast('已定位到: ' + city);
+        }
         
-        // 强制刷新视图
-        nextTick(() => {
-          postForm.origin = loc;
-          showSuccessToast('已定位：' + loc);
-        });
+        // 2. 【GPS 定位修正】 (异步获取更准的位置)
+        tryGPSLocation(); 
       } else {
-        showFailToast('定位失败，请手动选择');
+        // IP 定位都失败，直接尝试 GPS
+        tryGPSLocation();
       }
-    })
+    });
+  });
+};
+
+const tryGPSLocation = () => {
+  AMap.plugin('AMap.Geolocation', function() {
+    var geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 5000 });
+    geolocation.getCurrentPosition(function(status, result) {
+      if(status == 'complete'){
+        let safeAddr = "";
+        const ac = result.addressComponent;
+        if (ac) {
+          safeAddr = (ac.district||'') + (ac.street||ac.township||'');
+        }
+        if (!safeAddr) safeAddr = (result.formattedAddress || '').substring(0, 15);
+        // 去除门牌
+        safeAddr = safeAddr.replace(/[0-9]+[号室栋楼]/g, '').replace(/单元/g, '');
+
+        // 覆盖之前可能不准的IP定位
+        nextTick(() => {
+          postForm.origin = safeAddr;
+          closeToast();
+          showSuccessToast('已精确定位');
+        });
+      }
+    });
   });
 };
 
@@ -306,6 +331,7 @@ const selectRoleAndGo = (r) => {
   postForm.type=r; postForm.date=''; postForm.remark=[]; 
   showRolePopup.value=false; 
   switchTab(1); 
+  // 进入页面自动定位
   nextTick(() => { if(!postForm.origin) autoLocate(); });
 };
 
@@ -341,9 +367,6 @@ const fetchMyRides = async () => {
   }
 };
 const handleUserDelete = (id) => { showDialog({title:'提示',message:'确认删除?'}).then(async(a)=>{if(a==='confirm'){await fetch(`/api/rides?id=${id}&user_id=${userProfile.id}`,{method:'DELETE'});fetchMyRides();}}); };
-
-const openDetail = (item) => selectedRide.value = item;
-const closeDetail = () => selectedRide.value = null;
 
 const switchTab = (idx) => {
   if (activeTab.value === idx) return;
@@ -462,9 +485,8 @@ const handlePopState = () => {
       </div>
 
       <div v-show="activeTab === 0" class="page-home">
-        <div class="top-bar">{{ sysConfig.platform_name }}</div>
+        <van-notice-bar left-icon="volume-o" :text="sysConfig.notice_text" style="height:36px;margin-bottom:5px;" scrollable />
         <van-swipe :autoplay="3000" class="home-banner"><van-swipe-item v-for="i in bannersList" :key="i"><img :src="i" style="width:100%;height:100%;object-fit:cover;"/></van-swipe-item></van-swipe>
-        <van-notice-bar left-icon="volume-o" :text="sysConfig.notice_text" />
         
         <div class="nav-grid two-cols">
           <div class="nav-btn btn-blue" :class="{active: filterType==='driver'}" @click="() => {filterType='driver'; onLoad();}"><van-icon name="logistics" /> 车找人</div>
@@ -633,7 +655,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .info-item { display: flex; align-items: center; gap: 4px; }
 .info-item.center { flex: 1; justify-content: center; color: #333; font-weight: 500; }
 /* 修复：金额颜色为黑色 */
-.price-val { color: #333; font-size: 20px; font-weight: bold; }
+.price-val { color: #000; font-size: 20px; font-weight: bold; }
 /* 第三排 */
 .card-row-3 { font-size: 13px; color: #999; background: #f8f8f8; padding: 8px; border-radius: 6px; }
 /* 电话按钮 */
