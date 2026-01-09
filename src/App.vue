@@ -150,12 +150,13 @@ const fetchSystemConfig = async () => {
 };
 
 // ==========================================
-// 4. 地图逻辑 (★ 恢复详细定位 ★)
+// 4. 地图逻辑 (★ 修复：恢复详细门牌 ★)
 // ==========================================
 const loadAMapScript = (key) => {
   if (window.AMap) return;
   window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' }; 
   const script = document.createElement('script');
+  // 加载 Geocoder 用于详细地址解析
   script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`;
   document.body.appendChild(script);
 };
@@ -167,51 +168,56 @@ const autoLocate = () => {
     return; 
   }
   
-  showLoadingToast({ message: '获取位置...', forbidClick: true, duration: 5000 });
+  showLoadingToast({ message: '获取详细位置...', forbidClick: true, duration: 8000 });
 
-  // 1. IP定位 (秒开兜底)
+  // 1. IP 定位兜底 (防止空白)
   AMap.plugin('AMap.CitySearch', function () {
     var citySearch = new AMap.CitySearch();
     citySearch.getLocalCity(function (status, result) {
       if (status === 'complete' && result.info === 'OK') {
         const city = result.city || result.province;
-        // 还没获取到GPS前，先显示城市，防白板
-        if (!postForm.origin) {
-          postForm.origin = city;
-          closeToast();
-          showSuccessToast('大致位置：' + city);
-        }
-        // 2. 尝试 GPS 精确覆盖
-        tryGPSCorrection();
-      } else {
-        tryGPSCorrection();
+        if (!postForm.origin) postForm.origin = city; // 先填个大概
       }
+      // 2. 启动 GPS 精确定位
+      startGPS();
     })
   });
 };
 
-const tryGPSCorrection = () => {
-  AMap.plugin('AMap.Geolocation', function() {
-    var geolocation = new AMap.Geolocation({ 
-      enableHighAccuracy: true, 
-      timeout: 5000,
-      extensions: 'all' // ★ 开启详情
-    });
+const startGPS = () => {
+  AMap.plugin(['AMap.Geolocation', 'AMap.Geocoder'], function() {
+    var geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 6000 });
+    var geocoder = new AMap.Geocoder();
+
     geolocation.getCurrentPosition(function(status, result) {
       if(status == 'complete'){
-        // ★★★ 修复：不再正则过滤，直接使用最详细地址 ★★★
-        // 优先使用 formattedAddress (含门牌号)
-        const detailedAddr = result.formattedAddress || '';
-        
-        if(detailedAddr) {
-          nextTick(() => {
-            postForm.origin = detailedAddr;
-            closeToast();
-            showSuccessToast('定位成功');
-          });
-        }
+        // ★★★ 核心修复：使用 Geocoder 逆地理编码获取最详细地址 ★★★
+        const lnglat = [result.position.lng, result.position.lat];
+        geocoder.getAddress(lnglat, function(status, geoResult) {
+          if (status === 'complete' && geoResult.regeocode) {
+            // 获取格式化地址 (包含街道、门牌)
+            const detail = geoResult.regeocode.formattedAddress;
+            updateOrigin(detail);
+          } else {
+            // 降级使用 Geolocation 的地址
+            updateOrigin(result.formattedAddress);
+          }
+        });
+      } else {
+        closeToast();
+        // 如果之前IP定位成功了，这里就不报错了，否则提示
+        if(!postForm.origin) showFailToast('精确位置获取失败，请手动输入');
+        else showSuccessToast('已定位到城市范围');
       }
     });
+  });
+};
+
+const updateOrigin = (addr) => {
+  nextTick(() => {
+    postForm.origin = addr;
+    closeToast();
+    showSuccessToast('已定位：' + addr);
   });
 };
 
@@ -438,7 +444,6 @@ const handlePopState = () => {
               <div style="margin:20px;"><van-button block type="primary" native-type="submit">保存</van-button></div>
             </van-form>
           </div>
-          
           <div v-if="adminActiveMenu==='rides'">
             <div v-for="item in adminRideList" :key="item.id" class="admin-list-item">
               <span style="flex:1">{{ item?.origin }}→{{ item?.destination }}</span>
@@ -467,9 +472,9 @@ const handlePopState = () => {
           <div class="info-group">
             <div class="form-row"><div class="label">座位</div><div class="seat-grid"><div v-for="n in 6" :key="n" class="seat-btn" :class="{active:postForm.seats===n}" @click="postForm.seats=n">{{n}}</div></div></div>
             <div v-if="postForm.type==='driver'" class="form-row"><div class="label">车型</div><van-radio-group v-model="postForm.car_model" direction="horizontal"><van-radio name="油车">油车</van-radio><van-radio name="电车">电车</van-radio></van-radio-group></div>
-            <div class="form-row"><div class="label">出发时间</div><div style="flex:1" @click="showDatePicker=true">{{ postForm.dateDisplay || '请选择' }} <van-icon name="arrow" style="float:right;margin-top:3px;color:#999"/></div></div>
-            <div class="form-row"><div class="label">费用</div><div style="flex:1"><van-field v-model="postForm.price" type="digit" :formatter="priceFormatter" placeholder="元" input-align="right" style="padding:0"/></div></div>
-            <div class="form-row" style="align-items:flex-start;"><div class="label" style="margin-top:8px;">备注</div><van-field v-model="remarkDisplayText" readonly type="textarea" rows="2" style="background:#f9f9f9;border-radius:4px;width:100%;padding:8px;" /></div>
+            <div class="form-row"><div class="label">出发时间</div><div style="flex:1;text-align:right;" @click="showDatePicker=true">{{ postForm.dateDisplay || '请选择' }} <van-icon name="arrow" color="#999"/></div></div>
+            <div class="form-row"><div class="label">费用</div><div style="flex:1"><van-field v-model="postForm.price" type="digit" :formatter="priceFormatter" placeholder="元" input-align="right"/></div></div>
+            <div class="form-row" style="flex-direction:column;align-items:flex-start;"><div class="label" style="margin-bottom:5px;">备注</div><van-field v-model="remarkDisplayText" readonly type="textarea" rows="2" style="background:#f9f9f9;border-radius:4px;width:100%;padding:8px;" /></div>
           </div>
           <div class="tags-group"><div v-for="t in currentRemarkOptions" :key="t" class="tag-item" @click="toggleRemark(t)">{{t}}</div></div>
         </div>
@@ -629,7 +634,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .menu-item.logout { position: absolute; bottom: 0; width: 100%; background: #d00; }
 .admin-list-item { display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid #eee; }
 
-/* 首页布局优化 */
+/* 首页布局 */
 .page-home { padding: 10px; }
 .ride-card { background: #fff; margin: 10px; padding: 15px; padding-right: 90px; border-radius: 12px; position: relative; box-shadow: 0 2px 8px rgba(0,0,0,0.02); }
 /* 第一排 */
@@ -645,14 +650,13 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .card-row-2 { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; color: #666; font-size: 15px; }
 .info-item { display: flex; align-items: center; gap: 4px; }
 .info-item.center { flex: 1; justify-content: center; color: #333; font-weight: 500; }
-/* 修复：金额颜色为黑色 */
 .price-val { color: #000; font-size: 20px; font-weight: bold; }
 /* 第三排 */
 .card-row-3 { font-size: 13px; color: #999; background: #f8f8f8; padding: 8px; border-radius: 6px; }
 /* 电话按钮 */
 .call-btn { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 32px; color: orange; background: #fff9f0; padding: 10px; border-radius: 50%; z-index: 10; cursor: pointer; }
 
-/* 底部发布按钮 (修复：小巧精致) */
+/* 底部发布按钮 */
 .custom-tabbar { position: fixed; bottom: 0; width: 100%; height: 65px; background: #fff; display: flex; border-top: 1px solid #eee; z-index: 999; padding-bottom: constant(safe-area-inset-bottom); padding-bottom: env(safe-area-inset-bottom); }
 .tab-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 14px; color: #666; font-weight: 500; }
 .tab-item.active { color: var(--orange); font-weight: bold; }
@@ -678,20 +682,17 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .dot { width: 16px; height: 16px; border-radius: 50%; color: #fff; text-align: center; margin-right: 10px; font-size: 12px; flex-shrink: 0; }
 .dot.green { background: var(--green); } .dot.red { background: red; }
 .input-area { font-size: 16px; font-weight: bold; flex: 1; color: #333; }
-/* 修复：行间距压缩为 8px */
+/* 修复：紧凑行距 8px */
 .form-row { display: flex; align-items: center; padding: 8px 0; border-bottom: 1px solid #f5f5f5; }
-/* 修复：标签对齐 */
-.form-row .label { width: 75px; color: #666; font-size: 14px; }
+/* 修复：加粗左侧标签 */
+.form-row .label { width: 70px; color: #333; font-size: 14px; font-weight: bold; }
 .seat-grid { display: flex; gap: 8px; }
 .seat-btn { width: 30px; height: 30px; background: #f0f0f0; display: flex; align-items: center; justify-content: center; border-radius: 4px; }
 .seat-btn.active { background: var(--blue); color: #fff; }
-/* 修复：标签样式加大，增加底部距离 */
 .tags-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; margin-bottom: 30px; }
 .tag-item { padding: 6px 14px; background: #f0f0f0; border-radius: 4px; font-size: 14px; }
 .top-bar { text-align: center; padding: 12px; background: #fff; font-weight: bold; font-size: 18px; }
-/* 修复：广告高度 140px */
 .home-banner { height: 140px; }
-/* 修复：筛选按钮高度减小 */
 .nav-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; background: #fff; }
 .nav-btn { height: 40px; display: flex; align-items: center; justify-content: center; color: #fff; border-radius: 8px; font-weight: bold; font-size: 15px; gap: 5px; opacity: 0.9; }
 .nav-btn.btn-blue { background: #4fc1e9; } .nav-btn.btn-green { background: #a0d468; }
