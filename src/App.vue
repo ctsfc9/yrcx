@@ -62,12 +62,30 @@ const hotCities = ['宜宾', '成都', '重庆', '昆明', '贵阳', '东莞', '
 const carModelOptions = ['油车', '电车'];
 const seatColumns = Array.from({length: 6}, (_, i) => ({ text: `${i + 1}座`, value: i + 1 }));
 
+// 地图实例变量
+let mapInstance = null;
+let geocoderInstance = null;
+
 // ==========================================
 // 2. 计算属性
 // ==========================================
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
   return list.value.filter(item => item && item.origin && item.destination);
+});
+
+const displayQuickRoutes = computed(() => {
+  if (safeList.value.length === 0) return [ { from: '高县', to: '宁波' }, { from: '筠连', to: '嘉兴' } ];
+  const counts = {};
+  safeList.value.forEach(item => {
+    if (item?.origin && item?.destination) {
+      const k = `${item.origin.substring(0,2)}→${item.destination.substring(0,2)}`;
+      counts[k] = (counts[k] || 0) + 1;
+    }
+  });
+  return Object.keys(counts).sort((a,b)=>counts[b]-counts[a]).slice(0,8).map(k=>{
+    const [f,t]=k.split('→'); return {from:f, to:t};
+  });
 });
 
 const bannersList = computed(() => (sysConfig.banners || '').split(',').filter(Boolean));
@@ -109,6 +127,7 @@ onMounted(async () => {
         if(userProfile.isLogin) fetchMyRides();
       }
       
+      // 加载地图(含 Map 插件)
       loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
       setTimeout(() => onLoad(), 200);
     }
@@ -136,24 +155,24 @@ const fetchSystemConfig = async () => {
 };
 
 // ==========================================
-// 4. 地图逻辑 (★ 规则调整：省+市+区 ★)
+// 4. 地图逻辑 (★ 修复：地图选点 + 格式化 ★)
 // ==========================================
 const loadAMapScript = (key) => {
   if (window.AMap) return;
   window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' }; 
   const script = document.createElement('script');
-  script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`;
+  // 加载 AMap.Map 用于显示地图
+  script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Map,AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`;
   document.body.appendChild(script);
 };
 
-// ★★★ 地址格式化新规则：省+市+区 (无街道) ★★★
+// ★ 地址格式化：省+市+区 (无街道) ★
 const formatAddressPCD = (ac) => {
   if (!ac) return '';
   const province = ac.province || '';
   const city = ac.city || '';
   const district = ac.district || '';
   
-  // 拼接逻辑
   let addr = province;
   if (city && city !== province) {
     addr += city;
@@ -161,9 +180,10 @@ const formatAddressPCD = (ac) => {
   if (district) {
     addr += district;
   }
-  return addr; // 仅返回 省市区
+  return addr; 
 };
 
+// 自动定位逻辑
 const autoLocate = () => {
   if (!window.AMap) { 
     showFailToast('地图加载中...'); 
@@ -173,15 +193,15 @@ const autoLocate = () => {
   
   showLoadingToast({ message: '获取位置...', forbidClick: true, duration: 5000 });
 
-  // 1. IP 定位优先 (兜底，通常只到城市)
+  // 1. IP 定位优先
   AMap.plugin('AMap.CitySearch', function () {
     var citySearch = new AMap.CitySearch();
     citySearch.getLocalCity(function (status, result) {
       if (status === 'complete' && result.info === 'OK') {
         const city = result.city || result.province;
-        if (!postForm.origin) postForm.origin = city; // 填个大概
+        if (!postForm.origin) postForm.origin = city; 
       }
-      // 2. GPS 修正 (获取区县)
+      // 2. GPS 修正
       tryGPSCorrection();
     })
   });
@@ -198,17 +218,15 @@ const tryGPSCorrection = () => {
         geocoder.getAddress(lnglat, function(status, geoResult) {
           if (status === 'complete' && geoResult.regeocode) {
             const ac = geoResult.regeocode.addressComponent;
-            // 使用新规则格式化
             const finalAddr = formatAddressPCD(ac);
             updateOrigin(finalAddr);
           } else {
-            // 降级：如果只有 formattedAddress，截取前段大概率也是省市区
             const simple = (result.formattedAddress || '').substring(0, 12);
             updateOrigin(simple);
           }
         });
       } else {
-        closeToast(); // IP定位已保底
+        closeToast(); 
       }
     });
   });
@@ -219,6 +237,42 @@ const updateOrigin = (addr) => {
     postForm.origin = addr;
     closeToast();
     showSuccessToast('已定位：' + addr);
+  });
+};
+
+// --- 地图选点功能 ---
+const initMapPicker = () => {
+  if (!window.AMap || mapInstance) return;
+
+  nextTick(() => {
+    // 渲染地图
+    mapInstance = new AMap.Map('picker-map-container', {
+      zoom: 14,
+      center: [104.630526, 28.766155], // 默认
+    });
+
+    // 拖动结束事件
+    mapInstance.on('moveend', () => {
+      const center = mapInstance.getCenter();
+      if(!geocoderInstance) geocoderInstance = new AMap.Geocoder();
+      
+      geocoderInstance.getAddress(center, (status, result) => {
+        if (status === 'complete' && result.regeocode) {
+          const ac = result.regeocode.addressComponent;
+          // 应用同样的 省市区 规则
+          const simple = formatAddressPCD(ac);
+          mapSearchKeyword.value = simple;
+        }
+      });
+    });
+
+    // 尝试定位到当前
+    AMap.plugin('AMap.Geolocation', function() {
+      var g = new AMap.Geolocation();
+      g.getCurrentPosition((s, r) => {
+        if(s==='complete') mapInstance.setCenter(r.position);
+      });
+    });
   });
 };
 
@@ -236,13 +290,26 @@ watch(mapSearchKeyword, (newVal) => {
 const openMapSelector = (f) => { 
   currentMapField.value = f; 
   showMapPopup.value = true; 
-  mapSearchKeyword.value=''; 
-  mapSearchResults.value=[]; 
+  mapSearchKeyword.value = ''; 
+  mapSearchResults.value = []; 
+  // 延迟加载地图组件
+  setTimeout(initMapPicker, 200);
 };
-const selectLocation = (item) => { 
-  const n = typeof item === 'string' ? item : item.name; 
-  if(currentMapField.value==='origin') postForm.origin = n; 
-  else postForm.destination = n; 
+
+const confirmMapSelection = () => {
+  // 点击确认栏
+  if(mapSearchKeyword.value) {
+    if(currentMapField.value === 'origin') postForm.origin = mapSearchKeyword.value;
+    else postForm.destination = mapSearchKeyword.value;
+    showMapPopup.value = false;
+  }
+};
+
+const selectSearchResult = (item) => { 
+  // 搜索结果一般用名字
+  let name = item.name;
+  if(currentMapField.value==='origin') postForm.origin = name; 
+  else postForm.destination = name; 
   showMapPopup.value=false; 
 };
 
@@ -372,12 +439,25 @@ const fetchMyRides = async () => {
 };
 const handleUserDelete = (id) => { showDialog({title:'提示',message:'确认删除?'}).then(async(a)=>{if(a==='confirm'){await fetch(`/api/rides?id=${id}&user_id=${userProfile.id}`,{method:'DELETE'});fetchMyRides();}}); };
 
+// ★★★ 修复：切换首页强制刷新 ★★★
 const switchTab = (idx) => {
   if (activeTab.value === idx) return;
   activeTab.value = idx;
-  if (idx === 0) { window.history.replaceState({ tab: 0 }, ''); onRefresh(); }
-  else if (idx === 2) { fetchMyRides(); window.history.pushState({ tab: 2 }, ''); }
-  else { window.history.pushState({ tab: idx }, ''); }
+  if (idx === 0) { 
+    window.history.replaceState({ tab: 0 }, ''); 
+    // 重置列表状态并加载
+    list.value = [];
+    finished.value = false;
+    loading.value = true;
+    onLoad(); 
+  }
+  else if (idx === 2) { 
+    fetchMyRides(); 
+    window.history.pushState({ tab: 2 }, ''); 
+  }
+  else { 
+    window.history.pushState({ tab: idx }, ''); 
+  }
 };
 const handlePopState = () => {
   if (showRolePopup.value || showMapPopup.value || showShareGuide.value || selectedRide.value) {
@@ -445,6 +525,7 @@ const handlePopState = () => {
               <div style="margin:20px;"><van-button block type="primary" native-type="submit">保存</van-button></div>
             </van-form>
           </div>
+          
           <div v-if="adminActiveMenu==='rides'">
             <div v-for="item in adminRideList" :key="item.id" class="admin-list-item">
               <span style="flex:1">{{ item?.origin }}→{{ item?.destination }}</span>
@@ -491,8 +572,8 @@ const handlePopState = () => {
           <div class="nav-btn btn-green" :class="{active: filterType==='passenger'}" @click="() => {filterType='passenger'; onLoad();}"><van-icon name="friends" /> 人找车</div>
         </div>
 
-        <div class="search-box"><input v-model="mapSearchKeyword" placeholder="快捷搜索..." /><button @click="onRefresh">搜</button></div>
-        
+        <div class="quick-routes"><div class="route-tag" v-for="r in displayQuickRoutes" :key="r.from+r.to" @click="()=>{mapSearchKeyword=r.to; onRefresh();}">{{r.from}}→{{r.to}}</div></div>
+
         <van-pull-refresh v-model="refreshing" @refresh="onRefresh">
           <van-list v-model:loading="loading" :finished="finished" finished-text="无更多">
             <div v-for="item in safeList" :key="item?.id || Math.random()" class="ride-card" @click="selectedRide = item">
@@ -587,8 +668,27 @@ const handlePopState = () => {
         </div>
       </van-popup>
 
-      <van-popup v-model:show="showDatePicker" position="bottom"><van-picker :columns="dateColumns" @confirm="onConfirmDate" @cancel="showDatePicker=false"/></van-popup>
-      <van-popup v-model:show="showMapPopup" position="bottom" :style="{height:'90%'}" round><div class="map-popup-content"><van-search v-model="mapSearchKeyword" show-action placeholder="搜索地点" @search="openMapSelector"><template #action><div @click="showMapPopup=false">关闭</div></template></van-search><van-list><van-cell v-for="(i,k) in mapSearchResults" :key="k" :title="i.name" @click="selectLocation(i)"/></van-list></div></van-popup>
+      <van-popup v-model:show="showMapPopup" position="bottom" :style="{height:'90%'}" round>
+        <div class="map-popup-content" style="display:flex;flex-direction:column;height:100%;">
+          <van-search v-model="mapSearchKeyword" show-action placeholder="搜索地点" @search="openMapSelector"><template #action><div @click="showMapPopup=false">关闭</div></template></van-search>
+          
+          <div id="picker-map-container" style="width:100%;height:300px;position:relative;flex-shrink:0;">
+             <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-100%);z-index:999;pointer-events:none;">
+               <van-icon name="location" size="32" color="#ee0a24" />
+             </div>
+          </div>
+          <div style="padding:10px;text-align:center;background:#f5f5f5;color:#1989fa;font-weight:bold;" @click="confirmMapSelection">
+            当前选择：{{ mapSearchKeyword || '拖动地图选择' }} (点击确认)
+          </div>
+
+          <div style="flex:1;overflow-y:auto;">
+            <van-list>
+              <van-cell v-for="(i,k) in mapSearchResults" :key="k" :title="i.name" @click="selectLocation(i)"/>
+            </van-list>
+          </div>
+        </div>
+      </van-popup>
+
       <van-dialog v-model:show="showPaymentDialog" title="确认发布" show-cancel-button @confirm="handleRealPublish"><div style="padding:20px;text-align:center">置顶 <van-switch v-model="postForm.is_top" size="16px"/></div></van-dialog>
       <van-popup v-model:show="showAuthModal" position="bottom" style="height:40%;padding:20px;">
         <h3 style="text-align:center">登录</h3>
@@ -637,9 +737,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 
 /* 首页布局 */
 .page-home { padding: 10px; }
-/* 修复：卡片右边距增加到90px */
 .ride-card { background: #fff; margin: 10px; padding: 15px; padding-right: 90px; border-radius: 12px; position: relative; box-shadow: 0 2px 8px rgba(0,0,0,0.02); }
-/* 第一排 */
 .card-row-1 { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .row-left { display: flex; align-items: center; gap: 8px; flex: 1; overflow: hidden; }
 .badge { padding: 2px 6px; font-size: 14px; color: #fff; border-radius: 4px; font-weight: bold; flex-shrink: 0; }
@@ -648,15 +746,11 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .car-badge { padding: 2px 8px; border-radius: 4px; font-size: 13px; font-weight: bold; flex-shrink: 0; }
 .car-badge.electric { background: #f0f9eb; color: var(--green); border: 1px solid #c2e7b0; }
 .car-badge.gas { background: #fef0f0; color: #f56c6c; border: 1px solid #fbc4c4; }
-/* 第二排 */
 .card-row-2 { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; color: #666; font-size: 15px; }
 .info-item { display: flex; align-items: center; gap: 4px; }
 .info-item.center { flex: 1; justify-content: center; color: #333; font-weight: 500; }
-/* 修复：金额颜色为黑色 */
 .price-val { color: #000; font-size: 20px; font-weight: bold; }
-/* 第三排 */
 .card-row-3 { font-size: 13px; color: #999; background: #f8f8f8; padding: 8px; border-radius: 6px; }
-/* 电话按钮 */
 .call-btn { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 32px; color: orange; background: #fff9f0; padding: 10px; border-radius: 50%; z-index: 10; cursor: pointer; }
 
 /* 底部发布按钮 */
@@ -685,20 +779,15 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .dot { width: 16px; height: 16px; border-radius: 50%; color: #fff; text-align: center; margin-right: 10px; font-size: 12px; flex-shrink: 0; }
 .dot.green { background: var(--green); } .dot.red { background: red; }
 .input-area { font-size: 16px; font-weight: bold; flex: 1; color: #333; }
-/* 修复：行间距压缩为 8px */
 .form-row { display: flex; align-items: center; padding: 8px 0; border-bottom: 1px solid #f5f5f5; }
-/* 修复：标签对齐并加粗 */
 .form-row .label { width: 70px; color: #333; font-size: 14px; font-weight: bold; }
 .seat-grid { display: flex; gap: 8px; }
 .seat-btn { width: 30px; height: 30px; background: #f0f0f0; display: flex; align-items: center; justify-content: center; border-radius: 4px; }
 .seat-btn.active { background: var(--blue); color: #fff; }
-/* 修复：标签样式加大，增加底部距离 */
 .tags-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; margin-bottom: 30px; }
 .tag-item { padding: 6px 14px; background: #f0f0f0; border-radius: 4px; font-size: 14px; }
-.top-bar { display: none; /* 隐藏标题 */ }
-/* 修复：广告高度 140px */
+.top-bar { display: none; }
 .home-banner { height: 140px; }
-/* 修复：筛选按钮高度减小 */
 .nav-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; background: #fff; }
 .nav-btn { height: 40px; display: flex; align-items: center; justify-content: center; color: #fff; border-radius: 8px; font-weight: bold; font-size: 15px; gap: 5px; opacity: 0.9; }
 .nav-btn.btn-blue { background: #4fc1e9; } .nav-btn.btn-green { background: #a0d468; }
