@@ -16,7 +16,7 @@ const sysConfig = reactive({
   about_us: ''
 });
 
-// ★ 防白屏：安全阀机制
+// 防白屏
 const appReady = ref(false); 
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
@@ -39,12 +39,12 @@ const refreshing = ref(false);
 const finished = ref(false);
 const submitLoading = ref(false);
 
-// ★★★ 核心修复：统一弹窗状态管理 (删除多余变量) ★★★
+// 弹窗管理
 const uiState = reactive({
   showRole: false,
   showDate: false,
   showPay: false,
-  showMap: false,   // 地图弹窗唯一控制开关
+  showMap: false,
   showAuth: false,
   showShare: false,
   selectedRide: null,
@@ -74,7 +74,6 @@ let geocoderInstance = null;
 // ==========================================
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
-  // 强制按出发时间排序 (最近的在前面)
   return list.value.slice().sort((a, b) => new Date(a.date) - new Date(b.date));
 });
 
@@ -95,10 +94,9 @@ const dateColumns = computed(() => {
 });
 
 // ==========================================
-// 3. 初始化 (强制渲染)
+// 3. 初始化
 // ==========================================
 onMounted(async () => {
-  // 安全阀：300ms后强制显示
   setTimeout(() => { if(!appReady.value) appReady.value = true; }, 300);
 
   try {
@@ -117,7 +115,6 @@ onMounted(async () => {
     fetchSystemConfig();
     onLoad(); 
     
-    // 延后加载地图脚本
     setTimeout(() => {
       loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
     }, 500);
@@ -146,7 +143,7 @@ const fetchSystemConfig = async () => {
 };
 
 // ==========================================
-// 4. 地图逻辑 (修复：地址解析与弹窗)
+// 4. 地图逻辑
 // ==========================================
 const loadAMapScript = (key) => {
   if (window.AMap) return;
@@ -155,21 +152,18 @@ const loadAMapScript = (key) => {
     const script = document.createElement('script');
     script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Map,AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`;
     document.body.appendChild(script);
-  } catch(e) {}
+  } catch(e){}
 };
 
-// ★★★ 核心：地址只取区县 ★★★
 const formatAddressPCD = (ac) => {
   if (!ac) return '';
-  // 1. 优先返回 区/县 (例如 "翠屏区")
   if (ac.district && typeof ac.district === 'string' && ac.district.length > 0) return ac.district;
-  // 2. 没区返回市
   if (ac.city && typeof ac.city === 'string' && ac.city.length > 0) return ac.city;
   return ac.province || '位置';
 };
 
 const autoLocate = () => {
-  if (!window.AMap) { showFailToast('地图组件加载中...'); return; }
+  if (!window.AMap) { showFailToast('地图加载中...'); return; }
   showLoadingToast({ message: '定位中...', forbidClick: true, duration: 5000 });
 
   AMap.plugin('AMap.CitySearch', function () {
@@ -212,20 +206,17 @@ const updateOrigin = (addr) => {
   });
 };
 
-// ★★★ 修复：弹窗地图初始化 ★★★
 const initMapPicker = () => {
-  if (!window.AMap) return;
+  if (!window.AMap || mapInstance) return;
   nextTick(() => {
     const el = document.getElementById('picker-map-container');
     if(!el) return;
     
     if(!mapInstance) {
       mapInstance = new AMap.Map(el, { zoom: 13, center: [104.630526, 28.766155] });
-      // 首次尝试定位当前城市
       AMap.plugin('AMap.CitySearch', function () {
           new AMap.CitySearch().getLocalCity((s, r) => { if(s==='complete'&&r.bounds) mapInstance.setBounds(r.bounds); });
       });
-      
       mapInstance.on('moveend', () => {
         const center = mapInstance.getCenter();
         if(!geocoderInstance) geocoderInstance = new AMap.Geocoder();
@@ -238,7 +229,7 @@ const initMapPicker = () => {
         });
       });
     } else {
-      mapInstance.resize(); // 必须resize否则可能显示不全
+      mapInstance.resize(); 
     }
   });
 };
@@ -254,13 +245,11 @@ watch(mapSearchKeyword, (newVal) => {
   } else { mapSearchResults.value = []; }
 });
 
-// ★★★ 修复：打开地图选择器 ★★★
 const openMapSelector = (f) => { 
   currentMapField.value = f; 
-  uiState.showMap = true; // 使用统一变量
+  uiState.showMap = true; 
   mapSearchKeyword.value = ''; 
   mapSearchResults.value = []; 
-  // 延迟初始化地图，确保DOM已显示
   setTimeout(initMapPicker, 300);
 };
 
@@ -347,21 +336,32 @@ const priceFormatter = (val) => {
   return val;
 };
 
-// 互换按钮
 const swapLocation = () => {
   const temp = postForm.origin;
   postForm.origin = postForm.destination;
   postForm.destination = temp;
 };
 
+// ★★★ 修复：发布按钮点击逻辑 ★★★
 const onPreSubmit = () => {
-  if (!postForm.origin || !postForm.destination) { showFailToast('请完善路线'); return; }
+  console.log("PreSubmit clicked"); // 调试点
+  
+  if (!postForm.origin || !postForm.destination) { 
+    showFailToast('请完善路线'); 
+    return; 
+  }
+  
+  // 必须绑定手机
   if (!userProfile.phone) { 
-    showDialog({ message: '发布前请绑定手机号' }).then(() => { uiState.showAuth = true; });
+    showDialog({ message: '发布前请绑定手机号' }).then(() => {
+        uiState.showAuth = true;
+    });
     return;
   }
+  
   if (parseFloat(postForm.price) > 9999) { showFailToast('费用上限9999元'); return; }
-  uiState.showPay = true;
+  
+  uiState.showPay = true; // 唤起支付确认弹窗
 };
 
 const handleRealPublish = async () => {
@@ -455,7 +455,6 @@ const switchTab = (idx) => {
 };
 
 const handlePopState = () => {
-  // 统一关闭所有弹窗
   if (uiState.showRole || uiState.showMap || uiState.showShare || uiState.selectedRide || uiState.showDate || uiState.showPay) {
     uiState.showRole = false;
     uiState.showMap = false;
@@ -479,7 +478,7 @@ const handlePopState = () => {
 
 <template>
   <div v-if="!appReady" style="display:flex;justify-content:center;align-items:center;height:100vh;background:#f7f8fa;">
-    <van-loading size="24px" vertical>加载资源...</van-loading>
+    <van-loading size="24px" vertical>加载中...</van-loading>
   </div>
 
   <div v-else>
@@ -778,7 +777,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .card-row-3 { font-size: 13px; color: #999; background: #f8f8f8; padding: 8px; border-radius: 6px; }
 .call-btn { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 32px; color: orange; background: #fff9f0; padding: 10px; border-radius: 50%; z-index: 10; cursor: pointer; }
 
-/* 底部发布按钮 */
+/* 底部发布按钮 - 修复z-index */
 .custom-tabbar { position: fixed; bottom: 0; width: 100%; height: 65px; background: #fff; display: flex; border-top: 1px solid #eee; z-index: 999; padding-bottom: constant(safe-area-inset-bottom); padding-bottom: env(safe-area-inset-bottom); }
 .tab-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 14px; color: #666; font-weight: 500; }
 .tab-item.active { color: var(--orange); font-weight: bold; }
@@ -800,19 +799,20 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 /* 发布页布局 */
 .page-post { padding: 10px; }
 .post-card { background: #fff; border-radius: 8px; padding: 15px; margin-bottom: 15px; }
-.location-group .loc-row { display: flex; align-items: center; margin-bottom: 10px; border-bottom: 1px dashed #eee; padding-bottom: 10px; position: relative; }
+/* 修复：相对定位以支持互换按钮 */
+.location-group { position: relative; }
+.location-group .loc-row { display: flex; align-items: center; margin-bottom: 10px; border-bottom: 1px dashed #eee; padding-bottom: 10px; }
 /* 大圆点 */
 .dot { width: 24px; height: 24px; border-radius: 50%; color: #fff; text-align: center; line-height: 24px; margin-right: 12px; flex-shrink: 0; font-size: 14px; }
 .dot.green { background: var(--green); } .dot.red { background: red; }
 .input-area { font-size: 16px; font-weight: bold; flex: 1; color: #333; }
-/* 互换按钮 */
-.swap-icon { position: absolute; right: 10px; top: 100%; transform: translateY(-50%); z-index: 10; background: #fff; padding: 5px; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.1); cursor: pointer; }
+/* 修复：互换按钮样式 */
+.swap-icon { position: absolute; right: 20px; top: 50%; transform: translateY(-50%); z-index: 10; background: #fff; padding: 8px; border-radius: 50%; box-shadow: 0 2px 8px rgba(0,0,0,0.1); cursor: pointer; }
 .form-row { display: flex; align-items: center; padding: 16px 0; border-bottom: 1px solid #f0f0f0; }
 .form-row .label { width: 75px; color: #333; font-size: 15px; font-weight: bold; }
 .seat-grid { display: flex; gap: 8px; }
 .seat-btn { width: 30px; height: 30px; background: #f0f0f0; display: flex; align-items: center; justify-content: center; border-radius: 4px; }
 .seat-btn.active { background: var(--blue); color: #fff; }
-/* 修复：标签反选样式 */
 .tags-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 15px; margin-bottom: 30px; }
 .tag-item { padding: 6px 14px; background: #f0f0f0; border-radius: 4px; font-size: 14px; }
 .tag-item.active { background: #eaf5ff; color: var(--blue); border: 1px solid var(--blue); }
@@ -838,4 +838,6 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .share-guide { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; display: flex; justify-content: center; }
 .share-arrow { position: absolute; right: 20px; top: 20px; }
 .share-text { margin-top: 100px; color: #fff; text-align: center; font-size: 18px; line-height: 1.6; }
+/* 修复：发布按钮容器，确保层级最高 */
+.bottom-action { position: relative; z-index: 999; }
 </style>
