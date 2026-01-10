@@ -246,6 +246,7 @@ const formatDate = (str) => {
 const openDetail = (item) => { uiState.selectedRide = item; window.history.pushState({ popup: 'detail' }, null, '#detail'); };
 const closeDetail = () => window.history.back();
 
+// ★★★ 返回逻辑：复刻封存版 ★★★
 const handlePopState = () => {
   if (!window.location.hash.includes('detail') && uiState.selectedRide) { uiState.selectedRide = null; return; }
   
@@ -267,9 +268,7 @@ const handlePopState = () => {
       showToast('再按一次退出');
       window.history.pushState({ page: 'home' }, null, document.URL);
       setTimeout(() => exitCounter=0, 2000);
-    } else {
-      // 允许退出
-    }
+    } 
   } else {
     activeTab.value = 0;
     window.history.replaceState({ page: 'home' }, null, document.URL.split('#')[0]);
@@ -326,20 +325,16 @@ const autoLocate = () => {
         geolocation.getCurrentPosition(function(status, result){
             if(status=='complete' && result.addressComponent){
                 const ac = result.addressComponent;
-                // 优先取 district (区/县)
-                let addr = ac.district;
-                // 如果为空（如直辖市的市辖区），取 city
+                let addr = ac.district; 
                 if (!addr || addr.length === 0) addr = ac.city;
-                // 再次兜底
                 if (!addr || addr.length === 0) addr = ac.province;
-                
-                // 去除可能包含的“省”字（虽然 API 返回的 district 通常不带）
-                postForm.origin = addr.replace(/.*?(省|自治区)/, '');
+                // 去掉省/市前缀，直接显示区县
+                postForm.origin = addr.replace(/^(.*?省|.*?市)/, '');
                 closeToast();
             } else {
                 AMap.plugin('AMap.CitySearch', function(){ 
                     new AMap.CitySearch().getLocalCity(function(s,r){ 
-                        if(s==='complete'&&r.info==='OK') postForm.origin=r.city; // CitySearch 只有 city
+                        if(s==='complete'&&r.info==='OK') postForm.origin=r.city.replace(/^(.*?省)/, '');
                         closeToast(); 
                     }); 
                 });
@@ -358,7 +353,6 @@ const openMapSelector = (f) => {
         if(window.AMap) {
             if(!mapInstance) {
                 mapInstance = new AMap.Map(document.getElementById('picker-map-container'), { zoom: 15 });
-                mapInstance.on('moveend', () => { /* 拖动回调预留 */ });
             }
             AMap.plugin('AMap.Geolocation', function() {
                 const geo = new AMap.Geolocation({ enableHighAccuracy: true });
@@ -415,6 +409,7 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
           <div class="menu-item logout" @click="()=>location.href='/'"><van-icon name="close" /> 退出后台</div>
         </div>
         <div class="admin-main">
+          
           <div v-if="adminActiveMenu==='config'">
             <h3 style="margin:0 0 15px 0;">全局参数配置</h3>
             <van-form @submit="saveSystemConfig">
@@ -509,15 +504,15 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
           </div>
         </div>
       </div>
+      
+      <van-dialog v-model:show="uiState.showAddUser" title="添加新用户" show-cancel-button @confirm="handleAdminAddUser">
+          <div style="padding:15px;">
+              <van-field v-model="addUserForm.nickname" label="昵称" placeholder="请输入昵称" border />
+              <van-field v-model="addUserForm.phone" label="手机号" placeholder="11位手机号" border />
+              <van-field v-model="addUserForm.balance" label="余额" placeholder="初始余额" type="number" border />
+          </div>
+      </van-dialog>
     </div>
-
-    <van-dialog v-model:show="uiState.showAddUser" title="添加新用户" show-cancel-button @confirm="handleAdminAddUser">
-        <div style="padding:15px;">
-            <van-field v-model="addUserForm.nickname" label="昵称" placeholder="请输入昵称" border />
-            <van-field v-model="addUserForm.phone" label="手机号" placeholder="11位手机号" border />
-            <van-field v-model="addUserForm.balance" label="余额" placeholder="初始余额" type="number" border />
-        </div>
-    </van-dialog>
 
     <div v-else class="user-wrapper">
       
