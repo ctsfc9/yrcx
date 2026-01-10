@@ -5,14 +5,12 @@ import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToas
 // ==========================================
 // 1. 系统核心 (防白屏 & 错误捕捉)
 // ==========================================
-const appReady = ref(true); // ★★★ 核心：默认显示，防止白屏 ★★★
+const appReady = ref(true); // 强制渲染，防止白屏
 const globalError = ref('');
 
-// 捕捉运行时错误，显示在屏幕顶端，而不是白屏
 onErrorCaptured((err) => {
   console.error("Runtime Error:", err);
-  globalError.value = err.message;
-  return false; 
+  return false;
 });
 
 // ==========================================
@@ -29,17 +27,12 @@ const sysConfig = reactive({
   about_us: ''
 });
 
-// 用户状态
+// 状态管理
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
-let exitCounter = 0;
-
-// 后台数据
 const adminLoginData = reactive({ username: '', password: '' });
 const adminActiveMenu = ref('basic');
 const adminSettingTab = ref(0);
-const adminUserList = ref([]);
-const adminRideList = ref([]);
 
 // 前台数据
 const activeTab = ref(0);
@@ -80,13 +73,19 @@ const seatColumns = Array.from({length: 6}, (_, i) => ({ text: `${i + 1}座`, va
 
 let mapInstance = null;
 let geocoderInstance = null;
+let exitCounter = 0;
 
 // ==========================================
-// 2. 计算属性
+// 3. 计算属性
 // ==========================================
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
-  return list.value.slice().sort((a, b) => new Date(a.date) - new Date(b.date));
+  // 按照时间排序，防止无效日期导致排序崩溃
+  return list.value.slice().sort((a, b) => {
+    const da = new Date(a.date);
+    const db = new Date(b.date);
+    return (isNaN(da) ? 0 : da) - (isNaN(db) ? 0 : db);
+  });
 });
 
 const bannersList = computed(() => (sysConfig.banners || '').split(',').filter(Boolean));
@@ -108,18 +107,18 @@ const dateColumns = computed(() => {
 // ★ 车型样式 (紫色混动) ★
 const getCarClass = (model) => {
   if (!model) return '';
-  if (model.includes('混合')) return 'hybrid'; // 优先匹配混合
+  if (model.includes('混合')) return 'hybrid';
   if (model.includes('电')) return 'electric';
   return 'gas';
 };
 
 // ==========================================
-// 3. 初始化 & 路由守卫
+// 4. 初始化
 // ==========================================
 onMounted(async () => {
-  // 1. 初始化路由状态 (防止一按返回就退出)
-  if (!window.location.hash) {
-    window.history.replaceState({ page: 'home' }, null, document.URL);
+  // 1. 路由初始化 (处理返回键)
+  if (window.location.hash) {
+    window.history.replaceState(null, null, document.URL.split('#')[0]);
   }
   window.addEventListener('popstate', handlePopState);
 
@@ -137,16 +136,16 @@ onMounted(async () => {
       localStorage.setItem('user_info', JSON.stringify(userProfile));
     }
 
-    // 3. 异步加载数据 (全量恢复)
+    // 3. 数据加载
     fetchSystemConfig();
     onLoad(); 
     
-    // 4. 地图延后加载
+    // 4. 地图延后
     setTimeout(() => {
       loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
     }, 800);
 
-    // 5. 后台路由检查
+    // 5. 后台路由
     if (window.location.pathname === '/admin') {
       isSystemAdmin.value = true;
       if(localStorage.getItem('admin_token')) {
@@ -163,26 +162,50 @@ onUnmounted(() => {
   window.removeEventListener('popstate', handlePopState);
 });
 
-// ★★★ 核心修复：基于 Hash 的安全导航 ★★★
+// ==========================================
+// 5. 核心交互逻辑 (路由/API/地图)
+// ==========================================
+
+// ★★★ 修复：日期格式化 (解决 NaN 问题) ★★★
+const formatDate = (str) => {
+  if (!str) return '时间待定';
+  
+  // 兼容性处理：将 2023-01-01 转换为 2023/01/01 (解决 iOS/Safari NaN 问题)
+  let safeStr = str;
+  if (typeof str === 'string') {
+    safeStr = str.replace(/-/g, '/');
+    // 如果没有秒，尝试补全，防止解析失败
+    if (!safeStr.includes('T') && safeStr.length < 19) {
+       // 简单容错
+    }
+  }
+
+  const d = new Date(safeStr);
+  
+  // 如果解析失败 (Invalid Date)
+  if (isNaN(d.getTime())) {
+    return str || '时间待定'; // 直接返回原字符串或提示
+  }
+
+  return `${d.getMonth()+1}月${d.getDate()}日 ${d.getHours()}点`;
+};
+
+// Hash 路由处理返回键
 const openDetail = (item) => {
   uiState.selectedRide = item;
-  // 写入 #detail，这样浏览器就知道我们在新页面
-  window.history.pushState({ popup: 'detail' }, null, '#detail');
+  window.location.hash = 'detail';
 };
 
 const closeDetail = () => {
-  // 手动后退，触发 popstate 来关闭弹窗
   window.history.back();
 };
 
 const handlePopState = () => {
-  // 1. 详情页关闭逻辑
-  if (uiState.selectedRide) {
+  if (!window.location.hash.includes('detail') && uiState.selectedRide) {
     uiState.selectedRide = null;
-    return; // 消耗一次后退事件
+    return;
   }
   
-  // 2. 其他弹窗关闭逻辑
   if (uiState.showRole || uiState.showMap || uiState.showShare || uiState.showDate || uiState.showPayment || uiState.showAuth) {
     uiState.showRole = false;
     uiState.showMap = false;
@@ -190,30 +213,21 @@ const handlePopState = () => {
     uiState.showDate = false;
     uiState.showPayment = false;
     uiState.showAuth = false;
-    // 保持在首页
-    if (!window.location.hash) window.history.replaceState({ page: 'home' }, null, document.URL);
     return;
   }
 
-  // 3. 首页防误触退出
-  if (activeTab.value === 0) {
+  if (activeTab.value === 0 && !uiState.selectedRide) {
     exitCounter++;
     if (exitCounter < 2) {
       showToast('再按一次退出');
-      // 这里的 pushState 是为了把刚才的 back 补回来
       window.history.pushState(null, null, document.URL);
       setTimeout(() => { exitCounter = 0; }, 2000);
     }
-  } else {
-    // 如果在"发布"或"我的"，回首页
+  } else if (activeTab.value !== 0) {
     activeTab.value = 0;
-    window.history.replaceState({ page: 'home' }, null, document.URL.split('#')[0]);
   }
 };
 
-// ==========================================
-// 4. API 交互 (全量恢复)
-// ==========================================
 const fetchSystemConfig = async () => {
   try {
     const res = await fetch('/api/admin?action=get_config');
@@ -226,7 +240,6 @@ const fetchSystemConfig = async () => {
 
 const saveSystemConfig = async () => {
   showLoadingToast('保存中...');
-  // 模拟保存
   setTimeout(() => showSuccessToast('保存成功'), 500);
 };
 
@@ -244,19 +257,15 @@ const onLoad = async () => {
   finished.value = true;
 };
 
-const fetchMyRides = async () => {
-  if(!userProfile.id) return;
-  try {
-    const res = await fetch(`/api/rides?type=all`); 
-    const data = await res.json();
-    if (data.results) myRidesList.value = data.results.filter(item => item.user_id === userProfile.id);
-  } catch(e) {}
-};
-
 const handleRealPublish = async () => {
   if (!userProfile.phone) { showFailToast('无手机号'); return; }
   submitLoading.value = true;
-  const newRide = { ...postForm, user_id: userProfile.id, contact: userProfile.phone, date: postForm.date || new Date().toISOString() };
+  
+  // 确保日期格式正确
+  let finalDate = postForm.date;
+  if (!finalDate) finalDate = new Date().toISOString();
+
+  const newRide = { ...postForm, user_id: userProfile.id, contact: userProfile.phone, date: finalDate };
   if(!newRide.price) newRide.price = '面议';
   if(!newRide.remark || newRide.remark.length===0) newRide.remark = '无备注';
   else if(Array.isArray(newRide.remark)) newRide.remark = newRide.remark.join('，');
@@ -286,9 +295,16 @@ const handleUserDelete = (id) => {
   }); 
 };
 
-// ==========================================
-// 5. 地图与辅助逻辑
-// ==========================================
+const fetchMyRides = async () => {
+  if(!userProfile.id) return;
+  try {
+    const res = await fetch(`/api/rides?type=all`); 
+    const data = await res.json();
+    if (data.results) myRidesList.value = data.results.filter(item => item.user_id === userProfile.id);
+  } catch(e) {}
+};
+
+// 地图逻辑
 const loadAMapScript = (key) => {
   if (window.AMap) return;
   try {
@@ -380,7 +396,6 @@ const onConfirmDate = ({selectedOptions}) => { const v=selectedOptions.map(o=>o.
 const setFilter = (t) => { filterType.value=t; refreshing.value=true; onLoad(); };
 const handleAdminLogin = () => { if(adminLoginData.username==='admin'&&adminLoginData.password==='123456'){ isLogined.value=true; localStorage.setItem('admin_token','mock'); }else{ showFailToast('Error'); } };
 const switchAdminMenu = (m) => adminActiveMenu.value=m;
-const formatDate = (str) => { if(!str) return ''; const d=new Date(str); return `${d.getMonth()+1}月${d.getDate()}日 ${d.getHours()}点`; };
 const priceFormatter = (val) => { if(val && val.length > 4) return val.slice(0, 4); return val; };
 
 watch(mapSearchKeyword, (newVal) => {
@@ -395,7 +410,7 @@ watch(mapSearchKeyword, (newVal) => {
 </script>
 
 <template>
-  <div v-if="globalError" style="position:fixed;top:0;left:0;width:100%;background:#ee0a24;color:#fff;z-index:99999;padding:15px;font-size:14px;text-align:center;">
+  <div v-if="globalError" style="position:fixed;top:0;left:0;width:100%;background:red;color:#fff;z-index:99999;padding:15px;font-size:12px;text-align:center;">
     ⚠️ {{ globalError }}
   </div>
 
@@ -704,7 +719,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 
 .card-row-3 { font-size: 13px; color: #999; background: #f8f8f8; padding: 8px; border-radius: 6px; }
 
-/* ★★★ 电话按钮：加大至 48px，图标 26px ★★★ */
+/* 电话按钮: 48px */
 .call-btn { flex-shrink: 0; font-size: 26px; color: #fff; background: #ff6600; padding: 0; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; }
 
 /* 底部发布按钮 */
