@@ -18,12 +18,11 @@ const isLogined = ref(false);
 let exitCounter = 0;
 
 const adminLoginData = reactive({ username: '', password: '' });
-const adminActiveMenu = ref('users'); // 默认看用户
+const adminActiveMenu = ref('users'); 
 const adminSettingTab = ref(0);
 const adminUserList = ref([]); 
 const adminRideList = ref([]);
 
-// 添加用户表单
 const addUserForm = reactive({ nickname: '', phone: '', balance: '' });
 
 const activeTab = ref(0);
@@ -38,7 +37,7 @@ const submitLoading = ref(false);
 const uiState = reactive({
   showRole: false, showDate: false, showPayment: false, 
   showMap: false, showAuth: false, showShare: false,
-  showAddUser: false, // 新增：添加用户弹窗
+  showAddUser: false, 
   selectedRide: null, authStep: 1
 });
 
@@ -85,9 +84,7 @@ const getCarClass = (model) => {
   return 'gas';
 };
 
-// ===================== 初始化 =====================
 onMounted(async () => {
-  // ★★★ 核心：封存前逻辑，一进来就注入历史记录 ★★★
   try { 
       if (!window.location.hash) window.history.replaceState({ page: 'home' }, null, document.URL); 
   } catch(e){}
@@ -129,7 +126,6 @@ onMounted(async () => {
 
 onUnmounted(() => window.removeEventListener('popstate', handlePopState));
 
-// ===================== 业务逻辑 =====================
 const handleWeChatAuth = () => {
     showLoadingToast('微信授权中...');
     setTimeout(() => {
@@ -144,6 +140,7 @@ const handleBindPhone = async () => {
     if(!registerForm.phone || registerForm.phone.length !== 11) { showToast('请输入11位手机号'); return; }
     showLoadingToast({ message: '同步数据中...', forbidClick: true });
     userProfile.phone = registerForm.phone;
+    
     const success = await syncUserToBackend(false);
     if (success) {
         localStorage.setItem('user_info', JSON.stringify(userProfile));
@@ -201,7 +198,6 @@ const fetchAdminData = async () => {
     } catch(e){}
 };
 
-// ★★★ 后台功能：添加用户 ★★★
 const handleAdminAddUser = async () => {
     if(!addUserForm.nickname || !addUserForm.phone) { showToast('请填写完整'); return; }
     showLoadingToast('添加中...');
@@ -211,13 +207,11 @@ const handleAdminAddUser = async () => {
             showSuccessToast('添加成功');
             uiState.showAddUser = false;
             fetchAdminData();
-            // 重置表单
             addUserForm.nickname=''; addUserForm.phone=''; addUserForm.balance='';
         } else showFailToast('添加失败');
     } catch(e) { showFailToast('网络错误'); }
 };
 
-// ★★★ 后台功能：删除用户 ★★★
 const handleAdminDeleteUser = (user) => {
     showDialog({ title: '警告', message: '确定删除该用户？不可恢复', showCancelButton: true }).then(async () => {
         await fetch(`/api/admin/user?id=${user.id}`, { method: 'DELETE' });
@@ -252,13 +246,11 @@ const formatDate = (str) => {
 const openDetail = (item) => { uiState.selectedRide = item; window.history.pushState({ popup: 'detail' }, null, '#detail'); };
 const closeDetail = () => window.history.back();
 
-// ★★★ 核心：封存前返回逻辑 ★★★
 const handlePopState = () => {
   if (!window.location.hash.includes('detail') && uiState.selectedRide) { uiState.selectedRide = null; return; }
   
   if (Object.values(uiState).some(v=>v===true && v!==uiState.selectedRide)) {
       if (uiState.showAuth && !userProfile.phone) { 
-          // 强制授权，禁止返回，立即把状态压回去
           window.history.pushState({ page: 'home' }, null, document.URL); 
           return; 
       }
@@ -273,7 +265,6 @@ const handlePopState = () => {
     exitCounter++;
     if (exitCounter < 2) {
       showToast('再按一次退出');
-      // ★ 关键：压入状态，阻断浏览器后退
       window.history.pushState({ page: 'home' }, null, document.URL);
       setTimeout(() => exitCounter=0, 2000);
     } else {
@@ -326,7 +317,7 @@ const handleUserDelete = (id) => { showDialog({title:'提示',message:'确认删
 const fetchMyRides = async () => { if(!userProfile.id) return; try{ const res=await fetch(`/api/rides?type=all`); const d=await res.json(); if(d.results) myRidesList.value=d.results.filter(i=>i.user_id===userProfile.id); }catch(e){} };
 const loadAMapScript = (key) => { if(window.AMap) return; try{ window._AMapSecurityConfig={securityJsCode:'f6c5bf3568831b3f4b5f3ae35d9bfa08'}; const s=document.createElement('script'); s.src=`https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Map,AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`; document.body.appendChild(s); }catch(e){} };
 
-// ★★★ 核心：定位逻辑恢复 (区/县 > 市，无省名) ★★★
+// ★★★ 定位逻辑优化：优先区/县，其次市，无省名 ★★★
 const autoLocate = () => { 
     if(!window.AMap){showFailToast('地图加载中');return;} 
     showLoadingToast('定位中...'); 
@@ -335,17 +326,20 @@ const autoLocate = () => {
         geolocation.getCurrentPosition(function(status, result){
             if(status=='complete' && result.addressComponent){
                 const ac = result.addressComponent;
-                // 优先取 district (区/县)，没有则取 city
-                let addr = ac.district || ac.city;
-                // 万一 district 为空数组，降级
-                if (Array.isArray(addr) || !addr) addr = ac.city || ac.province;
-                postForm.origin = addr;
+                // 优先取 district (区/县)
+                let addr = ac.district;
+                // 如果为空（如直辖市的市辖区），取 city
+                if (!addr || addr.length === 0) addr = ac.city;
+                // 再次兜底
+                if (!addr || addr.length === 0) addr = ac.province;
+                
+                // 去除可能包含的“省”字（虽然 API 返回的 district 通常不带）
+                postForm.origin = addr.replace(/.*?(省|自治区)/, '');
                 closeToast();
             } else {
-                // 降级 CitySearch
                 AMap.plugin('AMap.CitySearch', function(){ 
                     new AMap.CitySearch().getLocalCity(function(s,r){ 
-                        if(s==='complete'&&r.info==='OK') postForm.origin=r.city||r.province; 
+                        if(s==='complete'&&r.info==='OK') postForm.origin=r.city; // CitySearch 只有 city
                         closeToast(); 
                     }); 
                 });
@@ -361,13 +355,11 @@ const openMapSelector = (f) => {
     mapSearchResults.value=[]; 
     
     setTimeout(()=>{ 
-        if(window.AMap && !mapInstance) {
-            mapInstance = new AMap.Map(document.getElementById('picker-map-container'), { zoom: 15 });
-            // 监听拖动
-            mapInstance.on('moveend', () => {
-               // 这里可以加逆地理编码显示当前中心位置文字，目前仅作为选点
-            });
-            // 初始定位
+        if(window.AMap) {
+            if(!mapInstance) {
+                mapInstance = new AMap.Map(document.getElementById('picker-map-container'), { zoom: 15 });
+                mapInstance.on('moveend', () => { /* 拖动回调预留 */ });
+            }
             AMap.plugin('AMap.Geolocation', function() {
                 const geo = new AMap.Geolocation({ enableHighAccuracy: true });
                 geo.getCurrentPosition(function(status, result){
@@ -381,7 +373,6 @@ const openMapSelector = (f) => {
 };
 
 const confirmMapSelection = () => { 
-    // 地图选点通常配合搜索结果，这里简单处理
     if(mapSearchKeyword.value){ 
         if(currentMapField.value==='origin') postForm.origin=mapSearchKeyword.value; 
         else postForm.destination=mapSearchKeyword.value; 
@@ -780,6 +771,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .car-badge.gas { background: #fef0f0; color: #f56c6c; border: 1px solid #fbc4c4; }
 .car-badge.hybrid { background: #f3e5f5; color: #9c27b0; border: 1px solid #e1bee7; }
 .card-row-3 { font-size: 13px; color: #999; background: #f8f8f8; padding: 8px; border-radius: 6px; }
+/* 42px */
 .call-btn { flex-shrink: 0; font-size: 22px; color: #fff; background: #ff6600; padding: 0; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 42px; height: 42px; }
 .custom-tabbar { position: fixed; bottom: 0; width: 100%; height: 65px; background: #fff; display: flex; border-top: 1px solid #eee; z-index: 999; padding-bottom: constant(safe-area-inset-bottom); padding-bottom: env(safe-area-inset-bottom); }
 .tab-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 14px; color: #666; font-weight: 500; }
