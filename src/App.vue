@@ -3,7 +3,7 @@ import { ref, reactive, computed, nextTick, onMounted, onUnmounted, onErrorCaptu
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
 // ==========================================
-// 1. 系统核心 (防白屏 & 错误捕捉)
+// 1. 系统核心
 // ==========================================
 const appReady = ref(true); 
 const globalError = ref('');
@@ -18,24 +18,17 @@ onErrorCaptured((err) => {
 // ==========================================
 const sysConfig = reactive({
   platform_name: '宜人出行',
-  platform_desc: '',
-  platform_logo: '',
   kefu_wechat: 'keea02',
-  official_account_qr: '',
   notice_text: '欢迎使用宜人出行，数据实时同步 D1 数据库。',
+  // 默认两张演示图，您可以在后台修改
+  banners: 'https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg,https://fastly.jsdelivr.net/npm/@vant/assets/apple-2.jpeg', 
   amap_key: 'a4f6e1e5da68bc9fe5f984d69a3f6b2e',
-  sms_provider: 'tencent',
-  sms_account: '',
-  sms_password: '',
-  sms_template: '',
+  // ...其他配置保持默认
   show_all_posts: true,
   passenger_fee: 0,
   driver_fee: 0,
   driver_cert_required: false,
-  allow_long_term: false,
-  allow_driver_repost: true,
-  allow_passenger_repost: true,
-  about_us: ''
+  allow_driver_repost: true
 });
 
 // 状态管理
@@ -47,8 +40,8 @@ let exitCounter = 0;
 const adminLoginData = reactive({ username: '', password: '' });
 const adminActiveMenu = ref('config'); 
 const adminSettingTab = ref(0);
-const adminUserList = ref([]); // 用户列表
-const adminRideList = ref([]); // 拼车列表
+const adminUserList = ref([]); 
+const adminRideList = ref([]);
 
 // 前台数据
 const activeTab = ref(0);
@@ -66,13 +59,13 @@ const uiState = reactive({
   showDate: false,
   showPayment: false, 
   showMap: false,
-  showAuth: false,
+  showAuth: false, // 授权弹窗
   showShare: false,
   selectedRide: null, 
   authStep: 1
 });
 
-// 表单
+// 用户与表单
 const userProfile = reactive({ id: '', nickname: '未登录', avatar: '', phone: '', balance: '0.00', isLogin: false });
 const registerForm = reactive({ phone: '' });
 const postForm = reactive({ 
@@ -97,9 +90,14 @@ const safeList = computed(() => {
   return [...list.value].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 });
 
-const bannersList = computed(() => (sysConfig.banners || 'https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg').split(','));
+// ★★★ 修复：Banner列表处理，防止空字符串导致图片加载失败 ★★★
+const bannersList = computed(() => {
+  const str = sysConfig.banners || '';
+  return str.split(',').filter(item => item && item.trim().length > 0);
+});
+
 const currentRemarkOptions = computed(() => {
-  const str = postForm.type === 'driver' ? sysConfig.tags_driver || '有行李,走高速,可吸烟,线下支付' : sysConfig.tags_passenger || '有行李,走高速,只限女生,线下支付';
+  const str = postForm.type === 'driver' ? '有行李,走高速,可吸烟,线下支付' : '有行李,走高速,只限女生,线下支付';
   return str.split(',');
 });
 const remarkDisplayText = computed(() => (postForm.remark || []).join('，'));
@@ -133,15 +131,16 @@ onMounted(async () => {
       Object.assign(userProfile, JSON.parse(u));
       userProfile.isLogin = !!userProfile.id;
     } else {
-      userProfile.id = 'u_' + Date.now(); // 临时ID
+      userProfile.id = 'u_' + Date.now();
       localStorage.setItem('user_info', JSON.stringify(userProfile));
     }
 
-    // ★★★ 核心：无手机号强制授权 ★★★
+    // ★★★ 核心：新用户/未绑定手机 强制弹窗 ★★★
     if (!userProfile.phone) {
         uiState.showAuth = true; 
+        uiState.authStep = 1; // 强制从微信授权开始
     } else {
-        syncUserToBackend();
+        syncUserToBackend(); // 已有手机号，同步一次确保后台有数据
     }
 
     fetchSystemConfig();
@@ -165,41 +164,79 @@ onMounted(async () => {
 onUnmounted(() => window.removeEventListener('popstate', handlePopState));
 
 // ==========================================
-// 5. 业务逻辑
+// 5. 业务逻辑 (授权/退出)
 // ==========================================
-// 用户退出 (修改版)
+
+// ★★★ 修复：点击退出后，彻底重置状态 ★★★
 const handleLogout = () => {
-    localStorage.clear();
-    showToast('已退出');
+    showDialog({
+        title: '提示',
+        message: '退出后需要重新授权登录，确定吗？',
+        showCancelButton: true
+    }).then(() => {
+        localStorage.removeItem('user_info'); // 清除用户信息
+        userProfile.phone = ''; // 清空内存中的手机号
+        showToast('已退出');
+        setTimeout(() => {
+            location.reload(); // 刷新页面，触发 onMounted 中的强制授权
+        }, 500);
+    });
+};
+
+// ★★★ 修复：模拟微信授权，生成假数据并暂存 ★★★
+const handleWeChatAuth = () => { 
+    showLoadingToast('正在获取微信信息...');
     setTimeout(() => {
-        location.reload(); // 刷新后会重新触发 onMounted 的授权检查
-    }, 500);
+        // 生成模拟的微信数据
+        userProfile.nickname = '微信用户_' + String(Date.now()).slice(-4);
+        userProfile.avatar = 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'; 
+        
+        closeToast();
+        showSuccessToast('获取成功');
+        uiState.authStep = 2; // 进入下一步：绑定手机
+    }, 800);
+};
+
+// ★★★ 修复：绑定手机并提交完整数据给后端 ★★★
+const handleBindPhone = async () => {
+    if(!registerForm.phone || registerForm.phone.length !== 11) { showToast('请输入11位手机号'); return; }
+    
+    showLoadingToast('登录中...');
+    userProfile.phone = registerForm.phone;
+    
+    // 保存到本地
+    localStorage.setItem('user_info', JSON.stringify(userProfile));
+    
+    // 发送给后端保存 (昵称+头像+手机号)
+    await syncUserToBackend();
+    
+    uiState.showAuth = false;
+    showSuccessToast('登录成功');
 };
 
 const syncUserToBackend = async () => {
     try {
-        await fetch('/api/login', { method: 'POST', body: JSON.stringify(userProfile) });
+        await fetch('/api/login', {
+            method: 'POST',
+            body: JSON.stringify(userProfile)
+        });
     } catch(e){}
 };
 
-// 后台数据获取 (核心修复：确保有数据)
+// 其他业务
 const fetchAdminData = async () => {
     if (!isLogined.value) return;
     try {
         const uRes = await fetch('/api/admin/users');
         if(uRes.ok) { const d = await uRes.json(); adminUserList.value = d.results || []; }
-        
-        const rRes = await fetch('/api/admin/all_rides'); // 获取所有拼车(包括过期)
+        const rRes = await fetch('/api/admin/all_rides'); 
         if(rRes.ok) { const d = await rRes.json(); adminRideList.value = d.results || []; }
     } catch(e){}
 };
 
-// 后台菜单切换 (触发数据刷新)
 const switchAdminMenu = (m) => {
     adminActiveMenu.value = m;
-    if (m === 'users' || m === 'rides') {
-        fetchAdminData();
-    }
+    if (m === 'users' || m === 'rides') fetchAdminData();
 };
 
 const formatDate = (str) => {
@@ -214,7 +251,6 @@ const formatDate = (str) => {
 const saveSystemConfig = async () => {
   showLoadingToast({ message: '保存中...', forbidClick: true });
   try {
-      // 确保数值类型正确
       const payload = {
           ...sysConfig,
           passenger_fee: Number(sysConfig.passenger_fee),
@@ -230,7 +266,12 @@ const closeDetail = () => window.history.back();
 const handlePopState = () => {
   if (!window.location.hash.includes('detail') && uiState.selectedRide) { uiState.selectedRide = null; return; }
   if (Object.values(uiState).some(v=>v===true && v!==uiState.selectedRide)) {
-      if (uiState.showAuth && !userProfile.phone) return; // 强制授权不可退
+      // 未登录时，禁止关闭授权弹窗
+      if (uiState.showAuth && !userProfile.phone) {
+          // 再次压入历史记录，防止退出
+          window.history.pushState({ page: 'home' }, null, document.URL);
+          return;
+      }
       uiState.showRole=false; uiState.showMap=false; uiState.showShare=false;
       uiState.showDate=false; uiState.showPayment=false; uiState.showAuth=false;
       window.history.pushState({ page: 'home' }, null, document.URL);
@@ -249,32 +290,12 @@ const handlePopState = () => {
   }
 };
 
-const handleWeChatAuth = () => { 
-    showLoadingToast('微信授权中...');
-    setTimeout(() => {
-        userProfile.nickname = '微信用户_' + Math.floor(Math.random()*1000);
-        userProfile.avatar = 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg';
-        closeToast();
-        uiState.authStep = 2;
-    }, 1000);
-};
-
-const handleBindPhone = async () => {
-    if(!registerForm.phone || registerForm.phone.length !== 11) { showToast('请输入11位手机号'); return; }
-    userProfile.phone = registerForm.phone;
-    localStorage.setItem('user_info', JSON.stringify(userProfile));
-    await syncUserToBackend();
-    uiState.showAuth = false;
-    showSuccessToast('授权成功');
-};
-
 const fetchSystemConfig = async () => {
   try {
     const res = await fetch('/api/admin?action=get_config');
     if(res.ok) { 
         const data = await res.json(); 
         if(data) Object.assign(sysConfig, data); 
-        // 布尔值转换 (D1存的是0/1)
         sysConfig.show_all_posts = !!data.show_all_posts;
         sysConfig.driver_cert_required = !!data.driver_cert_required;
         sysConfig.allow_driver_repost = !!data.allow_driver_repost;
@@ -327,6 +348,7 @@ const selectRoleAndGo = (r) => { postForm.type=r; postForm.date=''; postForm.rem
 const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postForm.remark.splice(i,1); else postForm.remark.push(t); };
 const setFilter = (t) => { filterType.value=t; refreshing.value=true; onLoad(); };
 const handleAdminLogin = () => { if(adminLoginData.username==='admin'&&adminLoginData.password==='123456'){ isLogined.value=true; localStorage.setItem('admin_token','mock'); fetchAdminData(); }else showFailToast('Error'); };
+const switchAdminMenu = (m) => adminActiveMenu.value=m;
 const priceFormatter = (val) => { if(val && val.length > 4) return val.slice(0, 4); return val; };
 
 watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.AutoComplete',function(){ new AMap.AutoComplete({city:'全国'}).search(newVal,(s,r)=>{ if(s==='complete'&&r.tips) mapSearchResults.value=r.tips; }); }); });
@@ -487,7 +509,7 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
 
       <div v-show="activeTab === 0" class="page-home">
         <van-notice-bar v-if="activeTab === 0" left-icon="volume-o" :text="sysConfig.notice_text" style="height:36px;margin-bottom:5px;" scrollable />
-        <van-swipe :autoplay="3000" class="home-banner">
+        <van-swipe :autoplay="3000" class="home-banner" style="height:160px;">
           <van-swipe-item v-for="i in bannersList" :key="i"><img :src="i" style="width:100%;height:100%;object-fit:cover;"/></van-swipe-item>
         </van-swipe>
         
@@ -561,7 +583,7 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
           </van-tab>
         </van-tabs>
         <div style="padding:20px;">
-          <van-button block color="#ee0a24" @click="handleLogout">退出</van-button>
+          <van-button block color="#ee0a24" @click="handleLogout">退出登录</van-button>
         </div>
       </div>
 
