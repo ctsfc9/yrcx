@@ -3,16 +3,13 @@ import { ref, reactive, computed, nextTick, onMounted, onUnmounted, onErrorCaptu
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
 // ==========================================
-// 1. 系统核心 (白屏防御层)
+// 1. 系统核心 (防白屏 & 错误捕捉)
 // ==========================================
-// 默认渲染，防止因 JS 等待导致的白屏
-const appReady = ref(true); 
+const appReady = ref(true); // 默认渲染
 const globalError = ref('');
 
-// 全局错误捕捉，防止组件崩溃导致白屏
 onErrorCaptured((err) => {
   console.error("Critical Error:", err);
-  // 阻止错误继续向上冒泡，保证界面存活
   return false; 
 });
 
@@ -33,13 +30,13 @@ const sysConfig = reactive({
 // 状态管理
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
-let exitCounter = 0; // 首页退出计数器
+let exitCounter = 0; // 退出计数器
 
-// 后台数据 (补全变量，防止渲染报错)
+// 后台数据 (变量补全，防白屏)
 const adminLoginData = reactive({ username: '', password: '' });
 const adminActiveMenu = ref('basic');
 const adminSettingTab = ref(0);
-const adminUserList = ref([]); 
+const adminUserList = ref([]);
 const adminRideList = ref([]);
 
 // 前台数据
@@ -52,7 +49,7 @@ const refreshing = ref(false);
 const finished = ref(false);
 const submitLoading = ref(false);
 
-// 弹窗状态管理 (uiState)
+// 弹窗状态
 const uiState = reactive({
   showRole: false,
   showDate: false,
@@ -64,7 +61,7 @@ const uiState = reactive({
   authStep: 1
 });
 
-// 表单数据
+// 表单
 const userProfile = reactive({ id: '', nickname: '未登录', avatar: '', phone: '', balance: '0.00', isLogin: false });
 const registerForm = reactive({ phone: '' });
 const postForm = reactive({ 
@@ -72,7 +69,7 @@ const postForm = reactive({
   seats: 1, price: '', remark: [], contact: '', car_model: '', is_top: false 
 });
 
-// 地图相关
+// 地图
 const mapSearchKeyword = ref('');
 const mapSearchResults = ref([]);
 const currentMapField = ref(''); 
@@ -83,12 +80,10 @@ let mapInstance = null;
 let geocoderInstance = null;
 
 // ==========================================
-// 3. 计算属性 (安全逻辑)
+// 3. 计算属性
 // ==========================================
 const safeList = computed(() => {
-  // 防白屏第一道防线
   if (!list.value || !Array.isArray(list.value)) return [];
-  
   // 安全排序
   return [...list.value].sort((a, b) => {
     return (a.date || '').localeCompare(b.date || '');
@@ -102,17 +97,18 @@ const currentRemarkOptions = computed(() => {
 });
 const remarkDisplayText = computed(() => (postForm.remark || []).join('，'));
 
+// ★★★ 修改：去掉了分钟列 ★★★
 const dateColumns = computed(() => {
   const y = new Date().getFullYear();
   const years = [{ text: `${y}年`, value: y }, { text: `${y+1}年`, value: y+1 }];
   const months = Array.from({length: 12}, (_, i) => ({ text: `${i+1}月`, value: i+1 }));
   const days = Array.from({length: 31}, (_, i) => ({ text: `${i+1}日`, value: i+1 }));
   const hours = Array.from({length: 24}, (_, i) => ({ text: `${i}点`, value: i }));
-  // ★★★ 修改：去掉了分钟选择列 ★★★
+  // 只保留 年-月-日-时
   return [years, months, days, hours];
 });
 
-// 车型样式 (紫色混动) - 增加空值检查防白屏
+// 车型样式
 const getCarClass = (model) => {
   if (!model || typeof model !== 'string') return '';
   if (model.includes('混合')) return 'hybrid';
@@ -121,18 +117,15 @@ const getCarClass = (model) => {
 };
 
 // ==========================================
-// 4. 初始化与路由 (Hash模式防退出)
+// 4. 初始化 & 路由守卫
 // ==========================================
 onMounted(async () => {
-  // 1. 注入初始历史记录
-  if (!window.location.hash) {
-    try {
-      window.history.replaceState({ page: 'home' }, null, document.URL);
-    } catch(e) {}
-  }
+  // ★★★ 核心：注入历史记录，确保首页也能拦截返回键 ★★★
+  try {
+    window.history.pushState({ page: 'home' }, null, document.URL);
+  } catch(e) {}
   window.addEventListener('popstate', handlePopState);
 
-  // 2. 恢复用户
   try {
     const u = localStorage.getItem('user_info');
     if (u) {
@@ -146,16 +139,13 @@ onMounted(async () => {
       localStorage.setItem('user_info', JSON.stringify(userProfile));
     }
 
-    // 3. 加载数据
-    fetchSystemConfig();
-    onLoad(); 
+    fetchSystemConfig().catch(()=>{});
+    onLoad().catch(()=>{}); 
     
-    // 4. 延迟加载地图
     setTimeout(() => {
       loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
     }, 1000);
 
-    // 5. 后台路由
     if (window.location.pathname === '/admin') {
       isSystemAdmin.value = true;
       if(localStorage.getItem('admin_token')) {
@@ -163,98 +153,76 @@ onMounted(async () => {
         isLogined.value = true;
       }
     }
-  } catch(e) {
-    console.error("Init Error:", e);
-  }
+  } catch(e) { console.error(e); }
 });
 
 onUnmounted(() => {
   window.removeEventListener('popstate', handlePopState);
 });
 
-// ★★★ 路由逻辑：返回键处理 ★★★
+// ★★★ 路由逻辑 ★★★
 const openDetail = (item) => {
   uiState.selectedRide = item;
-  // 添加 Hash 记录
   window.history.pushState({ popup: 'detail' }, null, '#detail');
 };
 
 const closeDetail = () => {
-  // 后退一步，触发 popstate
   window.history.back();
 };
 
 const handlePopState = () => {
-  // 1. 关闭详情页 (当 hash 消失时)
+  // 1. 关闭详情
   if (!window.location.hash.includes('detail') && uiState.selectedRide) {
     uiState.selectedRide = null;
     return;
   }
   
-  // 2. 关闭其他弹窗
+  // 2. 关闭弹窗
   if (uiState.showRole || uiState.showMap || uiState.showShare || uiState.showDate || uiState.showPayment || uiState.showAuth) {
-    uiState.showRole = false;
-    uiState.showMap = false;
-    uiState.showShare = false;
-    uiState.showDate = false;
-    uiState.showPayment = false;
-    uiState.showAuth = false;
-    // 如果没有hash了，保持在首页状态
-    if (!window.location.hash) window.history.replaceState({ page: 'home' }, null, document.URL);
+    uiState.showRole = false; uiState.showMap = false; uiState.showShare = false;
+    uiState.showDate = false; uiState.showPayment = false; uiState.showAuth = false;
+    // 补回历史
+    window.history.pushState({ page: 'home' }, null, document.URL);
     return;
   }
 
-  // 3. 首页防误触退出 (必须按两次)
+  // 3. 首页双击退出
   if (activeTab.value === 0) {
     exitCounter++;
     if (exitCounter < 2) {
       showToast('再按一次退出');
-      // ★★★ 核心：立即补回一条历史记录，把你留在页面上 ★★★
+      // 核心：推入一个状态，把用户留住
       window.history.pushState({ page: 'home' }, null, document.URL);
-      // 2秒后重置计数器
       setTimeout(() => { exitCounter = 0; }, 2000);
     } else {
-      // 超过2次，不做 pushState，允许浏览器真正的后退离开
+      // 第二次点击，执行真正的后退
+      window.history.back();
     }
   } else {
-    // 从其他Tab返回首页
+    // 从其他Tab回首页
     activeTab.value = 0;
     window.history.replaceState({ page: 'home' }, null, document.URL.split('#')[0]);
   }
 };
 
 // ==========================================
-// 5. API & 业务逻辑 (全量恢复)
+// 5. API & 工具
 // ==========================================
-
-// ★★★ 修复：日期格式化 (2026年1月17日 22点) ★★★
+// ★★★ 时间显示：强制整点 ★★★
 const formatDate = (str) => {
   if (!str) return '时间待定';
-  
   try {
-    // 兼容 iOS 格式
-    const safeStr = String(str).replace(/-/g, '/').replace('T', ' ');
-    const d = new Date(safeStr);
-    
-    // 如果日期无效，尝试正则提取
-    if (isNaN(d.getTime())) {
-        const match = safeStr.match(/(\d{4})[\/年](\d{1,2})[\/月](\d{1,2})(?:\s*(\d{1,2})[:点])?/);
-        if (match) {
-            return `${match[1]}年${match[2]}月${match[3]}日 ${match[4] || 0}点`;
-        }
-        return str;
+    const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2})[:](\d{1,2}))?/);
+    if (match) {
+      const y = match[1];
+      const m = parseInt(match[2]);
+      const d = parseInt(match[3]);
+      const h = match[4] ? parseInt(match[4]) : 0;
+      // 只要匹配到，就显示 x年x月x日 x点
+      return `${y}年${m}月${d}日 ${h}点`;
     }
-
-    const y = d.getFullYear();
-    const m = d.getMonth() + 1;
-    const da = d.getDate();
-    const h = d.getHours();
-    
-    // 格式：2026年1月17日 22点 (去掉分钟显示)
-    return `${y}年${m}月${da}日 ${h}点`;
-  } catch (e) {
     return str;
-  }
+  } catch (e) { return str; }
 };
 
 const fetchSystemConfig = async () => {
@@ -298,8 +266,6 @@ const fetchMyRides = async () => {
 const handleRealPublish = async () => {
   if (!userProfile.phone) { showFailToast('无手机号'); return; }
   submitLoading.value = true;
-  
-  // 保存格式 ISO
   const dateVal = postForm.date || new Date().toISOString();
   
   const newRide = { ...postForm, user_id: userProfile.id, contact: userProfile.phone, date: dateVal };
@@ -421,10 +387,9 @@ const handleWeChatAuth = () => { uiState.authStep = 2; };
 const handleBindPhone = () => { userProfile.phone=registerForm.phone; uiState.showAuth = false; localStorage.setItem('user_info',JSON.stringify(userProfile)); showSuccessToast('登录成功'); };
 const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postForm.remark.splice(i,1); else postForm.remark.push(t); };
 
-// ★★★ 修复：确认日期时，没有分钟了 ★★★
+// ★★★ 确认日期：整点 ★★★
 const onConfirmDate = ({selectedOptions}) => { 
   const v = selectedOptions.map(o=>o.value); 
-  // 默认为 00 分
   postForm.dateDisplay=`${v[0]}年${v[1]}月${v[2]}日 ${v[3]}点`; 
   postForm.date=`${v[0]}-${String(v[1]).padStart(2,'0')}-${String(v[2]).padStart(2,'0')}T${String(v[3]).padStart(2,'0')}:00:00`; 
   uiState.showDate=false; 
@@ -755,7 +720,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 
 .card-row-3 { font-size: 13px; color: #999; background: #f8f8f8; padding: 8px; border-radius: 6px; }
 
-/* ★★★ 电话按钮: 42px ★★★ */
+/* ★★★ 电话按钮: 42px, 实心 ★★★ */
 .call-btn { flex-shrink: 0; font-size: 22px; color: #fff; background: #ff6600; padding: 0; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 42px; height: 42px; }
 
 /* 底部发布按钮 */
