@@ -2,10 +2,12 @@
 import { ref, reactive, computed, nextTick, onMounted, onUnmounted, onErrorCaptured, watch } from 'vue';
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
+// 1. 核心防错
 const appReady = ref(true); 
 const globalError = ref('');
 onErrorCaptured((err) => { console.error("Error:", err); return false; });
 
+// 2. 全局配置
 const sysConfig = reactive({
   platform_name: '宜人出行',
   banners: '', tags_driver: '', tags_passenger: '', amap_key: '', notice_text: '',
@@ -13,16 +15,19 @@ const sysConfig = reactive({
   platform_desc: '', kefu_wechat: '', allow_driver_repost: true
 });
 
+// 状态
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
 let exitCounter = 0;
 
+// 后台数据
 const adminLoginData = reactive({ username: '', password: '' });
 const adminActiveMenu = ref('config');
 const adminSettingTab = ref(0);
 const adminUserList = ref([]); 
 const adminRideList = ref([]);
 
+// 前台数据
 const activeTab = ref(0);
 const filterType = ref('all');
 const list = ref([]); 
@@ -32,16 +37,19 @@ const refreshing = ref(false);
 const finished = ref(false);
 const submitLoading = ref(false);
 
+// 弹窗
 const uiState = reactive({
   showRole: false, showDate: false, showPayment: false, 
   showMap: false, showAuth: false, showShare: false,
   selectedRide: null, authStep: 1
 });
 
+// 用户表单
 const userProfile = reactive({ id: '', nickname: '未登录', avatar: '', phone: '', isLogin: false });
 const registerForm = reactive({ phone: '' });
 const postForm = reactive({ type: '', origin: '', destination: '', date: '', dateDisplay: '', seats: 1, price: '', remark: [], contact: '', car_model: '' });
 
+// 地图
 const mapSearchKeyword = ref('');
 const mapSearchResults = ref([]);
 const currentMapField = ref(''); 
@@ -49,7 +57,7 @@ const carModelOptions = ['油车', '电车', '油电混合'];
 const seatColumns = Array.from({length: 6}, (_, i) => ({ text: `${i + 1}座`, value: i + 1 }));
 let mapInstance = null;
 
-// ===================== 计算属性 =====================
+// ===================== 计算属性 (复刻原版) =====================
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
   return [...list.value].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
@@ -61,8 +69,8 @@ const bannersList = computed(() => {
 });
 
 const currentRemarkOptions = computed(() => {
-  const str = postForm.type === 'driver' ? sysConfig.tags_driver : sysConfig.tags_passenger;
-  return (str || '').split(/[,，]/).filter(s => s.trim());
+  const str = postForm.type === 'driver' ? (sysConfig.tags_driver || '有行李,走高速,可吸烟,线下支付') : (sysConfig.tags_passenger || '有行李,走高速,只限女生,线下支付');
+  return str.split(/[,，]/).filter(s => s.trim());
 });
 const remarkDisplayText = computed(() => (postForm.remark || []).join('，'));
 
@@ -107,13 +115,10 @@ onMounted(async () => {
     }
 
     onLoad(); 
-    
-    setTimeout(() => {
-      loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
-    }, 1000);
+    setTimeout(() => { loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e'); }, 1000);
 
-    const isUrlAdmin = window.location.pathname.includes('/admin') || window.location.search.includes('admin');
-    if (isUrlAdmin) {
+    // 后台入口
+    if (location.pathname.includes('/admin') || location.search.includes('admin')) {
       isSystemAdmin.value = true;
       if(localStorage.getItem('admin_token')) {
         adminLoginData.password = localStorage.getItem('admin_token');
@@ -126,7 +131,7 @@ onMounted(async () => {
 
 onUnmounted(() => window.removeEventListener('popstate', handlePopState));
 
-// ===================== 核心：强健的数据同步 =====================
+// ===================== 核心业务 =====================
 const handleWeChatAuth = () => {
     showLoadingToast('微信授权中...');
     setTimeout(() => {
@@ -139,47 +144,28 @@ const handleWeChatAuth = () => {
 
 const handleBindPhone = async () => {
     if(!registerForm.phone || registerForm.phone.length !== 11) { showToast('请输入11位手机号'); return; }
-    
     showLoadingToast({ message: '同步数据中...', forbidClick: true });
-    
     userProfile.phone = registerForm.phone;
     
-    // ★★★ 调试：捕获任何后端错误并显示出来 ★★★
-    try {
-        const res = await fetch('/api/login', {
-            method: 'POST',
-            body: JSON.stringify(userProfile)
-        });
-        
-        // 先读文本，防止 JSON.parse 报错
-        const text = await res.text();
-        
-        if (!res.ok) {
-            console.error('Server Error:', text);
-            showDialog({ title: '服务器错误', message: '数据库写入失败: ' + text });
-            return;
-        }
-
-        // 尝试解析 JSON
-        try {
-            JSON.parse(text);
-            // 成功
-            localStorage.setItem('user_info', JSON.stringify(userProfile));
-            uiState.showAuth = false;
-            showSuccessToast('登录成功');
-        } catch(e) {
-            showDialog({ title: '格式错误', message: '后端返回了非 JSON 数据: ' + text.slice(0, 100) });
-        }
-
-    } catch(e) {
-        showDialog({ title: '网络错误', message: e.message });
+    // 强同步
+    const success = await syncUserToBackend(false);
+    if (success) {
+        localStorage.setItem('user_info', JSON.stringify(userProfile));
+        uiState.showAuth = false;
+        showSuccessToast('登录成功');
     }
 };
 
 const syncUserToBackend = async (silent) => {
     try {
-        await fetch('/api/login', { method: 'POST', body: JSON.stringify(userProfile) });
-    } catch(e){}
+        const res = await fetch('/api/login', { method: 'POST', body: JSON.stringify(userProfile) });
+        if (!res.ok) {
+            const err = await res.text();
+            if (!silent) showDialog({ title: '错误', message: err });
+            return false;
+        }
+        return true;
+    } catch(e) { if (!silent) showToast('网络错误'); return false; }
 };
 
 const handleLogout = () => {
@@ -213,6 +199,7 @@ const saveSystemConfig = async () => {
   } catch(e){ showFailToast('保存失败'); }
 };
 
+// ★★★ 后台数据获取 (支持更多字段) ★★★
 const fetchAdminData = async () => {
     if (!isLogined.value) return;
     try {
@@ -221,6 +208,20 @@ const fetchAdminData = async () => {
         const rRes = await fetch('/api/admin/all_rides'); 
         if(rRes.ok) { const d = await rRes.json(); adminRideList.value = d.results || []; }
     } catch(e){}
+};
+
+// 切换显示状态
+const toggleRideVisible = async (item) => {
+    const newVal = item.is_hidden ? 0 : 1;
+    await fetch('/api/admin/toggle_ride', { method: 'POST', body: JSON.stringify({id: item.id, hidden: newVal}) });
+    item.is_hidden = newVal;
+};
+
+// 封禁用户
+const toggleUserStatus = async (item) => {
+    const newVal = item.status === 1 ? 0 : 1;
+    await fetch('/api/admin/toggle_user', { method: 'POST', body: JSON.stringify({id: item.id, status: newVal}) });
+    item.status = newVal;
 };
 
 const formatDate = (str) => {
@@ -274,13 +275,9 @@ const handleRealPublish = async () => {
   const remarkStr = Array.isArray(postForm.remark) ? postForm.remark.join('，') : (postForm.remark || '无备注');
   
   const newRide = { 
-      ...postForm, 
-      user_id: String(userProfile.id), 
-      contact: String(userProfile.phone), 
-      date: dateVal,
-      remark: remarkStr
+      ...postForm, user_id: String(userProfile.id), contact: String(userProfile.phone), 
+      date: dateVal, remark: remarkStr
   };
-  
   if(!newRide.price) newRide.price = '面议';
   
   try {
@@ -326,8 +323,8 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
       <div v-if="!isLogined" class="admin-login-box">
         <h3>后台管理系统</h3>
         <van-form @submit="handleAdminLogin">
-          <van-field v-model="adminLoginData.username" label="账号" placeholder="admin" required />
-          <van-field v-model="adminLoginData.password" type="password" label="密码" placeholder="默认123456" required />
+          <van-field v-model="adminLoginData.username" label="账号" required />
+          <van-field v-model="adminLoginData.password" type="password" label="密码" required />
           <div style="margin:20px;"><van-button block type="primary" native-type="submit">安全登录</van-button></div>
         </van-form>
       </div>
@@ -356,22 +353,8 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
                   <van-cell-group inset style="margin-top:10px;">
                     <van-cell center title="显示过期帖子"><template #right-icon><van-switch v-model="sysConfig.show_all_posts" size="20" /></template></van-cell>
                     <van-cell center title="司机强制认证"><template #right-icon><van-switch v-model="sysConfig.driver_cert_required" size="20" /></template></van-cell>
-                    <van-cell center title="允许司机重发"><template #right-icon><van-switch v-model="sysConfig.allow_driver_repost" size="20" /></template></van-cell>
-                    <van-field v-model="sysConfig.passenger_fee" label="乘客发布费" type="number" placeholder="0.00" >
-                       <template #extra>元/条</template>
-                    </van-field>
-                    <van-field v-model="sysConfig.driver_fee" label="司机发布费" type="number" placeholder="0.00">
-                       <template #extra>元/条</template>
-                    </van-field>
                     <van-field v-model="sysConfig.tags_driver" label="司机标签" type="textarea" placeholder="逗号分隔" />
                     <van-field v-model="sysConfig.tags_passenger" label="乘客标签" type="textarea" placeholder="逗号分隔" />
-                  </van-cell-group>
-                </van-tab>
-                <van-tab title="接口配置">
-                  <van-cell-group inset style="margin-top:10px;">
-                    <van-field v-model="sysConfig.amap_key" label="高德Key" placeholder="Web端JS API Key" />
-                    <van-field v-model="sysConfig.sms_account" label="短信账号" />
-                    <van-field v-model="sysConfig.sms_password" label="短信密码" type="password" />
                   </van-cell-group>
                 </van-tab>
               </van-tabs>
@@ -381,13 +364,20 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
           
           <div v-if="adminActiveMenu==='users'">
             <div style="margin-bottom:10px;display:flex;justify-content:space-between;"><h3>用户列表</h3><van-button size="small" @click="fetchAdminData">刷新</van-button></div>
-            <div v-if="adminUserList.length===0" style="padding:40px;text-align:center;color:#999;">暂无用户数据</div>
             <div v-for="user in adminUserList" :key="user.id" class="admin-card">
               <div class="ac-header">
                 <img :src="user.avatar||'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" class="ac-avatar">
                 <div class="ac-info">
-                  <div class="ac-name">{{ user.nickname }} <van-tag type="primary" plain>{{ user.phone }}</van-tag></div>
-                  <div class="ac-time">ID: {{ user.id.slice(0,8) }}... | 注册: {{ user.created_at }}</div>
+                  <div class="ac-name">
+                      {{ user.nickname }} 
+                      <van-tag type="primary" plain>{{ user.phone || '未授权' }}</van-tag>
+                      <van-tag :type="user.status===1?'success':'danger'">{{ user.status===1?'正常':'封号' }}</van-tag>
+                  </div>
+                  <div class="ac-sub">推荐人: {{ user.referrer || '无' }} | 性别: {{ user.gender }} | 认证: {{ user.is_certified?'已认证':'未认证' }}</div>
+                  <div class="ac-time">注册: {{ user.created_at?.split('T')[0] }} | 最后登录: {{ user.last_login?.split('T')[0] }}</div>
+                </div>
+                <div style="margin-left:10px;">
+                    <van-button size="mini" :type="user.status===1?'danger':'success'" @click="toggleUserStatus(user)">{{ user.status===1?'封禁':'解封' }}</van-button>
                 </div>
               </div>
             </div>
@@ -395,19 +385,23 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
 
           <div v-if="adminActiveMenu==='rides'">
             <div style="margin-bottom:10px;display:flex;justify-content:space-between;"><h3>拼车信息</h3><van-button size="small" @click="fetchAdminData">刷新</van-button></div>
-            <div v-if="adminRideList.length===0" style="padding:40px;text-align:center;color:#999;">暂无数据</div>
-            <div v-for="ride in adminRideList" :key="ride.id" class="admin-card">
-              <div style="display:flex;justify-content:space-between;">
-                 <span style="font-weight:bold;">
-                    <van-tag :type="ride.type==='driver'?'success':'warning'">{{ride.type==='driver'?'车主':'乘客'}}</van-tag>
-                    {{ ride.origin }} <van-icon name="arrow" /> {{ ride.destination }}
-                 </span>
+            <div v-for="ride in adminRideList" :key="ride.id" class="admin-card" :style="{opacity: ride.is_hidden?0.5:1}">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                 <div style="display:flex;align-items:center;">
+                     <img :src="ride.user_avatar||'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" style="width:30px;height:30px;border-radius:50%;margin-right:8px;">
+                     <span style="font-weight:bold;">{{ ride.origin }} <van-icon name="arrow" /> {{ ride.destination }}</span>
+                 </div>
                  <span style="color:red;">¥{{ ride.price }}</span>
               </div>
-              <div style="margin:5px 0;font-size:13px;color:#666;">
-                 {{ formatDate(ride.date) }} | {{ ride.contact }}
+              <div style="margin:8px 0;font-size:13px;color:#666;display:flex;gap:10px;">
+                 <van-tag :type="ride.type==='driver'?'success':'warning'">{{ride.type==='driver'?'车主':'乘客'}}</van-tag>
+                 <span>{{ formatDate(ride.date) }}</span>
+                 <span>{{ ride.contact }}</span>
               </div>
-              <div style="text-align:right;"><van-button size="mini" type="danger" @click="deleteRideAdmin(ride.id)">删除</van-button></div>
+              <div style="text-align:right;border-top:1px solid #f5f5f5;padding-top:8px;margin-top:5px;">
+                 <van-button size="mini" type="warning" @click="toggleRideVisible(ride)" style="margin-right:5px;">{{ ride.is_hidden?'显示':'隐藏' }}</van-button>
+                 <van-button size="mini" type="danger" @click="deleteRideAdmin(ride.id)">删除</van-button>
+              </div>
             </div>
           </div>
         </div>
@@ -623,7 +617,7 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
 </template>
 
 <style>
-/* CSS */
+/* CSS 复刻版 */
 :root { --blue: #1989fa; --green: #07c160; --bg: #f7f8fa; --orange: #ff6600; }
 body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16px; padding-bottom: 70px; }
 .admin-wrapper { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #f5f5f5; z-index: 9999; }
@@ -637,6 +631,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .ac-avatar { width: 45px; height: 45px; border-radius: 5px; margin-right: 12px; }
 .ac-info { flex: 1; }
 .ac-name { font-weight: bold; margin-bottom: 4px; }
+.ac-sub { font-size: 12px; color: #666; margin-bottom: 4px; }
 .ac-time { font-size: 12px; color: #999; }
 .admin-list-item { display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid #eee; align-items: center; }
 .page-home { padding: 10px; }
@@ -650,11 +645,13 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .info-group-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .info-text { display: flex; align-items: center; gap: 4px; }
 .price-val { color: #000; font-size: 20px; font-weight: bold; margin-left: 5px; }
+/* ★ 复原紫色混动 ★ */
 .car-badge { margin-left: 5px; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-weight: bold; }
 .car-badge.electric { background: #f0f9eb; color: var(--green); border: 1px solid #c2e7b0; }
 .car-badge.gas { background: #fef0f0; color: #f56c6c; border: 1px solid #fbc4c4; }
 .car-badge.hybrid { background: #f3e5f5; color: #9c27b0; border: 1px solid #e1bee7; }
 .card-row-3 { font-size: 13px; color: #999; background: #f8f8f8; padding: 8px; border-radius: 6px; }
+/* ★ 复原 42px 电话按钮 ★ */
 .call-btn { flex-shrink: 0; font-size: 22px; color: #fff; background: #ff6600; padding: 0; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 42px; height: 42px; }
 .custom-tabbar { position: fixed; bottom: 0; width: 100%; height: 65px; background: #fff; display: flex; border-top: 1px solid #eee; z-index: 999; padding-bottom: constant(safe-area-inset-bottom); padding-bottom: env(safe-area-inset-bottom); }
 .tab-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 14px; color: #666; font-weight: 500; }
