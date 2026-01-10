@@ -1,3 +1,6 @@
+/**
+ * V44 后端 - 功能补全版 (含添加/删除用户)
+ */
 export async function onRequest(context) {
     const { request, env } = context;
     const url = new URL(request.url);
@@ -18,37 +21,36 @@ export async function onRequest(context) {
         if (!env.DB) throw new Error("D1 Database Not Bound");
         const nowStr = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
 
-        // 1. 用户登录 (智能容错)
+        // 1. 用户登录 (保持 V39 的高容错逻辑)
         if (url.pathname === '/api/login' && method === 'POST') {
             const body = await request.json();
             if (!body.id) return jsonResponse({ error: 'ID Missing' }, 400);
 
             const existing = await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(body.id).first();
-            
             if (existing) {
-                // 更新
-                await env.DB.prepare(`UPDATE users SET nickname=?, avatar=?, phone=?, last_login=? WHERE id=?`)
+                await env.DB.prepare('UPDATE users SET nickname=?, avatar=?, phone=?, last_login=? WHERE id=?')
                     .bind(body.nickname, body.avatar, body.phone, nowStr, body.id).run();
             } else {
-                // 插入 (包含 gender, referrer 默认值)
-                await env.DB.prepare(`
-                    INSERT INTO users (id, nickname, avatar, phone, gender, referrer, balance, status, created_at, last_login) 
-                    VALUES (?, ?, ?, ?, '未知', '无', 0, 1, ?, ?)
-                `).bind(body.id, body.nickname, body.avatar, body.phone, nowStr, nowStr).run();
+                // 容错插入
+                try {
+                    await env.DB.prepare('INSERT INTO users (id, nickname, avatar, phone, balance, status, created_at, last_login) VALUES (?, ?, ?, ?, 0, 1, ?, ?)')
+                        .bind(body.id, body.nickname, body.avatar, body.phone, nowStr, nowStr).run();
+                } catch(e) {
+                    // 降级兼容旧表结构
+                    await env.DB.prepare('INSERT INTO users (id, nickname, avatar, phone, created_at, last_login) VALUES (?, ?, ?, ?, ?, ?)')
+                        .bind(body.id, body.nickname, body.avatar, body.phone, nowStr, nowStr).run();
+                }
             }
             return jsonResponse({ success: true });
         }
 
-        // 2. 发布拼车 (★核心修复：封号检测★)
+        // 2. 发布拼车
         if (url.pathname === '/api/rides' && method === 'POST') {
             const data = await request.json();
-            // 查用户状态
             const user = await env.DB.prepare('SELECT phone, status FROM users WHERE id = ?').bind(data.user_id).first();
             
             if (!user || !user.phone) return jsonResponse({ error: '请先绑定手机号' }, 403);
-            
-            // ★ 如果 status 不是 1 (正常)，则拒绝发布
-            if (user.status !== 1) return jsonResponse({ error: '账号已被封禁，无法发布' }, 403);
+            if (user.status !== 1) return jsonResponse({ error: '账号已被封禁' }, 403);
 
             const res = await env.DB.prepare(`
                 INSERT INTO rides (user_id, type, origin, destination, date, seats, price, remark, contact, car_model, status, created_at)
@@ -63,42 +65,63 @@ export async function onRequest(context) {
             const type = url.searchParams.get('type');
             let q = 'SELECT * FROM rides WHERE status = 1 AND is_hidden = 0';
             const p = [];
-            
             const conf = await env.DB.prepare('SELECT show_all_posts FROM system_config').first();
-            if (conf && !conf.show_all_posts) q += " AND date >= ?"; 
-            if (conf && !conf.show_all_posts) p.push(nowStr);
-
+            if (conf && !conf.show_all_posts) { q += " AND date >= ?"; p.push(nowStr); }
             if (type && type !== 'all') { q += ' AND type = ?'; p.push(type); }
-            
             q += ' ORDER BY created_at DESC LIMIT 100';
             const { results } = await env.DB.prepare(q).bind(...p).all();
             return jsonResponse({ results: results || [] });
         }
 
-        // 4. 后台管理接口 (支持封号操作)
+        // ======================= 后台管理 (新增功能) =======================
+        
+        // 增加用户
+        if (url.pathname === '/api/admin/add_user' && method === 'POST') {
+            const body = await request.json();
+            const newId = 'u_' + Date.now();
+            await env.DB.prepare(`
+                INSERT INTO users (id, nickname, phone, balance, status, created_at, last_login) 
+                VALUES (?, ?, ?, ?, 1, ?, ?)
+            `).bind(newId, body.nickname, body.phone, Number(body.balance)||0, nowStr, nowStr).run();
+            return jsonResponse({ success: true });
+        }
+
+        // 删除用户
+        if (url.pathname === '/api/admin/user' && method === 'DELETE') {
+            const id = url.searchParams.get('id');
+            await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run();
+            return jsonResponse({ success: true });
+        }
+
+        // 用户列表
         if (url.pathname === '/api/admin/users') {
             const { results } = await env.DB.prepare('SELECT * FROM users ORDER BY created_at DESC LIMIT 100').all();
             return jsonResponse({ results: results || [] });
         }
+
+        // 拼车列表
         if (url.pathname === '/api/admin/all_rides') {
-            const { results } = await env.DB.prepare('SELECT * FROM rides ORDER BY created_at DESC LIMIT 100').all();
+            const { results } = await env.DB.prepare(`
+                SELECT r.*, u.nickname as user_nickname, u.avatar as user_avatar 
+                FROM rides r LEFT JOIN users u ON r.user_id = u.id 
+                ORDER BY r.created_at DESC LIMIT 100
+            `).all();
             return jsonResponse({ results: results || [] });
         }
-        // 封号/解封接口
+
+        // 封号/显隐
         if (url.pathname === '/api/admin/toggle_user' && method === 'POST') {
             const body = await request.json();
-            // body.status: 1正常, 0封号
             await env.DB.prepare('UPDATE users SET status = ? WHERE id = ?').bind(body.status, body.id).run();
             return jsonResponse({ success: true });
         }
-        // 隐藏/显示帖子接口
         if (url.pathname === '/api/admin/toggle_ride' && method === 'POST') {
             const body = await request.json();
             await env.DB.prepare('UPDATE rides SET is_hidden = ? WHERE id = ?').bind(body.hidden, body.id).run();
             return jsonResponse({ success: true });
         }
 
-        // 5. 配置管理
+        // 配置管理
         if (url.pathname === '/api/admin' && url.searchParams.get('action') === 'get_config') {
             const config = await env.DB.prepare('SELECT * FROM system_config WHERE id = 1').first();
             return jsonResponse(config || {});
@@ -110,14 +133,14 @@ export async function onRequest(context) {
             return jsonResponse({ success: true });
         }
 
-        // 删除
-        if (method === 'DELETE') {
+        // 删除拼车
+        if (method === 'DELETE' && url.pathname === '/api/rides') {
             const id = url.searchParams.get('id');
-            await env.DB.prepare('UPDATE rides SET status = -1 WHERE id = ?').bind(id).run();
+            await env.DB.prepare('DELETE FROM rides WHERE id = ?').bind(id).run();
             return jsonResponse({ success: true });
         }
 
-        return jsonResponse({ error: 'API Not Found' }, 404);
+        return jsonResponse({ error: 'Not Found' }, 404);
 
     } catch (e) {
         return new Response(JSON.stringify({ error: "Server Error", message: e.message }), { status: 500, headers: corsHeaders });
