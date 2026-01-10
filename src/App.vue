@@ -49,6 +49,7 @@ const carModelOptions = ['油车', '电车', '油电混合'];
 const seatColumns = Array.from({length: 6}, (_, i) => ({ text: `${i + 1}座`, value: i + 1 }));
 let mapInstance = null;
 
+// ===================== 计算属性 =====================
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
   return [...list.value].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
@@ -60,10 +61,8 @@ const bannersList = computed(() => {
 });
 
 const currentRemarkOptions = computed(() => {
-  const str = postForm.type === 'driver' 
-    ? (sysConfig.tags_driver || '有行李,走高速,可吸烟,线下支付') 
-    : (sysConfig.tags_passenger || '有行李,走高速,只限女生,线下支付');
-  return str.split(/[,，]/).filter(s => s.trim());
+  const str = postForm.type === 'driver' ? sysConfig.tags_driver : sysConfig.tags_passenger;
+  return (str || '').split(/[,，]/).filter(s => s.trim());
 });
 const remarkDisplayText = computed(() => (postForm.remark || []).join('，'));
 
@@ -83,6 +82,7 @@ const getCarClass = (model) => {
   return 'gas';
 };
 
+// ===================== 初始化 =====================
 onMounted(async () => {
   try { if (!window.location.hash) window.history.replaceState({ page: 'home' }, null, document.URL); } catch(e){}
   window.addEventListener('popstate', handlePopState);
@@ -103,13 +103,15 @@ onMounted(async () => {
         uiState.showAuth = true; 
         uiState.authStep = 1;
     } else {
-        syncUserToBackend();
+        syncUserToBackend(true);
     }
 
     onLoad(); 
-    setTimeout(() => { loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e'); }, 1000);
+    
+    setTimeout(() => {
+      loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
+    }, 1000);
 
-    // ★★★ 修复：后台入口增加 ?admin=true 判定 ★★★
     const isUrlAdmin = window.location.pathname.includes('/admin') || window.location.search.includes('admin');
     if (isUrlAdmin) {
       isSystemAdmin.value = true;
@@ -124,50 +126,64 @@ onMounted(async () => {
 
 onUnmounted(() => window.removeEventListener('popstate', handlePopState));
 
+// ===================== 核心：强健的数据同步 =====================
 const handleWeChatAuth = () => {
     showLoadingToast('微信授权中...');
     setTimeout(() => {
-        userProfile.nickname = '微信用户_' + Math.floor(Math.random()*9000+1000);
+        userProfile.nickname = '微信用户_' + String(Math.random()).slice(-4);
         userProfile.avatar = 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg';
         closeToast();
         uiState.authStep = 2; 
-    }, 800);
+    }, 500);
 };
 
 const handleBindPhone = async () => {
     if(!registerForm.phone || registerForm.phone.length !== 11) { showToast('请输入11位手机号'); return; }
     
     showLoadingToast({ message: '同步数据中...', forbidClick: true });
+    
     userProfile.phone = registerForm.phone;
     
-    // 同步到后端
+    // ★★★ 调试：捕获任何后端错误并显示出来 ★★★
     try {
         const res = await fetch('/api/login', {
             method: 'POST',
             body: JSON.stringify(userProfile)
         });
         
-        if (res.ok) {
-            // 只有后端成功，才保存本地
+        // 先读文本，防止 JSON.parse 报错
+        const text = await res.text();
+        
+        if (!res.ok) {
+            console.error('Server Error:', text);
+            showDialog({ title: '服务器错误', message: '数据库写入失败: ' + text });
+            return;
+        }
+
+        // 尝试解析 JSON
+        try {
+            JSON.parse(text);
+            // 成功
             localStorage.setItem('user_info', JSON.stringify(userProfile));
             uiState.showAuth = false;
             showSuccessToast('登录成功');
-        } else {
-            // 显示具体错误
-            const err = await res.json();
-            showDialog({ title: '登录失败', message: '错误: ' + (err.error || '未知') });
+        } catch(e) {
+            showDialog({ title: '格式错误', message: '后端返回了非 JSON 数据: ' + text.slice(0, 100) });
         }
+
     } catch(e) {
         showDialog({ title: '网络错误', message: e.message });
     }
 };
 
-const syncUserToBackend = async () => {
-    try { await fetch('/api/login', { method: 'POST', body: JSON.stringify(userProfile) }); } catch(e){}
+const syncUserToBackend = async (silent) => {
+    try {
+        await fetch('/api/login', { method: 'POST', body: JSON.stringify(userProfile) });
+    } catch(e){}
 };
 
 const handleLogout = () => {
-    showDialog({ title:'提示', message:'确定退出登录？', showCancelButton:true }).then(()=>{
+    showDialog({ title:'提示', message:'退出后需重新授权', showCancelButton:true }).then(()=>{
         localStorage.clear();
         location.reload();
     });
@@ -178,7 +194,7 @@ const fetchSystemConfig = async () => {
     const res = await fetch('/api/admin?action=get_config');
     if(res.ok) { 
         const data = await res.json(); 
-        if(data) Object.assign(sysConfig, data); 
+        if(data && data.platform_name) Object.assign(sysConfig, data); 
         sysConfig.show_all_posts = !!data.show_all_posts;
     }
   } catch(e) {}
@@ -192,10 +208,9 @@ const saveSystemConfig = async () => {
           passenger_fee: Number(sysConfig.passenger_fee),
           driver_fee: Number(sysConfig.driver_fee)
       };
-      const res = await fetch('/api/admin?action=save_config', { method: 'POST', body: JSON.stringify(payload) });
-      if(res.ok) showSuccessToast('保存成功');
-      else showFailToast('保存失败');
-  } catch(e){ showFailToast('请求失败'); }
+      await fetch('/api/admin?action=save_config', { method: 'POST', body: JSON.stringify(payload) });
+      showSuccessToast('保存成功');
+  } catch(e){ showFailToast('保存失败'); }
 };
 
 const fetchAdminData = async () => {
@@ -222,10 +237,7 @@ const closeDetail = () => window.history.back();
 const handlePopState = () => {
   if (!window.location.hash.includes('detail') && uiState.selectedRide) { uiState.selectedRide = null; return; }
   if (Object.values(uiState).some(v=>v===true && v!==uiState.selectedRide)) {
-      if (uiState.showAuth && !userProfile.phone) { 
-          window.history.pushState({ page: 'home' }, null, document.URL); 
-          return; 
-      }
+      if (uiState.showAuth && !userProfile.phone) { window.history.pushState({ page: 'home' }, null, document.URL); return; }
       uiState.showRole=false; uiState.showMap=false; uiState.showShare=false;
       uiState.showDate=false; uiState.showPayment=false; uiState.showAuth=false;
       window.history.pushState({ page: 'home' }, null, document.URL);
@@ -333,7 +345,8 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
               <van-tabs v-model:active="adminSettingTab" type="card" color="#1989fa">
                 <van-tab title="基础信息">
                   <van-cell-group inset style="margin-top:10px;">
-                    <van-field v-model="sysConfig.platform_name" label="平台名称" />
+                    <van-field v-model="sysConfig.platform_name" label="平台名称" placeholder="如：宜人出行" />
+                    <van-field v-model="sysConfig.platform_desc" label="平台描述" type="textarea" rows="2" />
                     <van-field v-model="sysConfig.kefu_wechat" label="客服微信" />
                     <van-field v-model="sysConfig.notice_text" label="滚动公告" type="textarea" rows="2" />
                     <van-field v-model="sysConfig.banners" label="轮播图URL" type="textarea" placeholder="多张图片用逗号分隔" />
@@ -344,15 +357,19 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
                     <van-cell center title="显示过期帖子"><template #right-icon><van-switch v-model="sysConfig.show_all_posts" size="20" /></template></van-cell>
                     <van-cell center title="司机强制认证"><template #right-icon><van-switch v-model="sysConfig.driver_cert_required" size="20" /></template></van-cell>
                     <van-cell center title="允许司机重发"><template #right-icon><van-switch v-model="sysConfig.allow_driver_repost" size="20" /></template></van-cell>
-                    <van-field v-model="sysConfig.passenger_fee" label="乘客发布费" type="number" placeholder="0.00" ><template #extra>元/条</template></van-field>
-                    <van-field v-model="sysConfig.driver_fee" label="司机发布费" type="number" placeholder="0.00"><template #extra>元/条</template></van-field>
+                    <van-field v-model="sysConfig.passenger_fee" label="乘客发布费" type="number" placeholder="0.00" >
+                       <template #extra>元/条</template>
+                    </van-field>
+                    <van-field v-model="sysConfig.driver_fee" label="司机发布费" type="number" placeholder="0.00">
+                       <template #extra>元/条</template>
+                    </van-field>
                     <van-field v-model="sysConfig.tags_driver" label="司机标签" type="textarea" placeholder="逗号分隔" />
                     <van-field v-model="sysConfig.tags_passenger" label="乘客标签" type="textarea" placeholder="逗号分隔" />
                   </van-cell-group>
                 </van-tab>
                 <van-tab title="接口配置">
                   <van-cell-group inset style="margin-top:10px;">
-                    <van-field v-model="sysConfig.amap_key" label="高德Key" />
+                    <van-field v-model="sysConfig.amap_key" label="高德Key" placeholder="Web端JS API Key" />
                     <van-field v-model="sysConfig.sms_account" label="短信账号" />
                     <van-field v-model="sysConfig.sms_password" label="短信密码" type="password" />
                   </van-cell-group>
@@ -369,8 +386,8 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
               <div class="ac-header">
                 <img :src="user.avatar||'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" class="ac-avatar">
                 <div class="ac-info">
-                  <div class="ac-name">{{ user.nickname }} <van-tag type="primary" plain>{{ user.phone || '未授权' }}</van-tag></div>
-                  <div class="ac-time">注册: {{ user.created_at }}</div>
+                  <div class="ac-name">{{ user.nickname }} <van-tag type="primary" plain>{{ user.phone }}</van-tag></div>
+                  <div class="ac-time">ID: {{ user.id.slice(0,8) }}... | 注册: {{ user.created_at }}</div>
                 </div>
               </div>
             </div>
