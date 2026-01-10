@@ -5,12 +5,12 @@ import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToas
 // ==========================================
 // 1. 系统核心 (防白屏 & 错误捕捉)
 // ==========================================
-const appReady = ref(true); // 强制渲染，防止白屏
+const appReady = ref(true); // 强制渲染
 const globalError = ref('');
 
 onErrorCaptured((err) => {
   console.error("Runtime Error:", err);
-  return false;
+  return false; 
 });
 
 // ==========================================
@@ -30,9 +30,14 @@ const sysConfig = reactive({
 // 状态管理
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
+let exitCounter = 0; // 退出计数器
+
+// 后台数据
 const adminLoginData = reactive({ username: '', password: '' });
 const adminActiveMenu = ref('basic');
 const adminSettingTab = ref(0);
+const adminUserList = ref([]);
+const adminRideList = ref([]);
 
 // 前台数据
 const activeTab = ref(0);
@@ -52,7 +57,7 @@ const uiState = reactive({
   showMap: false,
   showAuth: false,
   showShare: false,
-  selectedRide: null, // 详情页数据
+  selectedRide: null, 
   authStep: 1
 });
 
@@ -73,17 +78,16 @@ const seatColumns = Array.from({length: 6}, (_, i) => ({ text: `${i + 1}座`, va
 
 let mapInstance = null;
 let geocoderInstance = null;
-let exitCounter = 0;
 
 // ==========================================
-// 3. 计算属性
+// 2. 计算属性
 // ==========================================
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
-  // 按照时间排序，防止无效日期导致排序崩溃
+  // 安全排序，防止日期格式错误导致崩溃
   return list.value.slice().sort((a, b) => {
-    const da = new Date(a.date);
-    const db = new Date(b.date);
+    const da = new Date(a.date || 0);
+    const db = new Date(b.date || 0);
     return (isNaN(da) ? 0 : da) - (isNaN(db) ? 0 : db);
   });
 });
@@ -101,10 +105,12 @@ const dateColumns = computed(() => {
   const months = Array.from({length: 12}, (_, i) => ({ text: `${i+1}月`, value: i+1 }));
   const days = Array.from({length: 31}, (_, i) => ({ text: `${i+1}日`, value: i+1 }));
   const hours = Array.from({length: 24}, (_, i) => ({ text: `${i}点`, value: i }));
-  return [years, months, days, hours];
+  // 增加分钟选择 (00分和30分)
+  const minutes = [{ text: '00分', value: 0 }, { text: '30分', value: 30 }];
+  return [years, months, days, hours, minutes];
 });
 
-// ★ 车型样式 (紫色混动) ★
+// 车型样式 (紫色混动)
 const getCarClass = (model) => {
   if (!model) return '';
   if (model.includes('混合')) return 'hybrid';
@@ -113,17 +119,15 @@ const getCarClass = (model) => {
 };
 
 // ==========================================
-// 4. 初始化
+// 3. 初始化 & 路由守卫
 // ==========================================
 onMounted(async () => {
-  // 1. 路由初始化 (处理返回键)
-  if (window.location.hash) {
-    window.history.replaceState(null, null, document.URL.split('#')[0]);
+  if (!window.location.hash) {
+    window.history.replaceState({ page: 'home' }, null, document.URL);
   }
   window.addEventListener('popstate', handlePopState);
 
   try {
-    // 2. 用户缓存
     const u = localStorage.getItem('user_info');
     if (u) {
       try { 
@@ -136,16 +140,13 @@ onMounted(async () => {
       localStorage.setItem('user_info', JSON.stringify(userProfile));
     }
 
-    // 3. 数据加载
     fetchSystemConfig();
     onLoad(); 
     
-    // 4. 地图延后
     setTimeout(() => {
       loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
     }, 800);
 
-    // 5. 后台路由
     if (window.location.pathname === '/admin') {
       isSystemAdmin.value = true;
       if(localStorage.getItem('admin_token')) {
@@ -153,47 +154,17 @@ onMounted(async () => {
         isLogined.value = true;
       }
     }
-  } catch(e) {
-    console.error("Init warning:", e);
-  }
+  } catch(e) {}
 });
 
 onUnmounted(() => {
   window.removeEventListener('popstate', handlePopState);
 });
 
-// ==========================================
-// 5. 核心交互逻辑 (路由/API/地图)
-// ==========================================
-
-// ★★★ 修复：日期格式化 (解决 NaN 问题) ★★★
-const formatDate = (str) => {
-  if (!str) return '时间待定';
-  
-  // 兼容性处理：将 2023-01-01 转换为 2023/01/01 (解决 iOS/Safari NaN 问题)
-  let safeStr = str;
-  if (typeof str === 'string') {
-    safeStr = str.replace(/-/g, '/');
-    // 如果没有秒，尝试补全，防止解析失败
-    if (!safeStr.includes('T') && safeStr.length < 19) {
-       // 简单容错
-    }
-  }
-
-  const d = new Date(safeStr);
-  
-  // 如果解析失败 (Invalid Date)
-  if (isNaN(d.getTime())) {
-    return str || '时间待定'; // 直接返回原字符串或提示
-  }
-
-  return `${d.getMonth()+1}月${d.getDate()}日 ${d.getHours()}点`;
-};
-
-// Hash 路由处理返回键
+// ★★★ 路由/返回键逻辑 ★★★
 const openDetail = (item) => {
   uiState.selectedRide = item;
-  window.location.hash = 'detail';
+  window.history.pushState({ popup: 'detail' }, null, '#detail');
 };
 
 const closeDetail = () => {
@@ -201,11 +172,13 @@ const closeDetail = () => {
 };
 
 const handlePopState = () => {
+  // 1. 关闭详情页
   if (!window.location.hash.includes('detail') && uiState.selectedRide) {
     uiState.selectedRide = null;
     return;
   }
   
+  // 2. 关闭其他弹窗
   if (uiState.showRole || uiState.showMap || uiState.showShare || uiState.showDate || uiState.showPayment || uiState.showAuth) {
     uiState.showRole = false;
     uiState.showMap = false;
@@ -213,19 +186,48 @@ const handlePopState = () => {
     uiState.showDate = false;
     uiState.showPayment = false;
     uiState.showAuth = false;
+    if (!window.location.hash) window.history.replaceState({ page: 'home' }, null, document.URL);
     return;
   }
 
-  if (activeTab.value === 0 && !uiState.selectedRide) {
+  // 3. 首页防误触退出 (需按两次)
+  if (activeTab.value === 0) {
     exitCounter++;
     if (exitCounter < 2) {
       showToast('再按一次退出');
+      // 这里的 pushState 是关键：把刚才的“后退”补回来，让页面停留在原地
       window.history.pushState(null, null, document.URL);
+      // 2秒后重置计数器
       setTimeout(() => { exitCounter = 0; }, 2000);
+    } else {
+      // 超过2次，允许浏览器默认后退行为（即退出页面）
     }
-  } else if (activeTab.value !== 0) {
+  } else {
     activeTab.value = 0;
+    window.history.replaceState({ page: 'home' }, null, document.URL.split('#')[0]);
   }
+};
+
+// ==========================================
+// 4. API & 工具函数
+// ==========================================
+// ★★★ 修复：日期格式化 (更清晰、防NaN) ★★★
+const formatDate = (str) => {
+  if (!str) return '时间待定';
+  
+  // 兼容处理：解决 iOS 下 new Date('2023-01-01') 可能为 NaN 的问题
+  let safeStr = String(str).replace(/-/g, '/'); 
+  const d = new Date(safeStr);
+  
+  if (isNaN(d.getTime())) return str; // 解析失败则原样显示
+
+  const m = d.getMonth() + 1;
+  const da = d.getDate();
+  const h = String(d.getHours()).padStart(2, '0');
+  const min = String(d.getMinutes()).padStart(2, '0');
+  
+  // 格式：2月18日 08:30
+  return `${m}月${da}日 ${h}:${min}`;
 };
 
 const fetchSystemConfig = async () => {
@@ -257,15 +259,22 @@ const onLoad = async () => {
   finished.value = true;
 };
 
+const fetchMyRides = async () => {
+  if(!userProfile.id) return;
+  try {
+    const res = await fetch(`/api/rides?type=all`); 
+    const data = await res.json();
+    if (data.results) myRidesList.value = data.results.filter(item => item.user_id === userProfile.id);
+  } catch(e) {}
+};
+
 const handleRealPublish = async () => {
   if (!userProfile.phone) { showFailToast('无手机号'); return; }
   submitLoading.value = true;
+  // 确保日期有默认值
+  const dateVal = postForm.date || new Date().toISOString();
   
-  // 确保日期格式正确
-  let finalDate = postForm.date;
-  if (!finalDate) finalDate = new Date().toISOString();
-
-  const newRide = { ...postForm, user_id: userProfile.id, contact: userProfile.phone, date: finalDate };
+  const newRide = { ...postForm, user_id: userProfile.id, contact: userProfile.phone, date: dateVal };
   if(!newRide.price) newRide.price = '面议';
   if(!newRide.remark || newRide.remark.length===0) newRide.remark = '无备注';
   else if(Array.isArray(newRide.remark)) newRide.remark = newRide.remark.join('，');
@@ -295,16 +304,7 @@ const handleUserDelete = (id) => {
   }); 
 };
 
-const fetchMyRides = async () => {
-  if(!userProfile.id) return;
-  try {
-    const res = await fetch(`/api/rides?type=all`); 
-    const data = await res.json();
-    if (data.results) myRidesList.value = data.results.filter(item => item.user_id === userProfile.id);
-  } catch(e) {}
-};
-
-// 地图逻辑
+// 地图
 const loadAMapScript = (key) => {
   if (window.AMap) return;
   try {
@@ -312,7 +312,7 @@ const loadAMapScript = (key) => {
     const script = document.createElement('script');
     script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Map,AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`;
     document.body.appendChild(script);
-  } catch(e) { console.warn('Map Error', e); }
+  } catch(e) {}
 };
 
 const autoLocate = () => {
@@ -377,7 +377,7 @@ const selectSearchResult = (item) => {
   uiState.showMap = false; 
 };
 
-// 通用交互
+// 辅助
 const onRefresh = () => { refreshing.value = true; onLoad(); };
 const switchTab = (idx) => { activeTab.value = idx; if(idx===0) { refreshing.value=true; onLoad(); } else if(idx===2) fetchMyRides(); };
 const handleCall = (p) => { if(p && p.length > 5) window.location.href = `tel:${p}`; else showFailToast('无号码'); };
@@ -392,7 +392,13 @@ const selectRoleAndGo = (r) => { postForm.type=r; postForm.date=''; postForm.rem
 const handleWeChatAuth = () => { uiState.authStep = 2; };
 const handleBindPhone = () => { userProfile.phone=registerForm.phone; uiState.showAuth = false; localStorage.setItem('user_info',JSON.stringify(userProfile)); showSuccessToast('登录成功'); };
 const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postForm.remark.splice(i,1); else postForm.remark.push(t); };
-const onConfirmDate = ({selectedOptions}) => { const v=selectedOptions.map(o=>o.value); postForm.dateDisplay=`${v[0]}年${v[1]}月${v[2]}日 ${v[3]}点`; postForm.date=`${v[0]}-${v[1]}-${v[2]}T${v[3]}:00`; uiState.showDate=false; };
+const onConfirmDate = ({selectedOptions}) => { 
+  const v = selectedOptions.map(o=>o.value); 
+  const min = String(v[4] || 0).padStart(2,'0'); // 获取分钟
+  postForm.dateDisplay=`${v[0]}年${v[1]}月${v[2]}日 ${v[3]}:${min}`; 
+  postForm.date=`${v[0]}-${String(v[1]).padStart(2,'0')}-${String(v[2]).padStart(2,'0')}T${String(v[3]).padStart(2,'0')}:${min}:00`; 
+  uiState.showDate=false; 
+};
 const setFilter = (t) => { filterType.value=t; refreshing.value=true; onLoad(); };
 const handleAdminLogin = () => { if(adminLoginData.username==='admin'&&adminLoginData.password==='123456'){ isLogined.value=true; localStorage.setItem('admin_token','mock'); }else{ showFailToast('Error'); } };
 const switchAdminMenu = (m) => adminActiveMenu.value=m;
@@ -719,7 +725,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 
 .card-row-3 { font-size: 13px; color: #999; background: #f8f8f8; padding: 8px; border-radius: 6px; }
 
-/* 电话按钮: 48px */
+/* 电话按钮: 48px, 实心 */
 .call-btn { flex-shrink: 0; font-size: 26px; color: #fff; background: #ff6600; padding: 0; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; }
 
 /* 底部发布按钮 */
