@@ -1,24 +1,32 @@
 <script setup>
-import { ref, reactive, computed, nextTick, onMounted, onUnmounted } from 'vue';
+import { ref, reactive, computed, onMounted, onErrorCaptured } from 'vue';
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
 // ==========================================
-// 1. 全局配置与错误捕捉
+// 1. 错误捕捉 (防止白屏死得不明不白)
 // ==========================================
-// 用于在屏幕上直接显示报错信息，防止白屏死得不明不白
 const globalError = ref('');
-const appReady = ref(false); // 默认 false，挂载后变 true
+onErrorCaptured((err) => {
+  console.error('Captured Error:', err);
+  globalError.value = err.toString();
+  return false;
+});
 
+// ==========================================
+// 2. 全局配置
+// ==========================================
 const sysConfig = reactive({
   platform_name: '宜人出行',
   kefu_wechat: 'keea02',
   notice_text: '欢迎使用宜人出行，数据实时同步 D1 数据库。',
+  tags_driver: '有行李,走高速,可吸烟,线下支付',
+  tags_passenger: '有行李,走高速,只限女生,线下支付',
   banners: 'https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg,https://fastly.jsdelivr.net/npm/@vant/assets/apple-2.jpeg',
   amap_key: 'a4f6e1e5da68bc9fe5f984d69a3f6b2e',
   about_us: ''
 });
 
-// 状态
+// 状态管理
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
 
@@ -26,8 +34,6 @@ const isLogined = ref(false);
 const adminLoginData = reactive({ username: '', password: '' });
 const adminActiveMenu = ref('basic');
 const adminSettingTab = ref(0);
-const adminUserList = ref([]);
-const adminRideList = ref([]);
 
 // 前台数据
 const activeTab = ref(0);
@@ -39,7 +45,7 @@ const refreshing = ref(false);
 const finished = ref(false);
 const submitLoading = ref(false);
 
-// 弹窗状态 (纯 Vue 状态，不依赖浏览器历史)
+// 弹窗状态 (纯净模式，不操作 History API)
 const uiState = reactive({
   showRole: false,
   showDate: false,
@@ -70,7 +76,7 @@ let mapInstance = null;
 let geocoderInstance = null;
 
 // ==========================================
-// 2. 计算属性
+// 3. 计算属性
 // ==========================================
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
@@ -102,22 +108,10 @@ const getCarClass = (model) => {
 };
 
 // ==========================================
-// 3. 初始化 (包含错误捕捉)
+// 4. 初始化
 // ==========================================
 onMounted(async () => {
-  // 0. 错误捕捉：如果有任何 JS 报错，显示在屏幕上
-  window.onerror = function(msg, source, lineno, colno, error) {
-    globalError.value = `Error: ${msg} at line ${lineno}`;
-    return false;
-  };
-
-  // 1. 强制渲染 UI (延迟100ms)
-  setTimeout(() => { 
-    appReady.value = true; 
-  }, 100);
-
   try {
-    // 2. 加载用户
     const u = localStorage.getItem('user_info');
     if (u) {
       try { 
@@ -130,16 +124,15 @@ onMounted(async () => {
       localStorage.setItem('user_info', JSON.stringify(userProfile));
     }
 
-    // 3. 异步任务
+    // 异步加载数据
     fetchSystemConfig();
     onLoad(); 
     
-    // 4. 地图
+    // 延迟加载地图，防止阻塞
     setTimeout(() => {
       loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
-    }, 500);
+    }, 800);
 
-    // 5. 简单路由判断
     if (window.location.pathname === '/admin') {
       isSystemAdmin.value = true;
       if(localStorage.getItem('admin_token')) {
@@ -148,7 +141,6 @@ onMounted(async () => {
       }
     }
   } catch(e) { 
-    console.error("Init Error", e);
     globalError.value = "Init Error: " + e.message;
   }
 });
@@ -164,7 +156,7 @@ const fetchSystemConfig = async () => {
 };
 
 // ==========================================
-// 4. 地图逻辑
+// 5. 地图逻辑
 // ==========================================
 const loadAMapScript = (key) => {
   if (window.AMap) return;
@@ -173,7 +165,7 @@ const loadAMapScript = (key) => {
     const script = document.createElement('script');
     script.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Map,AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`;
     document.body.appendChild(script);
-  } catch(e){}
+  } catch(e) { globalError.value = "Map Error: " + e.message; }
 };
 
 const formatAddressPCD = (ac) => {
@@ -292,7 +284,7 @@ const selectSearchResult = (item) => {
 };
 
 // ==========================================
-// 5. 业务交互
+// 6. 业务交互
 // ==========================================
 const onRefresh = () => { refreshing.value = true; onLoad(); };
 
@@ -375,7 +367,7 @@ const onPreSubmit = () => {
   
   if (parseFloat(postForm.price) > 9999) { showFailToast('费用上限9999元'); return; }
   
-  // 触发弹窗
+  // 打开发布确认
   uiState.showPayment = true; 
 };
 
@@ -468,7 +460,7 @@ const switchTab = (idx) => {
   else if (idx === 2) { fetchMyRides(); }
 };
 
-// ★★★ 简单直接的弹窗开关，不涉及 History API ★★★
+// ★★★ 纯净版弹窗开关，无历史记录干扰 ★★★
 const openDetail = (item) => {
   uiState.selectedRide = item;
 };
@@ -478,9 +470,11 @@ const closeDetail = () => {
 </script>
 
 <template>
-  <div v-if="globalError" style="position:fixed;top:0;left:0;right:0;background:red;color:white;z-index:99999;padding:10px;font-size:12px;">{{ globalError }}</div>
+  <div v-if="globalError" style="position:fixed;top:0;left:0;width:100%;background:red;color:#fff;z-index:99999;padding:10px;font-size:12px;word-break:break-all;">
+    程序出错: {{ globalError }} <br> 请尝试刷新页面
+  </div>
 
-  <div v-if="appReady">
+  <div class="app-container">
     <div v-if="isSystemAdmin" class="admin-wrapper">
       <div v-if="!isLogined" class="admin-login-box">
         <h3>后台管理</h3>
@@ -525,7 +519,7 @@ const closeDetail = () => {
       </div>
     </div>
 
-    <div v-else class="app-container">
+    <div v-else class="user-wrapper">
       
       <div v-if="activeTab === 1" class="page-post">
         <van-nav-bar title="发布行程" left-arrow @click-left="switchTab(0)" />
@@ -591,7 +585,7 @@ const closeDetail = () => {
                   <span class="badge" :class="item.type">{{ item.type==='driver'?'车主':'乘客' }}</span>
                   <span class="route">{{ item.origin }} <van-icon name="arrow" /> {{ item.destination }}</span>
                 </div>
-                <div class="call-btn" @click.stop="handleCall(item.contact)"><van-icon name="phone" color="#fff" size="24" /></div>
+                <div class="call-btn" @click.stop="handleCall(item.contact)"><van-icon name="phone" color="#fff" size="22" /></div>
               </div>
               
               <div class="card-row-2">
