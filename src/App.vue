@@ -3,24 +3,24 @@ import { ref, reactive, computed, nextTick, onMounted, onUnmounted } from 'vue';
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
 // ==========================================
-// 1. 全局配置
+// 1. 全局配置与错误捕捉
 // ==========================================
+// 用于在屏幕上直接显示报错信息，防止白屏死得不明不白
+const globalError = ref('');
+const appReady = ref(false); // 默认 false，挂载后变 true
+
 const sysConfig = reactive({
   platform_name: '宜人出行',
   kefu_wechat: 'keea02',
   notice_text: '欢迎使用宜人出行，数据实时同步 D1 数据库。',
-  tags_driver: '有行李,走高速,可吸烟,线下支付',
-  tags_passenger: '有行李,走高速,只限女生,线下支付',
   banners: 'https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg,https://fastly.jsdelivr.net/npm/@vant/assets/apple-2.jpeg',
   amap_key: 'a4f6e1e5da68bc9fe5f984d69a3f6b2e',
   about_us: ''
 });
 
-// ★★★ 防白屏：直接设为 true，保证渲染 ★★★
-const appReady = ref(true); 
+// 状态
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
-let exitCounter = 0;
 
 // 后台数据
 const adminLoginData = reactive({ username: '', password: '' });
@@ -39,7 +39,7 @@ const refreshing = ref(false);
 const finished = ref(false);
 const submitLoading = ref(false);
 
-// 弹窗状态 (统一管理)
+// 弹窗状态 (纯 Vue 状态，不依赖浏览器历史)
 const uiState = reactive({
   showRole: false,
   showDate: false,
@@ -49,12 +49,6 @@ const uiState = reactive({
   showShare: false,
   selectedRide: null,
   authStep: 1
-});
-
-// 计算属性：控制详情页显示 (绑定布尔值，防止v-model类型错误)
-const isDetailShow = computed({
-  get: () => !!uiState.selectedRide,
-  set: (val) => { if (!val) uiState.selectedRide = null; }
 });
 
 // 表单
@@ -99,7 +93,7 @@ const dateColumns = computed(() => {
   return [years, months, days, hours];
 });
 
-// 车型样式 (紫色混动，优先匹配)
+// 车型样式 (紫色混动)
 const getCarClass = (model) => {
   if (!model) return '';
   if (model.includes('混合')) return 'hybrid';
@@ -108,10 +102,22 @@ const getCarClass = (model) => {
 };
 
 // ==========================================
-// 3. 初始化
+// 3. 初始化 (包含错误捕捉)
 // ==========================================
 onMounted(async () => {
+  // 0. 错误捕捉：如果有任何 JS 报错，显示在屏幕上
+  window.onerror = function(msg, source, lineno, colno, error) {
+    globalError.value = `Error: ${msg} at line ${lineno}`;
+    return false;
+  };
+
+  // 1. 强制渲染 UI (延迟100ms)
+  setTimeout(() => { 
+    appReady.value = true; 
+  }, 100);
+
   try {
+    // 2. 加载用户
     const u = localStorage.getItem('user_info');
     if (u) {
       try { 
@@ -124,13 +130,16 @@ onMounted(async () => {
       localStorage.setItem('user_info', JSON.stringify(userProfile));
     }
 
+    // 3. 异步任务
     fetchSystemConfig();
     onLoad(); 
     
+    // 4. 地图
     setTimeout(() => {
       loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
     }, 500);
 
+    // 5. 简单路由判断
     if (window.location.pathname === '/admin') {
       isSystemAdmin.value = true;
       if(localStorage.getItem('admin_token')) {
@@ -138,14 +147,10 @@ onMounted(async () => {
         isLogined.value = true;
       }
     }
-  } catch(e) {}
-
-  // 监听浏览器返回键
-  window.addEventListener('popstate', handlePopState);
-});
-
-onUnmounted(() => {
-  window.removeEventListener('popstate', handlePopState);
+  } catch(e) { 
+    console.error("Init Error", e);
+    globalError.value = "Init Error: " + e.message;
+  }
 });
 
 const fetchSystemConfig = async () => {
@@ -370,6 +375,7 @@ const onPreSubmit = () => {
   
   if (parseFloat(postForm.price) > 9999) { showFailToast('费用上限9999元'); return; }
   
+  // 触发弹窗
   uiState.showPayment = true; 
 };
 
@@ -460,56 +466,20 @@ const switchTab = (idx) => {
   activeTab.value = idx;
   if (idx === 0) { refreshing.value = true; onLoad(); } 
   else if (idx === 2) { fetchMyRides(); }
-  window.history.pushState({ tab: idx }, null, document.URL);
 };
 
-// ★★★ 核心修复：基于 Hash 的安全导航 ★★★
+// ★★★ 简单直接的弹窗开关，不涉及 History API ★★★
 const openDetail = (item) => {
-  // 1. 设置数据
   uiState.selectedRide = item;
-  // 2. 写入 hash 历史，告诉浏览器这里有个新页面
-  window.history.pushState({ popup: 'detail' }, null, '#detail');
 };
-
 const closeDetail = () => {
-  // 3. 点击返回时，如果当前是详情页 hash，则后退
-  if (window.location.hash === '#detail') {
-    window.history.back();
-  } else {
-    // 兜底：如果 hash 丢失，直接关数据
-    uiState.selectedRide = null;
-  }
-};
-
-const handlePopState = () => {
-  // 4. 监听后退：只要发生后退，且当前有数据，就清空数据（即关闭弹窗）
-  if (uiState.selectedRide) {
-    uiState.selectedRide = null;
-    return; // 阻止后续逻辑，视为消耗了一次后退
-  }
-  
-  if (uiState.showRole || uiState.showMap || uiState.showShare || uiState.showDate || uiState.showPayment) {
-    uiState.showRole = false;
-    uiState.showMap = false;
-    uiState.showShare = false;
-    uiState.showDate = false;
-    uiState.showPayment = false;
-    return;
-  }
-  
-  if (activeTab.value !== 0) {
-    activeTab.value = 0;
-    window.history.replaceState({ page: 'home' }, null, document.URL.split('#')[0]);
-    return;
-  }
-  
-  exitCounter++;
-  if (exitCounter < 3) showToast(`再按 ${3 - exitCounter} 次退出`);
-  setTimeout(() => { exitCounter = 0; }, 2000);
+  uiState.selectedRide = null;
 };
 </script>
 
 <template>
+  <div v-if="globalError" style="position:fixed;top:0;left:0;right:0;background:red;color:white;z-index:99999;padding:10px;font-size:12px;">{{ globalError }}</div>
+
   <div v-if="appReady">
     <div v-if="isSystemAdmin" class="admin-wrapper">
       <div v-if="!isLogined" class="admin-login-box">
@@ -621,7 +591,7 @@ const handlePopState = () => {
                   <span class="badge" :class="item.type">{{ item.type==='driver'?'车主':'乘客' }}</span>
                   <span class="route">{{ item.origin }} <van-icon name="arrow" /> {{ item.destination }}</span>
                 </div>
-                <div class="call-btn" @click.stop="handleCall(item.contact)"><van-icon name="phone" color="#fff" size="22" /></div>
+                <div class="call-btn" @click.stop="handleCall(item.contact)"><van-icon name="phone" color="#fff" size="24" /></div>
               </div>
               
               <div class="card-row-2">
@@ -738,8 +708,8 @@ const handlePopState = () => {
       
       <van-popup v-model:show="uiState.showDate" position="bottom"><van-picker :columns="dateColumns" @confirm="onConfirmDate" @cancel="uiState.showDate=false"/></van-popup>
 
-      <van-popup v-model:show="isDetailShow" position="right" :style="{width:'100%',height:'100%'}">
-        <div class="detail-page" v-if="uiState.selectedRide">
+      <van-popup v-if="uiState.selectedRide" v-model:show="uiState.selectedRide" position="right" :style="{width:'100%',height:'100%'}">
+        <div class="detail-page">
           <van-nav-bar title="详情" left-arrow @click-left="closeDetail"/>
           <div class="detail-content">
             <div class="detail-card">
@@ -814,7 +784,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 
 .card-row-3 { font-size: 13px; color: #999; background: #f8f8f8; padding: 8px; border-radius: 6px; }
 
-/* 电话按钮: 40px */
+/* 电话按钮: 40px, 实心 */
 .call-btn { flex-shrink: 0; font-size: 22px; color: #fff; background: #ff6600; padding: 0; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; }
 
 /* 底部发布按钮 */
