@@ -16,7 +16,7 @@ const sysConfig = reactive({
   about_us: ''
 });
 
-// 防白屏：默认显示
+// ★★★ 防白屏：直接设为 true，保证渲染 ★★★
 const appReady = ref(true); 
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
@@ -39,7 +39,7 @@ const refreshing = ref(false);
 const finished = ref(false);
 const submitLoading = ref(false);
 
-// 弹窗状态
+// 弹窗状态 (统一管理)
 const uiState = reactive({
   showRole: false,
   showDate: false,
@@ -49,6 +49,12 @@ const uiState = reactive({
   showShare: false,
   selectedRide: null,
   authStep: 1
+});
+
+// 计算属性：控制详情页显示 (绑定布尔值，防止v-model类型错误)
+const isDetailShow = computed({
+  get: () => !!uiState.selectedRide,
+  set: (val) => { if (!val) uiState.selectedRide = null; }
 });
 
 // 表单
@@ -93,7 +99,7 @@ const dateColumns = computed(() => {
   return [years, months, days, hours];
 });
 
-// 车型样式 (紫色混动)
+// 车型样式 (紫色混动，优先匹配)
 const getCarClass = (model) => {
   if (!model) return '';
   if (model.includes('混合')) return 'hybrid';
@@ -134,8 +140,7 @@ onMounted(async () => {
     }
   } catch(e) {}
 
-  // 初始化历史记录，防止第一次点击返回就退出
-  window.history.replaceState({ page: 'home' }, null, document.URL);
+  // 监听浏览器返回键
   window.addEventListener('popstate', handlePopState);
 });
 
@@ -458,26 +463,31 @@ const switchTab = (idx) => {
   window.history.pushState({ tab: idx }, null, document.URL);
 };
 
-// ★★★ 核心修复：打开/关闭详情页逻辑 ★★★
+// ★★★ 核心修复：基于 Hash 的安全导航 ★★★
 const openDetail = (item) => {
   // 1. 设置数据
   uiState.selectedRide = item;
-  // 2. 写入历史记录 (这一步是为了拦截物理返回键)
-  window.history.pushState({ popup: 'detail' }, null, document.URL);
+  // 2. 写入 hash 历史，告诉浏览器这里有个新页面
+  window.history.pushState({ popup: 'detail' }, null, '#detail');
 };
 
 const closeDetail = () => {
-  // 3. 点击UI返回按钮时，调用浏览器后退，触发 popstate
-  window.history.back();
+  // 3. 点击返回时，如果当前是详情页 hash，则后退
+  if (window.location.hash === '#detail') {
+    window.history.back();
+  } else {
+    // 兜底：如果 hash 丢失，直接关数据
+    uiState.selectedRide = null;
+  }
 };
 
 const handlePopState = () => {
-  // 4. 监听历史记录变化：如果当前有弹窗，就关闭它
+  // 4. 监听后退：只要发生后退，且当前有数据，就清空数据（即关闭弹窗）
   if (uiState.selectedRide) {
     uiState.selectedRide = null;
-    return;
+    return; // 阻止后续逻辑，视为消耗了一次后退
   }
-  // 处理其他弹窗关闭
+  
   if (uiState.showRole || uiState.showMap || uiState.showShare || uiState.showDate || uiState.showPayment) {
     uiState.showRole = false;
     uiState.showMap = false;
@@ -489,7 +499,7 @@ const handlePopState = () => {
   
   if (activeTab.value !== 0) {
     activeTab.value = 0;
-    window.history.pushState({ page: 'home' }, null, document.URL);
+    window.history.replaceState({ page: 'home' }, null, document.URL.split('#')[0]);
     return;
   }
   
@@ -500,11 +510,7 @@ const handlePopState = () => {
 </script>
 
 <template>
-  <div v-if="!appReady" style="display:flex;justify-content:center;align-items:center;height:100vh;background:#f7f8fa;">
-    <van-loading size="24px" vertical>加载中...</van-loading>
-  </div>
-
-  <div v-else>
+  <div v-if="appReady">
     <div v-if="isSystemAdmin" class="admin-wrapper">
       <div v-if="!isLogined" class="admin-login-box">
         <h3>后台管理</h3>
@@ -615,7 +621,7 @@ const handlePopState = () => {
                   <span class="badge" :class="item.type">{{ item.type==='driver'?'车主':'乘客' }}</span>
                   <span class="route">{{ item.origin }} <van-icon name="arrow" /> {{ item.destination }}</span>
                 </div>
-                <div class="call-btn" @click.stop="handleCall(item.contact)"><van-icon name="phone" color="#fff" size="20" /></div>
+                <div class="call-btn" @click.stop="handleCall(item.contact)"><van-icon name="phone" color="#fff" size="22" /></div>
               </div>
               
               <div class="card-row-2">
@@ -732,8 +738,8 @@ const handlePopState = () => {
       
       <van-popup v-model:show="uiState.showDate" position="bottom"><van-picker :columns="dateColumns" @confirm="onConfirmDate" @cancel="uiState.showDate=false"/></van-popup>
 
-      <van-popup v-if="uiState.selectedRide" v-model:show="uiState.selectedRide" position="right" :style="{width:'100%',height:'100%'}">
-        <div class="detail-page">
+      <van-popup v-model:show="isDetailShow" position="right" :style="{width:'100%',height:'100%'}">
+        <div class="detail-page" v-if="uiState.selectedRide">
           <van-nav-bar title="详情" left-arrow @click-left="closeDetail"/>
           <div class="detail-content">
             <div class="detail-card">
@@ -808,7 +814,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 
 .card-row-3 { font-size: 13px; color: #999; background: #f8f8f8; padding: 8px; border-radius: 6px; }
 
-/* ★★★ 电话按钮：大小调整为 40px ★★★ */
+/* 电话按钮: 40px */
 .call-btn { flex-shrink: 0; font-size: 22px; color: #fff; background: #ff6600; padding: 0; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; }
 
 /* 底部发布按钮 */
