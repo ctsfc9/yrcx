@@ -3,13 +3,15 @@ import { ref, reactive, computed, nextTick, onMounted, onUnmounted, onErrorCaptu
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
 // ==========================================
-// 1. 系统核心 (防白屏 & 错误捕捉)
+// 1. 系统核心 (防白屏兜底)
 // ==========================================
-const appReady = ref(true); // 默认渲染
+const appReady = ref(true); 
 const globalError = ref('');
 
+// 捕获渲染错误，直接显示在界面上，而不是白屏
 onErrorCaptured((err) => {
   console.error("Critical Error:", err);
+  globalError.value = "渲染异常: " + err.message;
   return false; 
 });
 
@@ -32,11 +34,11 @@ const isSystemAdmin = ref(false);
 const isLogined = ref(false);
 let exitCounter = 0; // 退出计数器
 
-// 后台数据 (变量补全，防白屏)
+// 后台数据 (★关键：补全变量防止白屏★)
 const adminLoginData = reactive({ username: '', password: '' });
 const adminActiveMenu = ref('basic');
 const adminSettingTab = ref(0);
-const adminUserList = ref([]);
+const adminUserList = ref([]); 
 const adminRideList = ref([]);
 
 // 前台数据
@@ -80,7 +82,7 @@ let mapInstance = null;
 let geocoderInstance = null;
 
 // ==========================================
-// 3. 计算属性
+// 3. 计算属性 (安全逻辑)
 // ==========================================
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
@@ -97,18 +99,17 @@ const currentRemarkOptions = computed(() => {
 });
 const remarkDisplayText = computed(() => (postForm.remark || []).join('，'));
 
-// ★★★ 修改：去掉了分钟列 ★★★
+// ★★★ 修改：时间选择去掉分钟，只留 年-月-日-时 ★★★
 const dateColumns = computed(() => {
   const y = new Date().getFullYear();
   const years = [{ text: `${y}年`, value: y }, { text: `${y+1}年`, value: y+1 }];
   const months = Array.from({length: 12}, (_, i) => ({ text: `${i+1}月`, value: i+1 }));
   const days = Array.from({length: 31}, (_, i) => ({ text: `${i+1}日`, value: i+1 }));
   const hours = Array.from({length: 24}, (_, i) => ({ text: `${i}点`, value: i }));
-  // 只保留 年-月-日-时
   return [years, months, days, hours];
 });
 
-// 车型样式
+// 车型样式 (防白屏)
 const getCarClass = (model) => {
   if (!model || typeof model !== 'string') return '';
   if (model.includes('混合')) return 'hybrid';
@@ -120,12 +121,15 @@ const getCarClass = (model) => {
 // 4. 初始化 & 路由守卫
 // ==========================================
 onMounted(async () => {
-  // ★★★ 核心：注入历史记录，确保首页也能拦截返回键 ★★★
+  // 1. 注入初始历史记录
   try {
-    window.history.pushState({ page: 'home' }, null, document.URL);
+    if (!window.location.hash) {
+      window.history.replaceState({ page: 'home' }, null, document.URL);
+    }
   } catch(e) {}
   window.addEventListener('popstate', handlePopState);
 
+  // 2. 恢复用户
   try {
     const u = localStorage.getItem('user_info');
     if (u) {
@@ -139,6 +143,7 @@ onMounted(async () => {
       localStorage.setItem('user_info', JSON.stringify(userProfile));
     }
 
+    // 3. 异步加载 (防阻塞)
     fetchSystemConfig().catch(()=>{});
     onLoad().catch(()=>{}); 
     
@@ -160,7 +165,7 @@ onUnmounted(() => {
   window.removeEventListener('popstate', handlePopState);
 });
 
-// ★★★ 路由逻辑 ★★★
+// ★★★ 路由逻辑：双击退出 ★★★
 const openDetail = (item) => {
   uiState.selectedRide = item;
   window.history.pushState({ popup: 'detail' }, null, '#detail');
@@ -171,18 +176,17 @@ const closeDetail = () => {
 };
 
 const handlePopState = () => {
-  // 1. 关闭详情
+  // 1. 关详情
   if (!window.location.hash.includes('detail') && uiState.selectedRide) {
     uiState.selectedRide = null;
     return;
   }
   
-  // 2. 关闭弹窗
+  // 2. 关弹窗
   if (uiState.showRole || uiState.showMap || uiState.showShare || uiState.showDate || uiState.showPayment || uiState.showAuth) {
     uiState.showRole = false; uiState.showMap = false; uiState.showShare = false;
     uiState.showDate = false; uiState.showPayment = false; uiState.showAuth = false;
-    // 补回历史
-    window.history.pushState({ page: 'home' }, null, document.URL);
+    window.history.pushState({ page: 'home' }, null, document.URL); // 补回状态
     return;
   }
 
@@ -191,15 +195,14 @@ const handlePopState = () => {
     exitCounter++;
     if (exitCounter < 2) {
       showToast('再按一次退出');
-      // 核心：推入一个状态，把用户留住
+      // ★ 核心：立即补回一条记录，把用户留在页面 ★
       window.history.pushState({ page: 'home' }, null, document.URL);
+      // 2秒后重置
       setTimeout(() => { exitCounter = 0; }, 2000);
     } else {
-      // 第二次点击，执行真正的后退
-      window.history.back();
+      // 超过2次，允许退出 (不操作history)
     }
   } else {
-    // 从其他Tab回首页
     activeTab.value = 0;
     window.history.replaceState({ page: 'home' }, null, document.URL.split('#')[0]);
   }
@@ -208,21 +211,22 @@ const handlePopState = () => {
 // ==========================================
 // 5. API & 工具
 // ==========================================
-// ★★★ 时间显示：强制整点 ★★★
+// ★★★ 时间显示：强制格式化 ★★★
 const formatDate = (str) => {
   if (!str) return '时间待定';
-  try {
-    const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2})[:](\d{1,2}))?/);
-    if (match) {
-      const y = match[1];
-      const m = parseInt(match[2]);
-      const d = parseInt(match[3]);
-      const h = match[4] ? parseInt(match[4]) : 0;
-      // 只要匹配到，就显示 x年x月x日 x点
-      return `${y}年${m}月${d}日 ${h}点`;
-    }
-    return str;
-  } catch (e) { return str; }
+  
+  // 正则提取数字：2026-01-17T22:00 -> [2026, 1, 17, 22, 00]
+  const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2})[:](\d{1,2}))?/);
+  
+  if (match) {
+    const y = match[1];
+    const m = parseInt(match[2]);
+    const d = parseInt(match[3]);
+    const h = match[4] ? parseInt(match[4]) : 0;
+    // 强制只显示到“点”，忽略分钟
+    return `${y}年${m}月${d}日 ${h}点`;
+  }
+  return str;
 };
 
 const fetchSystemConfig = async () => {
@@ -266,6 +270,7 @@ const fetchMyRides = async () => {
 const handleRealPublish = async () => {
   if (!userProfile.phone) { showFailToast('无手机号'); return; }
   submitLoading.value = true;
+  // 日期
   const dateVal = postForm.date || new Date().toISOString();
   
   const newRide = { ...postForm, user_id: userProfile.id, contact: userProfile.phone, date: dateVal };
@@ -387,9 +392,10 @@ const handleWeChatAuth = () => { uiState.authStep = 2; };
 const handleBindPhone = () => { userProfile.phone=registerForm.phone; uiState.showAuth = false; localStorage.setItem('user_info',JSON.stringify(userProfile)); showSuccessToast('登录成功'); };
 const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postForm.remark.splice(i,1); else postForm.remark.push(t); };
 
-// ★★★ 确认日期：整点 ★★★
+// ★★★ 确认日期：整点 (去掉分钟) ★★★
 const onConfirmDate = ({selectedOptions}) => { 
   const v = selectedOptions.map(o=>o.value); 
+  // 只有4列：年-月-日-时，分钟默认00
   postForm.dateDisplay=`${v[0]}年${v[1]}月${v[2]}日 ${v[3]}点`; 
   postForm.date=`${v[0]}-${String(v[1]).padStart(2,'0')}-${String(v[2]).padStart(2,'0')}T${String(v[3]).padStart(2,'0')}:00:00`; 
   uiState.showDate=false; 
