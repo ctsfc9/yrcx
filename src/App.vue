@@ -115,7 +115,7 @@ const dateColumns = computed(() => {
   return [years, months, days, hours, minutes];
 });
 
-// ★ 车型样式 (紫色混动) - 增加空值检查防白屏 ★
+// ★ 车型样式 (紫色混动) ★
 const getCarClass = (model) => {
   if (!model || typeof model !== 'string') return '';
   if (model.includes('混合')) return 'hybrid';
@@ -173,7 +173,7 @@ onUnmounted(() => {
   window.removeEventListener('popstate', handlePopState);
 });
 
-// ★★★ 路由/返回键逻辑 ★★★
+// ★★★ 路由/返回键逻辑 (防退出) ★★★
 const openDetail = (item) => {
   uiState.selectedRide = item;
   window.history.pushState({ popup: 'detail' }, null, '#detail');
@@ -237,7 +237,7 @@ const formatDate = (str) => {
     // 如果解析失败，尝试正则强行提取
     if (isNaN(d.getTime())) {
        // 简单正则匹配 YYYY-MM-DD HH:mm
-       const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})[T\s](\d{1,2})[:](\d{1,2})/);
+       const match = String(str).match(/(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})[T\s日]*(\d{1,2})[:点]?(\d{1,2})?/);
        if(match) {
          return `${match[1]}年${match[2]}月${match[3]}日 ${match[4]}点`;
        }
@@ -598,6 +598,7 @@ watch(mapSearchKeyword, (newVal) => {
           </div>
         </div>
         <div class="stats-row">
+          <div class="stat-item"><b>{{ userProfile.balance }}</b><span>余额</span></div>
           <div class="stat-item"><b>{{ myRidesList.length }}</b><span>发布</span></div>
           <div class="stat-item"><b>0</b><span>预约</span></div>
         </div>
@@ -763,7 +764,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 
 .card-row-3 { font-size: 13px; color: #999; background: #f8f8f8; padding: 8px; border-radius: 6px; }
 
-/* ★★★ 电话按钮：42px ★★★ */
+/* 电话按钮: 42px, 实心 */
 .call-btn { flex-shrink: 0; font-size: 22px; color: #fff; background: #ff6600; padding: 0; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 42px; height: 42px; }
 
 /* 底部发布按钮 */
