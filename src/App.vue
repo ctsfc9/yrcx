@@ -5,11 +5,14 @@ import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToas
 // ==========================================
 // 1. 系统核心 (防白屏 & 错误捕捉)
 // ==========================================
-const appReady = ref(true); // 强制渲染
+// ★★★ 核心：默认 true，确保界面立即渲染，绝不白屏 ★★★
+const appReady = ref(true); 
 const globalError = ref('');
 
+// 捕捉运行时错误，防止整个页面崩溃
 onErrorCaptured((err) => {
   console.error("Runtime Error:", err);
+  // 仅在控制台记录，不阻断界面显示
   return false; 
 });
 
@@ -80,15 +83,17 @@ let mapInstance = null;
 let geocoderInstance = null;
 
 // ==========================================
-// 2. 计算属性
+// 3. 计算属性
 // ==========================================
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
-  // 安全排序
-  return list.value.slice().sort((a, b) => {
+  // 安全排序：防止 invalid date 导致白屏
+  return [...list.value].sort((a, b) => {
     const da = new Date(a.date || 0);
     const db = new Date(b.date || 0);
-    return (isNaN(da) ? 0 : da) - (isNaN(db) ? 0 : db);
+    const ta = isNaN(da.getTime()) ? 0 : da.getTime();
+    const tb = isNaN(db.getTime()) ? 0 : db.getTime();
+    return ta - tb;
   });
 });
 
@@ -105,12 +110,12 @@ const dateColumns = computed(() => {
   const months = Array.from({length: 12}, (_, i) => ({ text: `${i+1}月`, value: i+1 }));
   const days = Array.from({length: 31}, (_, i) => ({ text: `${i+1}日`, value: i+1 }));
   const hours = Array.from({length: 24}, (_, i) => ({ text: `${i}点`, value: i }));
-  // 补全分钟选择
+  // 增加分钟选择
   const minutes = [{ text: '00分', value: 0 }, { text: '10分', value: 10 }, { text: '20分', value: 20 }, { text: '30分', value: 30 }, { text: '40分', value: 40 }, { text: '50分', value: 50 }];
   return [years, months, days, hours, minutes];
 });
 
-// 车型样式 (紫色混动)
+// ★ 车型样式 (紫色混动) ★
 const getCarClass = (model) => {
   if (!model) return '';
   if (model.includes('混合')) return 'hybrid';
@@ -119,12 +124,14 @@ const getCarClass = (model) => {
 };
 
 // ==========================================
-// 3. 初始化 & 路由守卫
+// 4. 初始化 & 路由守卫
 // ==========================================
 onMounted(async () => {
-  // ★ 1. 注入初始历史记录，确保首页也能拦截返回键 ★
+  // 初始化路由状态
   if (!window.location.hash) {
-    window.history.pushState({ page: 'home' }, null, document.URL);
+    try {
+      window.history.replaceState({ page: 'home' }, null, document.URL);
+    } catch(e) {}
   }
   window.addEventListener('popstate', handlePopState);
 
@@ -141,12 +148,14 @@ onMounted(async () => {
       localStorage.setItem('user_info', JSON.stringify(userProfile));
     }
 
-    fetchSystemConfig();
-    onLoad(); 
+    // 异步加载数据 (加try-catch，即使接口挂了也不白屏)
+    fetchSystemConfig().catch(e => console.warn('Config load failed', e));
+    onLoad().catch(e => console.warn('List load failed', e));
     
+    // 延迟加载地图
     setTimeout(() => {
       loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
-    }, 800);
+    }, 1000);
 
     if (window.location.pathname === '/admin') {
       isSystemAdmin.value = true;
@@ -155,7 +164,9 @@ onMounted(async () => {
         isLogined.value = true;
       }
     }
-  } catch(e) {}
+  } catch(e) {
+    console.error("Init Error:", e);
+  }
 });
 
 onUnmounted(() => {
@@ -187,50 +198,55 @@ const handlePopState = () => {
     uiState.showDate = false;
     uiState.showPayment = false;
     uiState.showAuth = false;
-    // 如果没有hash了，推一个home进去保持状态
-    if (!window.location.hash) window.history.pushState({ page: 'home' }, null, document.URL);
+    if (!window.location.hash) window.history.replaceState({ page: 'home' }, null, document.URL);
     return;
   }
 
-  // 3. 首页防误触退出 (核心修复)
+  // 3. 首页防误触退出
   if (activeTab.value === 0) {
     exitCounter++;
     if (exitCounter < 2) {
       showToast('再按一次退出');
-      // 迅速把刚才消耗的历史记录补回来，阻止退出
-      window.history.pushState({ page: 'home' }, null, document.URL);
-      // 2秒后重置
+      // 补回历史记录，防止退出
+      window.history.pushState(null, null, document.URL);
       setTimeout(() => { exitCounter = 0; }, 2000);
-    } else {
-      // 允许退出 (不再 pushState)
     }
   } else {
-    // 无论在哪里，返回键都回到首页列表
     activeTab.value = 0;
-    window.history.pushState({ page: 'home' }, null, document.URL.split('#')[0]);
+    window.history.replaceState({ page: 'home' }, null, document.URL.split('#')[0]);
   }
 };
 
 // ==========================================
-// 4. API & 工具函数
+// 5. API & 工具函数
 // ==========================================
-// ★★★ 修复：日期格式化 (MM月dd日 HH:mm) ★★★
+// ★★★ 修复：强制日期格式化 (YYYY年M月D日 H点) ★★★
 const formatDate = (str) => {
   if (!str) return '时间待定';
   
-  // 兼容 iOS 格式
-  let safeStr = String(str).replace(/-/g, '/'); 
-  const d = new Date(safeStr);
-  
-  if (isNaN(d.getTime())) return str; // 解析失败显示原文本
+  try {
+    // 1. 尝试标准解析
+    let safeStr = String(str).replace(/-/g, '/'); // 兼容 iOS
+    let d = new Date(safeStr);
 
-  const m = d.getMonth() + 1;
-  const da = d.getDate();
-  const h = String(d.getHours()).padStart(2, '0');
-  const min = String(d.getMinutes()).padStart(2, '0');
-  
-  // 格式：2月18日 08:30 (清晰明确)
-  return `${m}月${da}日 ${h}:${min}`;
+    // 2. 如果解析失败，尝试正则提取数字
+    if (isNaN(d.getTime())) {
+      const match = String(str).match(/(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})[T\s日]*(\d{1,2})[:点]?(\d{1,2})?/);
+      if (match) {
+        return `${match[1]}年${match[2]}月${match[3]}日 ${match[4]}点`;
+      }
+      return str; // 实在解析不了，显示原样，不报错
+    }
+
+    const y = d.getFullYear();
+    const m = d.getMonth() + 1;
+    const da = d.getDate();
+    const h = d.getHours();
+    
+    return `${y}年${m}月${da}日 ${h}点`;
+  } catch (e) {
+    return str;
+  }
 };
 
 const fetchSystemConfig = async () => {
@@ -387,7 +403,7 @@ const switchTab = (idx) => {
     refreshing.value=true; 
     onLoad(); 
     // 回到首页清空hash
-    window.history.pushState({ page: 'home' }, null, document.URL.split('#')[0]);
+    window.history.replaceState({ page: 'home' }, null, document.URL.split('#')[0]);
   } else {
     // 切换到其他tab也推入记录
     window.history.pushState({ page: 'tab' }, null, document.URL);
@@ -408,7 +424,8 @@ const handleBindPhone = () => { userProfile.phone=registerForm.phone; uiState.sh
 const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postForm.remark.splice(i,1); else postForm.remark.push(t); };
 const onConfirmDate = ({selectedOptions}) => { 
   const v = selectedOptions.map(o=>o.value); 
-  const min = String(v[4] || 0).padStart(2,'0'); 
+  // 分钟处理
+  const min = String(v[4] || 0).padStart(2, '0');
   postForm.dateDisplay=`${v[0]}年${v[1]}月${v[2]}日 ${v[3]}:${min}`; 
   postForm.date=`${v[0]}-${String(v[1]).padStart(2,'0')}-${String(v[2]).padStart(2,'0')}T${String(v[3]).padStart(2,'0')}:${min}:00`; 
   uiState.showDate=false; 
@@ -739,8 +756,8 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 
 .card-row-3 { font-size: 13px; color: #999; background: #f8f8f8; padding: 8px; border-radius: 6px; }
 
-/* 电话按钮: 48px, 实心 */
-.call-btn { flex-shrink: 0; font-size: 26px; color: #fff; background: #ff6600; padding: 0; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; }
+/* 电话按钮: 40px, 实心 */
+.call-btn { flex-shrink: 0; font-size: 22px; color: #fff; background: #ff6600; padding: 0; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; }
 
 /* 底部发布按钮 */
 .custom-tabbar { position: fixed; bottom: 0; width: 100%; height: 65px; background: #fff; display: flex; border-top: 1px solid #eee; z-index: 999; padding-bottom: constant(safe-area-inset-bottom); padding-bottom: env(safe-area-inset-bottom); }
