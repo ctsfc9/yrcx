@@ -84,7 +84,7 @@ let geocoderInstance = null;
 // ==========================================
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
-  // 安全排序，防止日期格式错误导致崩溃
+  // 安全排序
   return list.value.slice().sort((a, b) => {
     const da = new Date(a.date || 0);
     const db = new Date(b.date || 0);
@@ -105,8 +105,8 @@ const dateColumns = computed(() => {
   const months = Array.from({length: 12}, (_, i) => ({ text: `${i+1}月`, value: i+1 }));
   const days = Array.from({length: 31}, (_, i) => ({ text: `${i+1}日`, value: i+1 }));
   const hours = Array.from({length: 24}, (_, i) => ({ text: `${i}点`, value: i }));
-  // 增加分钟选择 (00分和30分)
-  const minutes = [{ text: '00分', value: 0 }, { text: '30分', value: 30 }];
+  // 补全分钟选择
+  const minutes = [{ text: '00分', value: 0 }, { text: '10分', value: 10 }, { text: '20分', value: 20 }, { text: '30分', value: 30 }, { text: '40分', value: 40 }, { text: '50分', value: 50 }];
   return [years, months, days, hours, minutes];
 });
 
@@ -122,8 +122,9 @@ const getCarClass = (model) => {
 // 3. 初始化 & 路由守卫
 // ==========================================
 onMounted(async () => {
+  // ★ 1. 注入初始历史记录，确保首页也能拦截返回键 ★
   if (!window.location.hash) {
-    window.history.replaceState({ page: 'home' }, null, document.URL);
+    window.history.pushState({ page: 'home' }, null, document.URL);
   }
   window.addEventListener('popstate', handlePopState);
 
@@ -186,47 +187,49 @@ const handlePopState = () => {
     uiState.showDate = false;
     uiState.showPayment = false;
     uiState.showAuth = false;
-    if (!window.location.hash) window.history.replaceState({ page: 'home' }, null, document.URL);
+    // 如果没有hash了，推一个home进去保持状态
+    if (!window.location.hash) window.history.pushState({ page: 'home' }, null, document.URL);
     return;
   }
 
-  // 3. 首页防误触退出 (需按两次)
+  // 3. 首页防误触退出 (核心修复)
   if (activeTab.value === 0) {
     exitCounter++;
     if (exitCounter < 2) {
       showToast('再按一次退出');
-      // 这里的 pushState 是关键：把刚才的“后退”补回来，让页面停留在原地
-      window.history.pushState(null, null, document.URL);
-      // 2秒后重置计数器
+      // 迅速把刚才消耗的历史记录补回来，阻止退出
+      window.history.pushState({ page: 'home' }, null, document.URL);
+      // 2秒后重置
       setTimeout(() => { exitCounter = 0; }, 2000);
     } else {
-      // 超过2次，允许浏览器默认后退行为（即退出页面）
+      // 允许退出 (不再 pushState)
     }
   } else {
+    // 无论在哪里，返回键都回到首页列表
     activeTab.value = 0;
-    window.history.replaceState({ page: 'home' }, null, document.URL.split('#')[0]);
+    window.history.pushState({ page: 'home' }, null, document.URL.split('#')[0]);
   }
 };
 
 // ==========================================
 // 4. API & 工具函数
 // ==========================================
-// ★★★ 修复：日期格式化 (更清晰、防NaN) ★★★
+// ★★★ 修复：日期格式化 (MM月dd日 HH:mm) ★★★
 const formatDate = (str) => {
   if (!str) return '时间待定';
   
-  // 兼容处理：解决 iOS 下 new Date('2023-01-01') 可能为 NaN 的问题
+  // 兼容 iOS 格式
   let safeStr = String(str).replace(/-/g, '/'); 
   const d = new Date(safeStr);
   
-  if (isNaN(d.getTime())) return str; // 解析失败则原样显示
+  if (isNaN(d.getTime())) return str; // 解析失败显示原文本
 
   const m = d.getMonth() + 1;
   const da = d.getDate();
   const h = String(d.getHours()).padStart(2, '0');
   const min = String(d.getMinutes()).padStart(2, '0');
   
-  // 格式：2月18日 08:30
+  // 格式：2月18日 08:30 (清晰明确)
   return `${m}月${da}日 ${h}:${min}`;
 };
 
@@ -271,7 +274,6 @@ const fetchMyRides = async () => {
 const handleRealPublish = async () => {
   if (!userProfile.phone) { showFailToast('无手机号'); return; }
   submitLoading.value = true;
-  // 确保日期有默认值
   const dateVal = postForm.date || new Date().toISOString();
   
   const newRide = { ...postForm, user_id: userProfile.id, contact: userProfile.phone, date: dateVal };
@@ -379,7 +381,19 @@ const selectSearchResult = (item) => {
 
 // 辅助
 const onRefresh = () => { refreshing.value = true; onLoad(); };
-const switchTab = (idx) => { activeTab.value = idx; if(idx===0) { refreshing.value=true; onLoad(); } else if(idx===2) fetchMyRides(); };
+const switchTab = (idx) => { 
+  activeTab.value = idx; 
+  if(idx===0) { 
+    refreshing.value=true; 
+    onLoad(); 
+    // 回到首页清空hash
+    window.history.pushState({ page: 'home' }, null, document.URL.split('#')[0]);
+  } else {
+    // 切换到其他tab也推入记录
+    window.history.pushState({ page: 'tab' }, null, document.URL);
+    if(idx===2) fetchMyRides(); 
+  }
+};
 const handleCall = (p) => { if(p && p.length > 5) window.location.href = `tel:${p}`; else showFailToast('无号码'); };
 const swapLocation = () => { const temp = postForm.origin; postForm.origin = postForm.destination; postForm.destination = temp; };
 const onPreSubmit = () => {
@@ -394,7 +408,7 @@ const handleBindPhone = () => { userProfile.phone=registerForm.phone; uiState.sh
 const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postForm.remark.splice(i,1); else postForm.remark.push(t); };
 const onConfirmDate = ({selectedOptions}) => { 
   const v = selectedOptions.map(o=>o.value); 
-  const min = String(v[4] || 0).padStart(2,'0'); // 获取分钟
+  const min = String(v[4] || 0).padStart(2,'0'); 
   postForm.dateDisplay=`${v[0]}年${v[1]}月${v[2]}日 ${v[3]}:${min}`; 
   postForm.date=`${v[0]}-${String(v[1]).padStart(2,'0')}-${String(v[2]).padStart(2,'0')}T${String(v[3]).padStart(2,'0')}:${min}:00`; 
   uiState.showDate=false; 
