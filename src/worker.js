@@ -1,5 +1,5 @@
 /**
- * 宜人出行后端核心逻辑 - V2 (微信授权+手机号强制绑定版)
+ * 宜人出行后端核心 - V3 (全参数配置版)
  */
 export default {
   async fetch(request, env) {
@@ -8,13 +8,11 @@ export default {
     
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-User-ID',
+      'Access-Control-Allow-Methods': '*',
+      'Access-Control-Allow-Headers': '*',
     };
 
-    if (method === 'OPTIONS') {
-      return new Response(null, { headers: corsHeaders });
-    }
+    if (method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
     const jsonResponse = (data, status = 200) => 
       new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -24,156 +22,115 @@ export default {
 
     try {
       // ============================================================
-      // 模块一：用户认证与授权 (核心门槛)
+      // 1. 配置管理 (对应后台截图的每一个输入框)
       // ============================================================
       
-      // [POST] 用户登录/同步信息
-      // 前端在获取到微信头像/昵称或绑定手机号后调用此接口
-      if (url.pathname === '/api/login' && method === 'POST') {
-        const body = await request.json();
-        const { id, nickname, avatar, phone } = body;
-
-        if (!id) return errorResponse('User ID is required');
-
-        // 检查用户是否存在
-        const existingUser = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first();
-
-        if (existingUser) {
-          // 更新现有用户信息 (如果前端传了新值)
-          await env.DB.prepare(`
-            UPDATE users SET 
-              nickname = COALESCE(?, nickname),
-              avatar = COALESCE(?, avatar),
-              phone = COALESCE(?, phone),
-              last_login = CURRENT_TIMESTAMP
-            WHERE id = ?
-          `).bind(nickname, avatar, phone, id).run();
-        } else {
-          // 创建新用户
-          await env.DB.prepare(`
-            INSERT INTO users (id, nickname, avatar, phone) VALUES (?, ?, ?, ?)
-          `).bind(id, nickname || '新用户', avatar || '', phone || '').run();
-        }
-
-        // 返回最新用户信息
-        const updatedUser = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first();
-        return jsonResponse({ success: true, user: updatedUser });
-      }
-
-      // [GET] 获取用户信息 (用于检查是否已绑定手机)
-      if (url.pathname === '/api/user' && method === 'GET') {
-        const userId = url.searchParams.get('id');
-        if (!userId) return errorResponse('Missing ID');
-        
-        const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first();
-        return jsonResponse(user || {});
-      }
-
-      // ============================================================
-      // 模块二：系统配置 (后台管理)
-      // ============================================================
-      
+      // [GET] 获取所有配置
       if (url.pathname === '/api/admin' && url.searchParams.get('action') === 'get_config') {
         const config = await env.DB.prepare('SELECT * FROM system_config WHERE id = 1').first();
         
+        // 兜底默认值
         const safeConfig = config || {
           platform_name: '宜人出行',
-          kefu_wechat: 'keea02',
-          notice_text: '欢迎使用宜人出行',
-          amap_key: 'a4f6e1e5da68bc9fe5f984d69a3f6b2e',
-          show_all_posts: 1
+          show_all_posts: 1,
+          driver_cert_required: 0
         };
+        
+        // 兼容前端V27的字段名 (前端用 notice_text 显示在首页跑马灯)
+        // 我们把 platform_desc (平台描述) 作为公告内容返回
+        safeConfig.notice_text = safeConfig.platform_desc || '欢迎使用宜人出行';
 
-        // 映射前端字段
-        const frontendConfig = {
-          ...safeConfig,
-          notice_text: safeConfig.notice_text
-        };
-
-        return jsonResponse(frontendConfig);
+        return jsonResponse(safeConfig);
       }
 
-      // [POST] 保存配置
+      // [POST] 保存所有配置
       if (url.pathname === '/api/admin' && url.searchParams.get('action') === 'save_config' && method === 'POST') {
         const body = await request.json();
         
         await env.DB.prepare(`
           UPDATE system_config SET 
-            platform_name = ?, 
-            kefu_wechat = ?, 
-            amap_key = ?, 
-            notice_text = ?,
-            passenger_fee = ?,
-            driver_fee = ?
+            platform_name = ?, platform_desc = ?, kefu_wechat = ?,
+            show_all_posts = ?, passenger_fee = ?, driver_fee = ?,
+            driver_cert_required = ?, allow_long_term = ?, 
+            allow_driver_repost = ?, allow_passenger_repost = ?,
+            amap_key = ?, sms_provider = ?, sms_account = ?, sms_password = ?, sms_template = ?,
+            about_us = ?
           WHERE id = 1
         `).bind(
-          body.platform_name, 
-          body.kefu_wechat, 
-          body.amap_key, 
-          body.notice_text, 
-          body.passenger_fee || 0,
-          body.driver_fee || 0
+          body.platform_name, body.platform_desc, body.kefu_wechat,
+          body.show_all_posts ? 1 : 0, body.passenger_fee || 0, body.driver_fee || 0,
+          body.driver_cert_required ? 1 : 0, body.allow_long_term ? 1 : 0,
+          body.allow_driver_repost ? 1 : 0, body.allow_passenger_repost ? 1 : 0,
+          body.amap_key, body.sms_provider, body.sms_account, body.sms_password, body.sms_template,
+          body.about_us
         ).run();
 
         return jsonResponse({ success: true });
       }
 
       // ============================================================
-      // 模块三：拼车业务逻辑 (已移除复杂的司机认证)
+      // 2. 拼车业务 (深度集成配置参数)
       // ============================================================
 
-      // [GET] 列表
+      // [GET] 列表 (受 "show_all_posts" 参数控制)
       if (url.pathname === '/api/rides' && method === 'GET') {
-        const type = url.searchParams.get('type'); 
+        const type = url.searchParams.get('type');
+        
+        // 1. 先查配置
+        const config = await env.DB.prepare('SELECT show_all_posts FROM system_config WHERE id = 1').first();
+        const showAll = config ? config.show_all_posts : 1;
+
         let query = 'SELECT * FROM rides WHERE status = 1';
         const params = [];
 
-        // 默认过滤掉已过期的时间 (可选，根据 show_all_posts 控制)
-        // const sys = await env.DB.prepare('SELECT show_all_posts FROM system_config').first();
-        // if (!sys.show_all_posts) query += " AND date > datetime('now')";
+        // 2. 如果配置为“只显示有效帖子”，则过滤掉过期时间
+        if (showAll === 0) {
+           query += " AND date >= datetime('now', 'localtime')";
+        }
 
         if (type && type !== 'all') {
           query += ' AND type = ?';
           params.push(type);
         }
 
-        // 排序：日期升序
         query += ' ORDER BY date ASC LIMIT 100';
-
         const { results } = await env.DB.prepare(query).bind(...params).all();
         return jsonResponse({ results });
       }
 
-      // [POST] 发布 (关键修改：只检查手机号)
+      // [POST] 发布 (受 "driver_cert_required" 和 "allow_repost" 控制)
       if (url.pathname === '/api/rides' && method === 'POST') {
         const data = await request.json();
         
-        // 1. 强制检查：用户是否存在且有手机号
-        const user = await env.DB.prepare('SELECT phone, status FROM users WHERE id = ?').bind(data.user_id).first();
+        // 1. 获取系统配置
+        const config = await env.DB.prepare('SELECT * FROM system_config WHERE id = 1').first();
         
-        if (!user) {
-            return errorResponse('用户不存在，请重新登录', 401);
-        }
-        
-        if (user.status !== 1) {
-            return errorResponse('账号已被封禁', 403);
+        // 2. 检查：是否允许重复发布
+        if (data.type === 'driver' && config.allow_driver_repost === 0) {
+            // 查该用户是否有未过期的帖子
+            const exist = await env.DB.prepare("SELECT id FROM rides WHERE user_id = ? AND status = 1 AND date > datetime('now')").bind(data.user_id).first();
+            if (exist) return errorResponse('平台禁止重复发布，请先完成已有行程', 403);
         }
 
-        // ★★★ 核心逻辑：只要有手机号，就可以发布，无需其他认证 ★★★
-        if (!user.phone || user.phone.length < 11) {
-            return errorResponse('必须授权手机号才能发布行程', 403); 
-            // 前端收到 403 应弹出绑定手机窗口
+        // 3. 检查：司机强制认证 (覆盖了之前的手机号检查)
+        // 逻辑：只要配了强制认证，就查 is_certified；否则只查手机号
+        const user = await env.DB.prepare('SELECT phone, is_certified FROM users WHERE id = ?').bind(data.user_id).first();
+        
+        if (!user || !user.phone) return errorResponse('请先授权绑定手机号', 403);
+
+        if (data.type === 'driver' && config.driver_cert_required === 1) {
+            if (user.is_certified !== 1) return errorResponse('车主须实名认证后方可发布', 403);
         }
 
-        // 2. 写入数据
+        // 4. 入库
         const result = await env.DB.prepare(`
           INSERT INTO rides (
-            user_id, type, origin, destination, date, seats, price, remark, contact, car_model, is_top, status
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            user_id, type, origin, destination, date, seats, price, remark, contact, car_model, status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
         `).bind(
           data.user_id, data.type, data.origin, data.destination, 
           data.date, data.seats, data.price, data.remark, 
-          data.contact, data.car_model || '', 0
+          data.contact, data.car_model || ''
         ).run();
 
         return jsonResponse({ success: true, id: result.meta.last_row_id });
@@ -182,34 +139,31 @@ export default {
       // [DELETE] 删除
       if (url.pathname === '/api/rides' && method === 'DELETE') {
         const id = url.searchParams.get('id');
-        const userId = url.searchParams.get('user_id');
-
-        // 验证权限
-        if (userId) {
-            const ride = await env.DB.prepare('SELECT user_id FROM rides WHERE id = ?').bind(id).first();
-            if (!ride) return errorResponse('信息不存在');
-            if (ride.user_id !== userId) return errorResponse('无权删除', 403);
-        }
-
         await env.DB.prepare('UPDATE rides SET status = -1 WHERE id = ?').bind(id).run();
         return jsonResponse({ success: true });
       }
 
       // ============================================================
-      // 模块四：后台数据统计 (对应截图)
+      // 3. 用户模块 (登录/同步)
       // ============================================================
-      
-      // [GET] 后台获取用户列表
-      if (url.pathname === '/api/admin/users' && method === 'GET') {
-          // 这里可以加简单的 admin_token 验证
-          const { results } = await env.DB.prepare('SELECT * FROM users ORDER BY created_at DESC LIMIT 50').all();
-          return jsonResponse({ results });
+      if (url.pathname === '/api/login' && method === 'POST') {
+        const body = await request.json();
+        // 这里的逻辑：有则更新，无则插入
+        await env.DB.prepare(`
+          INSERT INTO users (id, nickname, avatar, phone) VALUES (?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET 
+            nickname=excluded.nickname, 
+            avatar=excluded.avatar, 
+            phone=COALESCE(excluded.phone, phone)
+        `).bind(body.id, body.nickname, body.avatar, body.phone).run();
+        
+        return jsonResponse({ success: true });
       }
 
       return errorResponse('API Not Found', 404);
 
     } catch (e) {
-      return errorResponse('Server Error: ' + e.message, 500);
+      return errorResponse('Internal Error: ' + e.message, 500);
     }
   }
 };
