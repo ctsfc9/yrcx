@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, computed, nextTick, onMounted, watch } from 'vue';
+import { ref, reactive, computed, nextTick, onMounted, onUnmounted } from 'vue';
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
 // ==========================================
@@ -16,8 +16,8 @@ const sysConfig = reactive({
   about_us: ''
 });
 
-// 防白屏
-const appReady = ref(true); // 默认true，确保立即渲染
+// 防白屏：默认显示
+const appReady = ref(true); 
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
 let exitCounter = 0;
@@ -39,8 +39,7 @@ const refreshing = ref(false);
 const finished = ref(false);
 const submitLoading = ref(false);
 
-// ★★★ 核心修复：弹窗状态管理 ★★★
-// 使用 uiState 统一管理，不再依赖脆弱的 history.state
+// 弹窗状态
 const uiState = reactive({
   showRole: false,
   showDate: false,
@@ -48,7 +47,7 @@ const uiState = reactive({
   showMap: false,
   showAuth: false,
   showShare: false,
-  selectedRide: null, // 详情页数据，不为 null 时显示详情
+  selectedRide: null,
   authStep: 1
 });
 
@@ -94,7 +93,7 @@ const dateColumns = computed(() => {
   return [years, months, days, hours];
 });
 
-// 车型样式
+// 车型样式 (紫色混动)
 const getCarClass = (model) => {
   if (!model) return '';
   if (model.includes('混合')) return 'hybrid';
@@ -133,11 +132,15 @@ onMounted(async () => {
         isLogined.value = true;
       }
     }
-  } catch(e) { console.error("Init Error", e); }
+  } catch(e) {}
 
   // 初始化历史记录，防止第一次点击返回就退出
   window.history.replaceState({ page: 'home' }, null, document.URL);
   window.addEventListener('popstate', handlePopState);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('popstate', handlePopState);
 });
 
 const fetchSystemConfig = async () => {
@@ -350,18 +353,18 @@ const swapLocation = () => {
   postForm.destination = temp;
 };
 
-// ★★★ 修复：点击发布逻辑 ★★★
 const onPreSubmit = () => {
   if (!postForm.origin || !postForm.destination) { showFailToast('请完善路线'); return; }
   
   if (!userProfile.phone) { 
-    showDialog({ message: '发布前请绑定手机号' }).then(() => { uiState.showAuth = true; });
+    showDialog({ message: '发布前请绑定手机号' }).then(() => {
+        uiState.showAuth = true;
+    });
     return;
   }
   
   if (parseFloat(postForm.price) > 9999) { showFailToast('费用上限9999元'); return; }
   
-  // 核心：使用 uiState.showPayment
   uiState.showPayment = true; 
 };
 
@@ -455,28 +458,32 @@ const switchTab = (idx) => {
   window.history.pushState({ tab: idx }, null, document.URL);
 };
 
-// ★★★ 核心修复：纯净的导航逻辑，避免死循环 ★★★
+// ★★★ 核心修复：打开/关闭详情页逻辑 ★★★
 const openDetail = (item) => {
-  // 不操作 history.pushState，直接显示弹窗，防止路由冲突
+  // 1. 设置数据
   uiState.selectedRide = item;
+  // 2. 写入历史记录 (这一步是为了拦截物理返回键)
+  window.history.pushState({ popup: 'detail' }, null, document.URL);
 };
 
 const closeDetail = () => {
-  uiState.selectedRide = null;
+  // 3. 点击UI返回按钮时，调用浏览器后退，触发 popstate
+  window.history.back();
 };
 
-// 处理浏览器后退键
 const handlePopState = () => {
-  // 如果有任何弹窗打开，优先关闭弹窗，不退出
-  if (uiState.showRole || uiState.showMap || uiState.showShare || uiState.selectedRide || uiState.showDate || uiState.showPayment) {
+  // 4. 监听历史记录变化：如果当前有弹窗，就关闭它
+  if (uiState.selectedRide) {
+    uiState.selectedRide = null;
+    return;
+  }
+  // 处理其他弹窗关闭
+  if (uiState.showRole || uiState.showMap || uiState.showShare || uiState.showDate || uiState.showPayment) {
     uiState.showRole = false;
     uiState.showMap = false;
     uiState.showShare = false;
-    uiState.selectedRide = null;
     uiState.showDate = false;
     uiState.showPayment = false;
-    // 保持当前历史记录栈，防止浏览器真的后退
-    window.history.pushState({ page: 'buffer' }, null, document.URL);
     return;
   }
   
@@ -608,7 +615,7 @@ const handlePopState = () => {
                   <span class="badge" :class="item.type">{{ item.type==='driver'?'车主':'乘客' }}</span>
                   <span class="route">{{ item.origin }} <van-icon name="arrow" /> {{ item.destination }}</span>
                 </div>
-                <div class="call-btn" @click.stop="handleCall(item.contact)"><van-icon name="phone" color="#fff" size="18" /></div>
+                <div class="call-btn" @click.stop="handleCall(item.contact)"><van-icon name="phone" color="#fff" size="20" /></div>
               </div>
               
               <div class="card-row-2">
@@ -801,8 +808,8 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 
 .card-row-3 { font-size: 13px; color: #999; background: #f8f8f8; padding: 8px; border-radius: 6px; }
 
-/* 电话按钮 */
-.call-btn { flex-shrink: 0; font-size: 20px; color: #fff; background: #ff6600; padding: 0; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; }
+/* ★★★ 电话按钮：大小调整为 40px ★★★ */
+.call-btn { flex-shrink: 0; font-size: 22px; color: #fff; background: #ff6600; padding: 0; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; }
 
 /* 底部发布按钮 */
 .custom-tabbar { position: fixed; bottom: 0; width: 100%; height: 65px; background: #fff; display: flex; border-top: 1px solid #eee; z-index: 999; padding-bottom: constant(safe-area-inset-bottom); padding-bottom: env(safe-area-inset-bottom); }
@@ -832,7 +839,7 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .dot { width: 24px; height: 24px; border-radius: 50%; color: #fff; text-align: center; line-height: 24px; margin-right: 12px; flex-shrink: 0; font-size: 14px; }
 .dot.green { background: var(--green); } .dot.red { background: red; }
 .input-area { font-size: 16px; font-weight: bold; flex: 1; color: #333; }
-/* 互换按钮 */
+/* 互换按钮 - 向左移 */
 .swap-icon { position: absolute; right: 40px; top: 50%; transform: translateY(-50%); z-index: 10; background: #fff; padding: 8px; border-radius: 50%; box-shadow: 0 2px 8px rgba(0,0,0,0.1); cursor: pointer; }
 .form-row { display: flex; align-items: center; padding: 16px 0; border-bottom: 1px solid #f0f0f0; }
 .form-row .label { width: 75px; color: #333; font-size: 15px; font-weight: bold; }
