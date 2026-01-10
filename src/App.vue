@@ -5,12 +5,14 @@ import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToas
 // ==========================================
 // 1. 系统核心 (防白屏 & 错误捕捉)
 // ==========================================
-const appReady = ref(true); // 默认显示
+// ★★★ 核心：默认 true，确保界面立即渲染，绝不白屏 ★★★
+const appReady = ref(true); 
 const globalError = ref('');
 
-// 捕捉错误，防止白屏
+// 捕捉运行时错误，防止整个页面崩溃
 onErrorCaptured((err) => {
-  console.error("Vue Error:", err);
+  console.error("Runtime Error:", err);
+  // 仅在控制台记录，不阻断界面显示
   return false; 
 });
 
@@ -31,7 +33,7 @@ const sysConfig = reactive({
 // 状态管理
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
-let exitCounter = 0;
+let exitCounter = 0; // 退出计数器
 
 // 后台数据
 const adminLoginData = reactive({ username: '', password: '' });
@@ -85,11 +87,13 @@ let geocoderInstance = null;
 // ==========================================
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
-  // 浅拷贝 + 安全排序
+  // 安全排序：防止 invalid date 导致白屏
   return [...list.value].sort((a, b) => {
     const da = new Date(a.date || 0);
     const db = new Date(b.date || 0);
-    return (isNaN(da) ? 0 : da) - (isNaN(db) ? 0 : db);
+    const ta = isNaN(da.getTime()) ? 0 : da.getTime();
+    const tb = isNaN(db.getTime()) ? 0 : db.getTime();
+    return ta - tb;
   });
 });
 
@@ -106,25 +110,28 @@ const dateColumns = computed(() => {
   const months = Array.from({length: 12}, (_, i) => ({ text: `${i+1}月`, value: i+1 }));
   const days = Array.from({length: 31}, (_, i) => ({ text: `${i+1}日`, value: i+1 }));
   const hours = Array.from({length: 24}, (_, i) => ({ text: `${i}点`, value: i }));
-  // 分钟选择
+  // 增加分钟选择
   const minutes = [{ text: '00分', value: 0 }, { text: '10分', value: 10 }, { text: '20分', value: 20 }, { text: '30分', value: 30 }, { text: '40分', value: 40 }, { text: '50分', value: 50 }];
   return [years, months, days, hours, minutes];
 });
 
-// 车型样式 (紫色混动)
+// ★ 车型样式 (紫色混动) - 增加空值检查防白屏 ★
 const getCarClass = (model) => {
-  if (!model) return '';
+  if (!model || typeof model !== 'string') return '';
   if (model.includes('混合')) return 'hybrid';
   if (model.includes('电')) return 'electric';
   return 'gas';
 };
 
 // ==========================================
-// 4. 初始化
+// 4. 初始化 & 路由守卫
 // ==========================================
 onMounted(async () => {
+  // 初始化路由状态
   if (!window.location.hash) {
-    try { window.history.replaceState({ page: 'home' }, null, document.URL); } catch(e){}
+    try {
+      window.history.replaceState({ page: 'home' }, null, document.URL);
+    } catch(e) {}
   }
   window.addEventListener('popstate', handlePopState);
 
@@ -141,12 +148,14 @@ onMounted(async () => {
       localStorage.setItem('user_info', JSON.stringify(userProfile));
     }
 
-    fetchSystemConfig();
-    onLoad(); 
+    // 异步加载数据 (加try-catch，即使接口挂了也不白屏)
+    fetchSystemConfig().catch(e => console.warn('Config load failed', e));
+    onLoad().catch(e => console.warn('List load failed', e));
     
+    // 延迟加载地图
     setTimeout(() => {
       loadAMapScript(sysConfig.amap_key || 'a4f6e1e5da68bc9fe5f984d69a3f6b2e');
-    }, 800);
+    }, 1000);
 
     if (window.location.pathname === '/admin') {
       isSystemAdmin.value = true;
@@ -155,7 +164,9 @@ onMounted(async () => {
         isLogined.value = true;
       }
     }
-  } catch(e) { console.error("Init Error", e); }
+  } catch(e) {
+    console.error("Init Error:", e);
+  }
 });
 
 onUnmounted(() => {
@@ -173,11 +184,13 @@ const closeDetail = () => {
 };
 
 const handlePopState = () => {
+  // 1. 关闭详情页
   if (!window.location.hash.includes('detail') && uiState.selectedRide) {
     uiState.selectedRide = null;
     return;
   }
   
+  // 2. 关闭其他弹窗
   if (uiState.showRole || uiState.showMap || uiState.showShare || uiState.showDate || uiState.showPayment || uiState.showAuth) {
     uiState.showRole = false;
     uiState.showMap = false;
@@ -189,10 +202,12 @@ const handlePopState = () => {
     return;
   }
 
+  // 3. 首页防误触退出
   if (activeTab.value === 0) {
     exitCounter++;
     if (exitCounter < 2) {
       showToast('再按一次退出');
+      // 补回历史记录，防止退出
       window.history.pushState(null, null, document.URL);
       setTimeout(() => { exitCounter = 0; }, 2000);
     }
@@ -205,16 +220,40 @@ const handlePopState = () => {
 // ==========================================
 // 5. API & 工具函数
 // ==========================================
+// ★★★ 修复：日期格式化 (2026年x月x日x点) ★★★
 const formatDate = (str) => {
   if (!str) return '时间待定';
-  let safeStr = String(str).replace(/-/g, '/'); 
-  const d = new Date(safeStr);
-  if (isNaN(d.getTime())) return str; 
-  const m = d.getMonth() + 1;
-  const da = d.getDate();
-  const h = String(d.getHours()).padStart(2, '0');
-  const min = String(d.getMinutes()).padStart(2, '0');
-  return `${m}月${da}日 ${h}:${min}`;
+  
+  try {
+    // 兼容处理：解决 iOS 下 new Date('2023-01-01') 可能为 NaN 的问题
+    let safeStr = String(str).replace(/-/g, '/'); 
+    // 如果是 T 分隔符，替换为空格
+    safeStr = safeStr.replace('T', ' ');
+    // 去掉可能的毫秒
+    safeStr = safeStr.split('.')[0];
+
+    const d = new Date(safeStr);
+    
+    // 如果解析失败，尝试正则强行提取
+    if (isNaN(d.getTime())) {
+       // 简单正则匹配 YYYY-MM-DD HH:mm
+       const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})[T\s](\d{1,2})[:](\d{1,2})/);
+       if(match) {
+         return `${match[1]}年${match[2]}月${match[3]}日 ${match[4]}点`;
+       }
+       return str; // 实在不行返回原样
+    }
+
+    const y = d.getFullYear();
+    const m = d.getMonth() + 1;
+    const da = d.getDate();
+    const h = d.getHours();
+    
+    // 格式：2026年2月18日 8点
+    return `${y}年${m}月${da}日 ${h}点`;
+  } catch (e) {
+    return str;
+  }
 };
 
 const fetchSystemConfig = async () => {
@@ -258,8 +297,11 @@ const fetchMyRides = async () => {
 const handleRealPublish = async () => {
   if (!userProfile.phone) { showFailToast('无手机号'); return; }
   submitLoading.value = true;
-  const dateVal = postForm.date || new Date().toISOString();
   
+  // 构造正确的时间格式
+  let dateVal = postForm.date;
+  if (!dateVal) dateVal = new Date().toISOString();
+
   const newRide = { ...postForm, user_id: userProfile.id, contact: userProfile.phone, date: dateVal };
   if(!newRide.price) newRide.price = '面议';
   if(!newRide.remark || newRide.remark.length===0) newRide.remark = '无备注';
@@ -392,6 +434,7 @@ const onConfirmDate = ({selectedOptions}) => {
   const v = selectedOptions.map(o=>o.value); 
   const min = String(v[4] || 0).padStart(2, '0');
   postForm.dateDisplay=`${v[0]}年${v[1]}月${v[2]}日 ${v[3]}:${min}`; 
+  // 保存格式：YYYY-MM-DDTHH:mm:00
   postForm.date=`${v[0]}-${String(v[1]).padStart(2,'0')}-${String(v[2]).padStart(2,'0')}T${String(v[3]).padStart(2,'0')}:${min}:00`; 
   uiState.showDate=false; 
 };
@@ -412,6 +455,10 @@ watch(mapSearchKeyword, (newVal) => {
 </script>
 
 <template>
+  <div v-if="globalError" style="position:fixed;top:0;left:0;width:100%;background:red;color:#fff;z-index:99999;padding:15px;font-size:12px;text-align:center;">
+    ⚠️ {{ globalError }}
+  </div>
+
   <div v-if="appReady" class="app-container">
     
     <div v-if="isSystemAdmin" class="admin-wrapper">
@@ -551,7 +598,6 @@ watch(mapSearchKeyword, (newVal) => {
           </div>
         </div>
         <div class="stats-row">
-          <div class="stat-item"><b>{{ userProfile.balance }}</b><span>余额</span></div>
           <div class="stat-item"><b>{{ myRidesList.length }}</b><span>发布</span></div>
           <div class="stat-item"><b>0</b><span>预约</span></div>
         </div>
