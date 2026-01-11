@@ -3,6 +3,7 @@ export async function onRequest(context) {
     const url = new URL(request.url);
     const method = request.method;
 
+    // 跨域头
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': '*',
@@ -42,13 +43,38 @@ export async function onRequest(context) {
             }
         }
 
-        // 2. 发布
+        // 2. 列表 (最简逻辑，防止报错)
+        if (url.pathname === '/api/rides' && method === 'GET') {
+            const id = url.searchParams.get('id');
+            // 详情
+            if (id) {
+                const ride = await env.DB.prepare('SELECT * FROM rides WHERE id=?').bind(id).first();
+                return jsonResponse({ ride });
+            }
+            // 列表
+            const type = url.searchParams.get('type');
+            let q = 'SELECT * FROM rides WHERE status=1 AND is_hidden=0';
+            const p = [];
+            
+            // 读取配置判断是否显示过期
+            try {
+                const conf = await env.DB.prepare('SELECT show_all_posts FROM system_config').first();
+                if (conf && !conf.show_all_posts) { q += " AND date >= ?"; p.push(nowStr); }
+            } catch(e) {}
+
+            if (type && type !== 'all') { q += ' AND type=?'; p.push(type); }
+            q += ' ORDER BY created_at DESC LIMIT 50';
+            
+            const { results } = await env.DB.prepare(q).bind(...p).all();
+            return jsonResponse({ results: results || [] });
+        }
+
+        // 3. 发布
         if (url.pathname === '/api/rides' && method === 'POST') {
             const data = await request.json();
             const user = await env.DB.prepare('SELECT phone FROM users WHERE id=?').bind(data.user_id).first();
             if (!user || !user.phone) return jsonResponse({ error: '请先绑定手机号' }, 403);
             
-            // 封号检查
             const ban = await env.DB.prepare('SELECT id FROM users WHERE phone=? AND status=0').bind(user.phone).first();
             if (ban) return jsonResponse({ error: '账号已被封禁' }, 403);
 
@@ -56,98 +82,56 @@ export async function onRequest(context) {
             return jsonResponse({ success: true, id: res.meta.last_row_id });
         }
 
-        // 3. 列表 (带单条查询)
-        if (url.pathname === '/api/rides' && method === 'GET') {
-            const id = url.searchParams.get('id');
-            // 单条详情查询 (用于分享链接进入)
-            if (id) {
-                const ride = await env.DB.prepare('SELECT * FROM rides WHERE id = ?').bind(id).first();
-                return jsonResponse({ ride });
-            }
-
-            const type = url.searchParams.get('type');
-            let q = 'SELECT * FROM rides WHERE status=1 AND is_hidden=0';
-            const p = [];
-            const conf = await env.DB.prepare('SELECT show_all_posts FROM system_config').first();
-            if (conf && !conf.show_all_posts) { q += " AND date >= ?"; p.push(nowStr); }
-            if (type && type !== 'all') { q += ' AND type=?'; p.push(type); }
-            q += ' ORDER BY created_at DESC LIMIT 50';
-            const { results } = await env.DB.prepare(q).bind(...p).all();
-            return jsonResponse({ results: results || [] });
-        }
-
-        // 4. 后台管理接口
-        // 统计
-        if (url.pathname.includes('/api/admin/stats')) {
-            const totalUsers = await env.DB.prepare('SELECT COUNT(*) as c FROM users').first('c');
-            const certifiedUsers = await env.DB.prepare('SELECT COUNT(*) as c FROM users WHERE is_certified=1').first('c');
-            const male = await env.DB.prepare("SELECT COUNT(*) as c FROM users WHERE gender='男'").first('c');
-            const female = await env.DB.prepare("SELECT COUNT(*) as c FROM users WHERE gender='女'").first('c');
-            const newUsersToday = await env.DB.prepare(`SELECT COUNT(*) as c FROM users WHERE created_at LIKE '${today}%'`).first('c');
-            
-            let monthRecharge = 0, todayRecharge = 0;
-            try {
-                 const curMonth = today.substring(0,7);
-                 monthRecharge = await env.DB.prepare(`SELECT SUM(amount) as s FROM transactions WHERE type='recharge' AND created_at LIKE '${curMonth}%'`).first('s') || 0;
-                 todayRecharge = await env.DB.prepare(`SELECT SUM(amount) as s FROM transactions WHERE type='recharge' AND created_at LIKE '${today}%'`).first('s') || 0;
-            } catch(e){}
-            return jsonResponse({ totalUsers, certifiedUsers, male, female, newUsersToday, monthRecharge, todayRecharge });
-        }
-
-        // 列表
-        if (url.pathname.includes('/api/admin/users')) {
-            const { results } = await env.DB.prepare('SELECT * FROM users ORDER BY created_at DESC LIMIT 100').all();
-            return jsonResponse({ results: results || [] });
-        }
-        if (url.pathname.includes('/api/admin/all_rides')) {
-            const { results } = await env.DB.prepare(`SELECT r.*, u.nickname as user_nickname, u.avatar as user_avatar FROM rides r LEFT JOIN users u ON r.user_id = u.id ORDER BY r.created_at DESC LIMIT 100`).all();
-            return jsonResponse({ results: results || [] });
+        // 4. 后台
+        if (url.pathname.includes('/api/admin')) {
+             if (url.pathname.includes('stats')) {
+                const totalUsers = await env.DB.prepare('SELECT COUNT(*) as c FROM users').first('c') || 0;
+                const newUsersToday = await env.DB.prepare(`SELECT COUNT(*) as c FROM users WHERE created_at LIKE '${today}%'`).first('c') || 0;
+                return jsonResponse({ totalUsers, newUsersToday }); // 简化返回，防止报错
+             }
+             if (url.pathname.includes('users')) {
+                 const { results } = await env.DB.prepare('SELECT * FROM users ORDER BY created_at DESC LIMIT 50').all();
+                 return jsonResponse({ results: results || [] });
+             }
+             if (url.pathname.includes('all_rides')) {
+                 const { results } = await env.DB.prepare('SELECT * FROM rides ORDER BY created_at DESC LIMIT 50').all();
+                 return jsonResponse({ results: results || [] });
+             }
+             if (url.pathname.includes('get_config')) {
+                 const c = await env.DB.prepare('SELECT * FROM system_config WHERE id=1').first();
+                 return jsonResponse(c || {});
+             }
+             if (url.pathname.includes('save_config')) {
+                 const b = await request.json();
+                 await env.DB.prepare(`UPDATE system_config SET platform_name=?, notice_text=?, banners=?, tags_driver=?, tags_passenger=? WHERE id=1`)
+                    .bind(b.platform_name, b.notice_text, b.banners, b.tags_driver, b.tags_passenger).run();
+                 return jsonResponse({ success: true });
+             }
+             if (url.pathname.includes('toggle_user')) {
+                 const b = await request.json();
+                 await env.DB.prepare('UPDATE users SET status=? WHERE id=?').bind(b.status, b.id).run();
+                 return jsonResponse({ success: true });
+             }
+             if (url.pathname.includes('user') && method === 'DELETE') {
+                 const id = url.searchParams.get('id');
+                 await env.DB.prepare('DELETE FROM users WHERE id=?').bind(id).run();
+                 return jsonResponse({ success: true });
+             }
+             if (url.pathname.includes('toggle_ride')) {
+                  const b = await request.json();
+                  await env.DB.prepare('UPDATE rides SET is_hidden=? WHERE id=?').bind(b.hidden, b.id).run();
+                  return jsonResponse({ success: true });
+             }
         }
         
-        // ★修复：删除用户 (DELETE方法参数处理)★
-        if (url.pathname.includes('/api/admin/user') && method === 'DELETE') {
-            const id = url.searchParams.get('id'); 
-            await env.DB.prepare('DELETE FROM users WHERE id=?').bind(id).run();
-            return jsonResponse({ success: true });
-        }
-
-        // ★修复：封号状态更新★
-        if (url.pathname.includes('/api/admin/toggle_user') && method === 'POST') {
-            const body = await request.json();
-            // 确保 status 是整数 0 或 1
-            await env.DB.prepare('UPDATE users SET status=? WHERE id=?').bind(Number(body.status), body.id).run();
-            return jsonResponse({ success: true });
-        }
-
-        // 其他接口
-        if (url.pathname.includes('/api/admin/add_user') && method === 'POST') {
-            const body = await request.json();
-            const newId = 'u_' + Date.now();
-            await env.DB.prepare(`INSERT INTO users (id, nickname, phone, balance, status, created_at, last_login) VALUES (?, ?, ?, ?, 1, ?, ?)`).bind(newId, body.nickname, body.phone, Number(body.balance)||0, nowStr, nowStr).run();
-            return jsonResponse({ success: true });
-        }
-        if (url.pathname.includes('/api/admin/toggle_ride') && method === 'POST') {
-             const body = await request.json();
-             await env.DB.prepare('UPDATE rides SET is_hidden=? WHERE id=?').bind(body.hidden, body.id).run();
-             return jsonResponse({ success: true });
-        }
-        if (url.pathname.includes('/api/admin/get_config')) {
-            const config = await env.DB.prepare('SELECT * FROM system_config WHERE id = 1').first();
-            return jsonResponse(config || {});
-        }
-        if (url.pathname.includes('/api/admin/save_config')) {
-            const body = await request.json();
-            await env.DB.prepare(`UPDATE system_config SET platform_name=?, amap_key=?, notice_text=?, banners=?, tags_driver=?, tags_passenger=?, show_all_posts=?, passenger_fee=?, driver_fee=?, driver_cert_required=?, allow_driver_repost=? WHERE id=1`)
-               .bind(body.platform_name, body.amap_key, body.notice_text, body.banners, body.tags_driver, body.tags_passenger, body.show_all_posts?1:0, body.passenger_fee, body.driver_fee, body.driver_cert_required?1:0, body.allow_driver_repost?1:0).run();
-            return jsonResponse({ success: true });
-        }
         if (method === 'DELETE' && url.pathname.includes('/api/rides')) {
-            await env.DB.prepare('DELETE FROM rides WHERE id=?').bind(url.searchParams.get('id')).run();
+            const id = url.searchParams.get('id');
+            await env.DB.prepare('DELETE FROM rides WHERE id=?').bind(id).run();
             return jsonResponse({ success: true });
         }
 
-        return jsonResponse({ error: 'API Not Found' }, 404);
+        return jsonResponse({ error: 'Not Found' }, 404);
     } catch (e) {
-        return new Response(JSON.stringify({ error: "Server Error", message: e.message }), { status: 500, headers: corsHeaders });
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
     }
 }
