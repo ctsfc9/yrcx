@@ -1,5 +1,5 @@
 /**
- * V59 后端 - 逻辑修复版
+ * V62 后端 - 稳定版
  */
 export async function onRequest(context) {
     const { request, env } = context;
@@ -26,7 +26,6 @@ export async function onRequest(context) {
         if (url.pathname === '/api/login' && method === 'POST') {
             const body = await request.json();
             let exist = await env.DB.prepare('SELECT id FROM users WHERE id=?').bind(body.id).first();
-            // 找回老号逻辑
             if (!exist && body.phone) {
                 const old = await env.DB.prepare('SELECT id FROM users WHERE phone=?').bind(body.phone).first();
                 if (old) exist = old; 
@@ -46,14 +45,12 @@ export async function onRequest(context) {
             }
         }
 
-        // 2. 发布 (★修复：按手机号封禁★)
+        // 2. 发布 (手机号封禁检查)
         if (url.pathname === '/api/rides' && method === 'POST') {
             const data = await request.json();
-            // 1. 查当前用户的手机号
             const user = await env.DB.prepare('SELECT phone FROM users WHERE id=?').bind(data.user_id).first();
             if (!user || !user.phone) return jsonResponse({ error: '请先绑定手机号' }, 403);
             
-            // 2. 查该手机号是否被封 (status=0)
             const ban = await env.DB.prepare('SELECT id FROM users WHERE phone=? AND status=0').bind(user.phone).first();
             if (ban) return jsonResponse({ error: '账号已被封禁' }, 403);
 
@@ -69,13 +66,14 @@ export async function onRequest(context) {
             const conf = await env.DB.prepare('SELECT show_all_posts FROM system_config').first();
             if (conf && !conf.show_all_posts) { q += " AND date >= ?"; p.push(nowStr); }
             if (type && type !== 'all') { q += ' AND type=?'; p.push(type); }
-            q += ' ORDER BY created_at DESC LIMIT 50';
+            q += ' ORDER BY created_at DESC LIMIT 100';
             const { results } = await env.DB.prepare(q).bind(...p).all();
             return jsonResponse({ results: results || [] });
         }
 
-        // 4. 后台管理 (URL匹配更宽松，防止路径错误)
-        if (url.pathname.includes('/admin/stats')) {
+        // 4. 后台管理接口
+        // 统计
+        if (url.pathname.includes('/api/admin/stats')) {
             const totalUsers = await env.DB.prepare('SELECT COUNT(*) as c FROM users').first('c');
             const certifiedUsers = await env.DB.prepare('SELECT COUNT(*) as c FROM users WHERE is_certified=1').first('c');
             const male = await env.DB.prepare("SELECT COUNT(*) as c FROM users WHERE gender='男'").first('c');
@@ -91,44 +89,44 @@ export async function onRequest(context) {
             return jsonResponse({ totalUsers, certifiedUsers, male, female, newUsersToday, monthRecharge, todayRecharge });
         }
 
-        if (url.pathname.includes('/admin/users')) {
+        if (url.pathname.includes('/api/admin/users')) {
             const { results } = await env.DB.prepare('SELECT * FROM users ORDER BY created_at DESC LIMIT 100').all();
             return jsonResponse({ results: results || [] });
         }
-        if (url.pathname.includes('/admin/all_rides')) {
+        if (url.pathname.includes('/api/admin/all_rides')) {
             const { results } = await env.DB.prepare(`SELECT r.*, u.nickname as user_nickname, u.avatar as user_avatar FROM rides r LEFT JOIN users u ON r.user_id = u.id ORDER BY r.created_at DESC LIMIT 100`).all();
             return jsonResponse({ results: results || [] });
         }
         
         // ★修复：删除用户★
-        if (url.pathname.includes('/admin/user') && method === 'DELETE') {
+        if (url.pathname.includes('/api/admin/user') && method === 'DELETE') {
             const id = url.searchParams.get('id');
             await env.DB.prepare('DELETE FROM users WHERE id=?').bind(id).run();
             return jsonResponse({ success: true });
         }
         
-        // 其他操作
-        if (url.pathname.includes('/admin/toggle_user')) {
+        // 其他
+        if (url.pathname.includes('/api/admin/toggle_user')) {
             const body = await request.json();
             await env.DB.prepare('UPDATE users SET status=? WHERE id=?').bind(body.status, body.id).run();
             return jsonResponse({ success: true });
         }
-        if (url.pathname.includes('/admin/add_user')) {
+        if (url.pathname.includes('/api/admin/add_user')) {
             const body = await request.json();
             const newId = 'u_' + Date.now();
             await env.DB.prepare(`INSERT INTO users (id, nickname, phone, balance, status, created_at, last_login) VALUES (?, ?, ?, ?, 1, ?, ?)`).bind(newId, body.nickname, body.phone, Number(body.balance)||0, nowStr, nowStr).run();
             return jsonResponse({ success: true });
         }
-        if (url.pathname.includes('/admin/toggle_ride')) {
+        if (url.pathname.includes('/api/admin/toggle_ride')) {
              const body = await request.json();
              await env.DB.prepare('UPDATE rides SET is_hidden=? WHERE id=?').bind(body.hidden, body.id).run();
              return jsonResponse({ success: true });
         }
-        if (url.pathname.includes('/admin/get_config')) {
+        if (url.pathname.includes('/api/admin/get_config')) {
             const config = await env.DB.prepare('SELECT * FROM system_config WHERE id = 1').first();
             return jsonResponse(config || {});
         }
-        if (url.pathname.includes('/admin/save_config')) {
+        if (url.pathname.includes('/api/admin/save_config')) {
             const body = await request.json();
             await env.DB.prepare(`UPDATE system_config SET platform_name=?, amap_key=?, notice_text=?, banners=?, tags_driver=?, tags_passenger=?, show_all_posts=?, passenger_fee=?, driver_fee=?, driver_cert_required=?, allow_driver_repost=? WHERE id=1`)
                .bind(body.platform_name, body.amap_key, body.notice_text, body.banners, body.tags_driver, body.tags_passenger, body.show_all_posts?1:0, body.passenger_fee, body.driver_fee, body.driver_cert_required?1:0, body.allow_driver_repost?1:0).run();
@@ -139,7 +137,7 @@ export async function onRequest(context) {
             return jsonResponse({ success: true });
         }
 
-        return jsonResponse({ error: 'API Not Found' }, 404);
+        return jsonResponse({ error: 'Not Found' }, 404);
     } catch (e) {
         return new Response(JSON.stringify({ error: "Server Error", message: e.message }), { status: 500, headers: corsHeaders });
     }
