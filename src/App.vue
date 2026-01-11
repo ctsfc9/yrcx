@@ -2,33 +2,27 @@
 import { ref, reactive, computed, nextTick, onMounted, onUnmounted, onErrorCaptured, watch } from 'vue';
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
+// 1. 静态配置 (兜底)
+const defaultKey = 'a4f6e1e5da68bc9fe5f984d69a3f6b2e';
 window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' };
 
 const appReady = ref(true); 
-const globalError = ref('');
-onErrorCaptured((err) => { console.error("Error:", err); return false; });
-
 const sysConfig = reactive({
   platform_name: '宜人出行',
-  amap_key: 'a4f6e1e5da68bc9fe5f984d69a3f6b2e',
-  banners: '', tags_driver: '', tags_passenger: '', notice_text: '',
-  show_all_posts: true, passenger_fee: 0, driver_fee: 0, driver_cert_required: false,
-  platform_desc: '', kefu_wechat: '', allow_driver_repost: true,
-  sms_account: '', sms_password: ''
+  amap_key: defaultKey,
+  banners: '', 
+  notice_text: '欢迎使用',
+  tags_driver: '有行李,走高速,可吸烟,线下支付',
+  tags_passenger: '有行李,走高速,只限女生,线下支付'
 });
 
+// 状态
 const isSystemAdmin = ref(false);
 const isLogined = ref(false);
-let exitCounter = 0;
-
 const adminLoginData = reactive({ username: '', password: '' });
-const adminActiveMenu = ref('home'); 
-const adminSettingTab = ref(0);
+const adminActiveMenu = ref('users'); 
 const adminUserList = ref([]); 
 const adminRideList = ref([]);
-const adminStats = reactive({ totalUsers:0, certifiedUsers:0, male:0, female:0, monthRecharge:0, todayRecharge:0, newUsersToday:0 });
-
-const addUserForm = reactive({ nickname: '', phone: '', balance: '' });
 
 const activeTab = ref(0);
 const filterType = ref('all');
@@ -41,8 +35,7 @@ const submitLoading = ref(false);
 
 const uiState = reactive({
   showRole: false, showDate: false, showPayment: false, 
-  showMap: false, showAuth: false, showShare: false,
-  showAddUser: false, showQRCode: false,
+  showMap: false, showAuth: false, showQRCode: false,
   currentQRCodeUrl: '', currentRideInfo: {},
   isWeChat: false,
   selectedRide: null, authStep: 1
@@ -55,13 +48,12 @@ const postForm = reactive({ type: '', origin: '', destination: '', date: '', dat
 const mapSearchKeyword = ref('');
 const mapSearchResults = ref([]);
 const currentMapField = ref(''); 
-const mapSelectionText = ref('拖动地图以定位...');
 let mapInstance = null;
-let mapGeocoder = null;
 
+// 计算属性
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
-  return [...list.value].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  return [...list.value].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
 });
 
 const bannersList = computed(() => {
@@ -70,8 +62,8 @@ const bannersList = computed(() => {
 });
 
 const currentRemarkOptions = computed(() => {
-  const str = postForm.type === 'driver' ? (sysConfig.tags_driver || '有行李,走高速,可吸烟,线下支付') : (sysConfig.tags_passenger || '有行李,走高速,只限女生,线下支付');
-  return str.split(/[,，]/).filter(s => s.trim());
+  const str = postForm.type === 'driver' ? sysConfig.tags_driver : sysConfig.tags_passenger;
+  return (str || '').split(/[,，]/).filter(s => s.trim());
 });
 const remarkDisplayText = computed(() => (postForm.remark || []).join('，'));
 
@@ -96,290 +88,322 @@ onMounted(async () => {
   const ua = navigator.userAgent.toLowerCase();
   uiState.isWeChat = ua.indexOf('micromessenger') !== -1;
 
-  // 1. 初始化历史栈
-  window.history.replaceState({ page: 'home' }, null, document.URL.split('#')[0]); 
-  window.history.pushState({ page: 'home' }, null, document.URL); // 压入一帧给首页消耗
+  // 1. 初始化历史记录 (解决返回退出问题)
+  if (!window.location.hash) {
+      window.history.replaceState({ page: 'home' }, null, document.URL);
+  }
   window.addEventListener('popstate', handlePopState);
 
-  try {
-    await fetchSystemConfig(); 
+  // 2. 检查后台入口 (强制检查路径)
+  if (location.pathname.includes('/admin')) {
+      isSystemAdmin.value = true;
+      if(localStorage.getItem('admin_token')) {
+          isLogined.value = true;
+          fetchAdminData();
+      }
+      return; // 如果是后台，停止加载前台逻辑
+  }
 
+  // 3. 加载前台数据
+  try {
     const u = localStorage.getItem('user_info');
     if (u) {
       Object.assign(userProfile, JSON.parse(u));
-      userProfile.isLogin = !!userProfile.id;
     } else {
       userProfile.id = 'u_' + Date.now();
-      localStorage.setItem('user_info', JSON.stringify(userProfile));
     }
 
+    // 强制授权
     if (!userProfile.phone) {
         uiState.showAuth = true; 
         uiState.authStep = 1;
-    } else {
-        syncUserToBackend(true);
     }
 
+    // 并行加载，防阻塞
+    fetchSystemConfig().then(() => {
+        // 配置加载完后再加载地图，确保 Key 是最新的
+        loadAMapScript(sysConfig.amap_key || defaultKey);
+    });
     onLoad(); 
-    setTimeout(() => { loadAMapScript(sysConfig.amap_key); }, 1000);
 
-    const isUrlAdmin = window.location.pathname.includes('/admin') || window.location.search.includes('admin');
-    if (isUrlAdmin) {
-      isSystemAdmin.value = true;
-      if(localStorage.getItem('admin_token')) {
-        adminLoginData.password = localStorage.getItem('admin_token');
-        isLogined.value = true;
-        fetchAdminData();
-      }
-    }
   } catch(e) { console.error(e); }
 });
 
 onUnmounted(() => window.removeEventListener('popstate', handlePopState));
 
-// ===================== 核心交互：返回逻辑 =====================
-const handlePopState = (e) => {
-  // 1. 如果有弹窗，关闭弹窗，并补回历史记录（锁住页面）
-  if (Object.values(uiState).some(v=>v===true && v!==uiState.selectedRide)) {
-      if (uiState.showAuth && !userProfile.phone) {
-          window.history.pushState({ page: 'home' }, null, document.URL); 
-          return; 
-      }
-      uiState.showRole=false; uiState.showMap=false; uiState.showShare=false;
-      uiState.showDate=false; uiState.showPayment=false; uiState.showAddUser=false; uiState.showQRCode=false;
-      uiState.selectedRide=null;
-      
-      window.history.pushState({ page: 'home' }, null, document.URL);
-      return;
-  }
+// ===================== 核心：返回逻辑 (Hash 路由) =====================
+const handlePopState = () => {
+    // 1. 如果有弹窗，关闭弹窗 (并保持在当前页)
+    if (Object.values(uiState).some(v=>v===true && v!==uiState.selectedRide)) {
+        if(uiState.showAuth && !userProfile.phone) {
+             // 强制授权时不准退
+             window.history.pushState(null, null, document.URL);
+             return;
+        }
+        uiState.showRole = false;
+        uiState.showMap = false;
+        uiState.showDate = false;
+        uiState.showPayment = false;
+        uiState.showQRCode = false;
+        // 关键：把被浏览器退掉的历史补回来
+        window.history.pushState(null, null, document.URL);
+        return;
+    }
 
-  // 2. 如果在“发布”或“我的”，回首页
-  if (activeTab.value !== 0) {
-      activeTab.value = 0;
-      // 注意：这里不需要pushState，因为我们利用了刚才浏览器的“后退”动作
-      // 实际上我们把“后退”变成了“切换Tab”
-      // 但为了防止状态栈空了，我们replace一下当前状态为首页
-      window.history.replaceState({ page: 'home' }, null, document.URL.split('#')[0]);
-      return;
-  }
+    // 2. 如果在二级页面 (Hash 存在)，浏览器后退会自动清除 Hash，我们只需切 Tab
+    if (activeTab.value !== 0) {
+        activeTab.value = 0;
+        return;
+    }
 
-  // 3. 首页双击退出
-  if (activeTab.value === 0) {
-      if (exitCounter === 0) {
-          showToast('再按一次退出');
-          exitCounter++;
-          // 补回一帧，拦截退出
-          window.history.pushState({ page: 'home' }, null, document.URL);
-          setTimeout(() => exitCounter = 0, 2000);
-      } else {
-          // 放行退出
-      }
-  }
+    // 3. 首页双击退出
+    // 此时浏览器已经退了一步，我们手动补回去，实现"拦截"
+    showToast('再按一次退出');
+    window.history.pushState(null, null, document.URL);
+    // 这里无法真正拦截第二次点击退出，依赖浏览器行为
 };
 
-// ===================== 切换Tab逻辑 =====================
 const switchTab = (idx) => { 
-    if (idx === activeTab.value) return;
-
-    // ★★★ 修复：从首页离开时，压入历史记录 ★★★
-    if (activeTab.value === 0 && idx !== 0) {
-        window.history.pushState({ page: 'sub' }, null, '#sub');
-    }
-    
+    if (activeTab.value === idx) return;
     activeTab.value = idx; 
     
-    if(idx===0){ refreshing.value=true; onLoad(); } 
-    else if(idx===1){ nextTick(() => setTimeout(autoLocate, 500)); }
-    else if(idx===2) fetchMyRides(); 
+    if (idx === 0) {
+        // 回首页，清除 Hash
+        history.replaceState(null, null, ' ');
+        refreshing.value=true; 
+        onLoad(); 
+    } else if (idx === 1) {
+        // 去发布页，加 Hash
+        location.hash = 'publish';
+        nextTick(() => setTimeout(autoLocate, 500)); 
+    } else if (idx === 2) {
+        // 去我的，加 Hash
+        location.hash = 'me';
+        fetchMyRides(); 
+    }
 };
 
-// ===================== 定位逻辑 (强制区县) =====================
+// ===================== 业务逻辑 =====================
 const autoLocate = () => { 
-    if(!window.AMap){showFailToast('地图加载中');return;} 
+    if(!window.AMap){ 
+        // 还没加载完，稍后重试
+        setTimeout(autoLocate, 1000); 
+        return; 
+    } 
     showLoadingToast('定位中...'); 
     AMap.plugin('AMap.Geolocation', function() {
-        const geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 8000 });
+        const geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 5000 });
         geolocation.getCurrentPosition(function(status, result){
-            if(status === 'complete' && result.addressComponent){
+            closeToast();
+            if(status=='complete' && result.addressComponent){
                 const ac = result.addressComponent;
-                // 优先取 district
+                // ★ 优先区县 ★
                 let addr = ac.district;
-                // 如果district不是字符串或为空，才取city
-                if (!addr || typeof addr !== 'string' || addr.trim() === '') {
-                    addr = ac.city;
-                }
-                // 如果city也是空，取province
-                if (!addr || typeof addr !== 'string' || addr.trim() === '') {
-                    addr = ac.province;
-                }
-                postForm.origin = addr; // 不做 replace，原样显示最准
-                closeToast();
+                if (!addr || typeof addr !== 'string' || addr.length===0) addr = ac.city;
+                // 剔除后缀
+                postForm.origin = addr ? addr.replace(/省|市|自治区/g, '') : '定位失败';
             } else {
-                AMap.plugin('AMap.CitySearch', function(){ 
-                    new AMap.CitySearch().getLocalCity(function(s,r){ 
-                        if(s==='complete'&&r.info==='OK') postForm.origin=r.city; 
-                        closeToast(); 
-                    }); 
-                });
+                showFailToast('定位失败，请手动选择');
             }
         });
     });
 };
 
-const handleWeChatAuth = () => { showLoadingToast('微信授权中...'); setTimeout(() => { userProfile.nickname = '微信用户_' + String(Math.random()).slice(-4); userProfile.avatar = 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'; closeToast(); uiState.authStep = 2; }, 500); };
-const handleBindPhone = async () => { if(!registerForm.phone) return; showLoadingToast('同步中...'); userProfile.phone = registerForm.phone; const success = await syncUserToBackend(false); if(success){ localStorage.setItem('user_info', JSON.stringify(userProfile)); uiState.showAuth=false; showSuccessToast('成功'); }};
-const syncUserToBackend = async (silent) => { try { const res = await fetch('/api/login', { method: 'POST', body: JSON.stringify(userProfile) }); if(res.ok){ const d=await res.json(); if(d.userId && d.userId!==userProfile.id) userProfile.id=d.userId; return true; } return false; } catch(e){ return false; } };
-const handleLogout = () => { showDialog({title:'提示',message:'确定退出?'}).then(()=>{ localStorage.clear(); location.reload(); }); };
-const fetchAdminData = async () => { if (!isLogined.value) return; try { const s=await fetch('/api/admin/stats'); if(s.ok) Object.assign(adminStats, await s.json()); const u=await fetch('/api/admin/users'); if(u.ok) adminUserList.value = (await u.json()).results; const r=await fetch('/api/admin/all_rides'); if(r.ok) adminRideList.value = (await r.json()).results; } catch(e){} };
+const openMapSelector = (f) => { 
+    currentMapField.value=f; 
+    uiState.showMap=true; 
+    mapSearchKeyword.value=''; 
+    mapSearchResults.value=[]; 
+    
+    setTimeout(()=>{ 
+        if(window.AMap && !mapInstance) {
+            mapInstance = new AMap.Map(document.getElementById('picker-map-container'), { zoom: 14 });
+        }
+    }, 300); 
+};
 
-// ★★★ 删除用户修复 ★★★
+const confirmMapSelection = () => { 
+    if(mapSearchKeyword.value){ 
+        if(currentMapField.value==='origin') postForm.origin=mapSearchKeyword.value; 
+        else postForm.destination=mapSearchKeyword.value; 
+        uiState.showMap=false; 
+    } else {
+        showToast('请搜索地点');
+    }
+};
+
+const selectSearchResult = (item) => { 
+    if(currentMapField.value==='origin') postForm.origin=item.name; 
+    else postForm.destination=item.name; 
+    uiState.showMap=false; 
+};
+
+const selectRoleAndGo = (r) => { 
+    postForm.type=r; 
+    postForm.date=''; 
+    postForm.remark=[]; 
+    uiState.showRole = false; // 先关弹窗
+    switchTab(1); // 再切页面
+};
+
+// 后台逻辑
+const handleAdminLogin = () => { 
+    if(adminLoginData.username==='admin' && adminLoginData.password==='123456'){ 
+        isLogined.value=true; 
+        localStorage.setItem('admin_token','mock'); 
+        fetchAdminData(); 
+    } else showFailToast('Error'); 
+};
+const fetchAdminData = async () => {
+    try {
+        const uRes = await fetch('/api/admin/users');
+        if(uRes.ok) { const d = await uRes.json(); adminUserList.value = d.results || []; }
+        const rRes = await fetch('/api/admin/all_rides'); 
+        if(rRes.ok) { const d = await rRes.json(); adminRideList.value = d.results || []; }
+    } catch(e){}
+};
 const handleAdminDeleteUser = (user) => {
-    showDialog({ title: '警告', message: '确定删除该用户？', showCancelButton: true }).then(async () => {
-        showLoadingToast('删除中...');
-        try {
-            const res = await fetch(`/api/admin/user?id=${user.id}`, { method: 'DELETE' });
-            if(res.ok) {
-                showSuccessToast('已删除');
-                fetchAdminData();
-            } else showFailToast('失败');
-        } catch(e) { showFailToast('网络错误'); }
+    showDialog({ title: '确认删除?', showCancelButton: true }).then(async () => {
+        const res = await fetch(`/api/admin/user?id=${user.id}`, { method: 'DELETE' });
+        if(res.ok) { showSuccessToast('已删除'); fetchAdminData(); }
+    });
+};
+const deleteRideAdmin = async (id) => {
+    showDialog({ title: '确认删除?', showCancelButton: true }).then(async () => {
+        const res = await fetch(`/api/rides?id=${id}`, { method: 'DELETE' });
+        if(res.ok) { showSuccessToast('已删除'); fetchAdminData(); }
     });
 };
 
-const toggleUserStatus = async (user) => {
-    const newVal = user.status === 1 ? 0 : 1;
-    await fetch('/api/admin/toggle_user', { method: 'POST', body: JSON.stringify({id: user.id, status: newVal}) });
-    user.status = newVal;
+// 其他
+const fetchSystemConfig = async () => {
+  try {
+    const res = await fetch('/api/admin?action=get_config');
+    if(res.ok) { 
+        const data = await res.json(); 
+        if(data) Object.assign(sysConfig, data); 
+    }
+  } catch(e) {}
+};
+const onLoad = async () => {
+  if (refreshing.value) { list.value = []; refreshing.value = false; }
+  loading.value = true;
+  try {
+    const res = await fetch(`/api/rides?type=${filterType.value}`);
+    if(res.ok) { const data = await res.json(); if (data.results) list.value = data.results; }
+  } catch(e) {}
+  loading.value = false;
+  finished.value = true;
+};
+const handleRealPublish = async () => {
+  if (!userProfile.phone) { uiState.showAuth = true; return; }
+  submitLoading.value = true;
+  const dateVal = postForm.date || new Date().toISOString();
+  const remarkStr = Array.isArray(postForm.remark) ? postForm.remark.join('，') : (postForm.remark || '无备注');
+  const newRide = { ...postForm, user_id: String(userProfile.id), contact: String(userProfile.phone), date: dateVal, remark: remarkStr };
+  
+  try {
+    const res = await fetch('/api/rides', { method: 'POST', body: JSON.stringify(newRide) });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showSuccessToast('发布成功');
+      switchTab(0);
+    } else { showFailToast(data.error || '失败'); }
+  } catch(e) { showFailToast('网络错误'); } 
+  finally { submitLoading.value = false; }
 };
 
-// ★★★ 二维码修复：带Logo ★★★
-const handleShowQRCode = (ride) => {
-    const shareLink = `${window.location.origin}/?ride_id=${ride.id}`;
-    uiState.currentQRCodeUrl = `https://quickchart.io/qr?text=${encodeURIComponent(shareLink)}&size=300&margin=1&ecLevel=H`;
-    uiState.currentRideInfo = ride;
-    uiState.showQRCode = true;
-};
-
+const handleWeChatAuth = () => { showLoadingToast('微信授权中...'); setTimeout(() => { userProfile.nickname = '微信用户_' + String(Math.random()).slice(-4); userProfile.avatar = 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'; closeToast(); uiState.authStep = 2; }, 500); };
+const handleBindPhone = async () => { if(!registerForm.phone) return; userProfile.phone = registerForm.phone; const res = await fetch('/api/login', { method: 'POST', body: JSON.stringify(userProfile) }); if(res.ok){ const d=await res.json(); if(d.userId) userProfile.id=d.userId; localStorage.setItem('user_info',JSON.stringify(userProfile)); uiState.showAuth=false; showSuccessToast('成功'); } else showFailToast('失败'); };
+const handleShowQRCode = (ride) => { const shareLink = `${window.location.origin}/?ride_id=${ride.id}`; uiState.currentQRCodeUrl = `https://quickchart.io/qr?text=${encodeURIComponent(shareLink)}&size=300&margin=2`; uiState.currentRideInfo = ride; uiState.showQRCode = true; };
 const openWeChat = () => { location.href = "weixin://"; };
-const selectRoleAndGo = async (r) => { postForm.type=r; postForm.date=''; postForm.remark=[]; uiState.showRole = false; await nextTick(); switchTab(1); };
-const loadAMapScript = (key) => { if(window.AMap) return; try{ const s=document.createElement('script'); s.src=`https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Map,AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`; document.body.appendChild(s); }catch(e){} };
-const openMapSelector = (f) => { currentMapField.value=f; uiState.showMap=true; mapSearchKeyword.value=''; mapSearchResults.value=[]; setTimeout(()=>{ if(window.AMap && !mapInstance) { mapInstance = new AMap.Map(document.getElementById('picker-map-container'), { zoom: 15 }); mapInstance.on('moveend', () => { const center = mapInstance.getCenter(); resolveAddress(center); }); } }, 300); };
-const resolveAddress = (lnglat) => { if(!window.AMap) return; AMap.plugin('AMap.Geocoder', function() { if(!mapGeocoder) mapGeocoder = new AMap.Geocoder(); mapGeocoder.getAddress(lnglat, function(status, result) { if (status === 'complete' && result.regeocode) { mapSelectionText.value = result.regeocode.formattedAddress; } }); }); };
-const confirmMapSelection = () => { const val = mapSearchKeyword.value || mapSelectionText.value; if(val){ if(currentMapField.value==='origin') postForm.origin=val; else postForm.destination=val; uiState.showMap=false; } };
-const selectSearchResult = (item) => { if(currentMapField.value==='origin') postForm.origin=item.name; else postForm.destination=item.name; uiState.showMap=false; };
+const formatDate = (str) => { if (!str) return '待定'; try { const d = str.split('T'); return d[0] + ' ' + (d[1]||'').slice(0,5); } catch (e) { return str; } };
+const loadAMapScript = (key) => { if(window.AMap) return; const s=document.createElement('script'); s.src=`https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Map,AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`; document.body.appendChild(s); };
 const handleCall = (p) => { location.href=`tel:${p}`; };
-const swapLocation = () => { const t=postForm.origin; postForm.origin=postForm.destination; postForm.destination=t; };
-const onPreSubmit = () => { if(!postForm.origin||!postForm.destination){showFailToast('请完善路线');return;} if(!userProfile.phone){uiState.showAuth=true;return;} uiState.showPayment=true; };
 const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postForm.remark.splice(i,1); else postForm.remark.push(t); };
 const onConfirmDate = ({selectedOptions}) => { const v = selectedOptions.map(o=>o.value); postForm.dateDisplay=`${v[0]}年${v[1]}月${v[2]}日 ${v[3]}点`; postForm.date=`${v[0]}-${String(v[1]).padStart(2,'0')}-${String(v[2]).padStart(2,'0')}T${String(v[3]).padStart(2,'0')}:00:00`; uiState.showDate=false; };
 const setFilter = (t) => { filterType.value=t; refreshing.value=true; onLoad(); };
-const handleAdminLogin = () => { if(adminLoginData.username==='admin'&&adminLoginData.password==='123456'){ isLogined.value=true; localStorage.setItem('admin_token','mock'); fetchAdminData(); }else showFailToast('Error'); };
 const priceFormatter = (val) => { if(val && val.length > 4) return val.slice(0, 4); return val; };
-const handleAdminAddUser = async () => { const res = await fetch('/api/admin/add_user', { method: 'POST', body: JSON.stringify(addUserForm) }); if(res.ok){ uiState.showAddUser=false; fetchAdminData(); showSuccessToast('成功'); } };
-const toggleRideVisible = async (ride) => { const newVal = ride.is_hidden ? 0 : 1; await fetch('/api/admin/toggle_ride', { method: 'POST', body: JSON.stringify({id: ride.id, hidden: newVal}) }); ride.is_hidden = newVal; };
-const deleteRideAdmin = async (id) => { await fetch(`/api/rides?id=${id}`, { method: 'DELETE' }); fetchAdminData(); };
+const openDetail = (item) => { uiState.selectedRide = item; window.history.pushState({ popup: 'detail' }, null, '#detail'); };
+const fetchMyRides = async () => { if(!userProfile.id) return; try{ const res=await fetch(`/api/rides?type=all`); const d=await res.json(); if(d.results) myRidesList.value=d.results.filter(i=>i.user_id===userProfile.id); }catch(e){} };
+const switchAdminMenu = (m) => { adminActiveMenu.value=m; if(m!=='config') fetchAdminData(); };
+const saveSystemConfig = async () => { const payload = { ...sysConfig, passenger_fee: Number(sysConfig.passenger_fee), driver_fee: Number(sysConfig.driver_fee) }; await fetch('/api/admin?action=save_config', { method: 'POST', body: JSON.stringify(payload) }); showSuccessToast('保存成功'); };
+const handleLogout = () => { localStorage.clear(); location.reload(); };
+
 watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.AutoComplete',function(){ new AMap.AutoComplete({city:'全国'}).search(newVal,(s,r)=>{ if(s==='complete'&&r.tips) mapSearchResults.value=r.tips; }); }); });
 </script>
 
 <template>
-  <div v-if="globalError" style="position:fixed;top:0;left:0;width:100%;background:red;color:#fff;z-index:99999;padding:15px;font-size:12px;text-align:center;">⚠️ {{ globalError }}</div>
-
   <div v-if="appReady" class="app-container">
+    
     <div v-if="isSystemAdmin" class="admin-wrapper">
       <div v-if="!isLogined" class="admin-login-box">
         <h3>后台管理系统</h3>
         <van-form @submit="handleAdminLogin">
-          <van-field v-model="adminLoginData.username" label="账号" placeholder="admin" required />
+          <van-field v-model="adminLoginData.username" label="账号" required />
           <van-field v-model="adminLoginData.password" type="password" label="密码" required />
           <div style="margin:20px;"><van-button block type="primary" native-type="submit">安全登录</van-button></div>
         </van-form>
       </div>
       <div v-else class="admin-dashboard">
         <div class="admin-sidebar">
-          <div class="menu-item" :class="{active:adminActiveMenu==='home'}" @click="switchAdminMenu('home')"><van-icon name="chart-trending-o" /> 首页总览</div>
           <div class="menu-item" :class="{active:adminActiveMenu==='users'}" @click="switchAdminMenu('users')"><van-icon name="friends-o" /> 用户管理</div>
           <div class="menu-item" :class="{active:adminActiveMenu==='rides'}" @click="switchAdminMenu('rides')"><van-icon name="logistics" /> 拼车管理</div>
           <div class="menu-item" :class="{active:adminActiveMenu==='config'}" @click="switchAdminMenu('config')"><van-icon name="setting-o" /> 平台设置</div>
           <div class="menu-item logout" @click="()=>location.href='/'"><van-icon name="close" /> 退出后台</div>
         </div>
         <div class="admin-main">
-          <div v-if="adminActiveMenu==='home'" class="admin-home">
-             <h3>平台数据总览</h3>
-             <div class="data-grid">
-                 <div class="data-card blue"><div>充值总览</div><div class="val">¥{{ adminStats.monthRecharge }}</div><div class="sub-row">今日: ¥{{ adminStats.todayRecharge }}</div></div>
-                 <div class="data-card green"><div>用户总数</div><div class="val">{{ adminStats.totalUsers }}</div><div class="sub-row">已认证: {{ adminStats.certifiedUsers }}</div></div>
-                 <div class="data-card orange"><div>今日新增</div><div class="val">{{ adminStats.newUsersToday }}</div><div class="sub-row">男:{{ adminStats.male }} / 女:{{ adminStats.female }}</div></div>
-             </div>
-          </div>
-
+          
           <div v-if="adminActiveMenu==='users'">
             <div class="admin-toolbar">
-                <van-search placeholder="搜索用户ID/昵称" style="width:300px;padding:0;" />
-                <div><van-button size="small" icon="replay" @click="fetchAdminData" style="margin-right:10px;">刷新</van-button><van-button size="small" type="primary" icon="plus" @click="uiState.showAddUser=true">添加用户</van-button></div>
+                <van-button size="small" icon="replay" @click="fetchAdminData">刷新</van-button>
             </div>
             <div class="admin-table-container">
-                <div class="admin-table-header" style="grid-template-columns: 1.8fr 1fr 1.2fr 0.6fr 0.8fr 1fr"><span>用户(头像/昵称/ID)</span><span>联系方式</span><span>注册/登录</span><span>状态</span><span>推荐人</span><span>操作</span></div>
-                <div v-for="user in adminUserList" :key="user.id" class="admin-table-row" style="grid-template-columns: 1.8fr 1fr 1.2fr 0.6fr 0.8fr 1fr">
-                    <div class="user-info-cell"><img :src="user.avatar||'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" class="avatar-small"><div><div class="bold">{{ user.nickname }}</div><div class="sub" style="font-size:10px;">{{ user.id.slice(0,6) }}...</div></div></div>
-                    <div><span class="phone-tag">{{ user.phone || '未授权' }}</span></div>
-                    <div class="sub">注册:{{ user.created_at?.split('T')[0] }}<br>登录:{{ user.last_login?.split('T')[0] }}</div>
+                <div class="admin-table-header" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr">
+                    <span>用户</span><span>联系方式</span><span>注册时间</span><span>状态</span><span>操作</span>
+                </div>
+                <div v-for="user in adminUserList" :key="user.id" class="admin-table-row" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr">
+                    <div>{{ user.nickname }}</div>
+                    <div>{{ user.phone }}</div>
+                    <div>{{ user.created_at?.split('T')[0] }}</div>
                     <div><van-tag :type="user.status===1?'success':'danger'">{{ user.status===1?'正常':'封禁' }}</van-tag></div>
-                    <div>{{ user.referrer }}</div>
-                    <div style="display:flex;gap:5px;"><van-button size="mini" :type="user.status===1?'warning':'success'" @click="toggleUserStatus(user)">{{ user.status===1?'封':'解' }}</van-button><van-button size="mini" type="danger" icon="delete" @click="handleAdminDeleteUser(user)"></van-button></div>
+                    <div><van-button size="mini" type="danger" @click="handleAdminDeleteUser(user)">删除</van-button></div>
                 </div>
             </div>
           </div>
 
           <div v-if="adminActiveMenu==='rides'">
-            <div class="admin-toolbar"><van-search placeholder="搜索发布者/路线" style="width:300px;padding:0;" /><van-button size="small" icon="replay" @click="fetchAdminData">刷新</van-button></div>
+            <div class="admin-toolbar"><van-button size="small" icon="replay" @click="fetchAdminData">刷新</van-button></div>
             <div class="admin-table-container">
-                <div class="admin-table-header" style="grid-template-columns: 0.5fr 1fr 1fr 1.2fr 1fr 0.8fr 0.5fr 1fr"><span>ID</span><span>用户</span><span>发布</span><span>路线</span><span>出发</span><span>价格</span><span>状态</span><span>二维码/操作</span></div>
-                <div v-for="ride in adminRideList" :key="ride.id" class="admin-table-row" style="grid-template-columns: 0.5fr 1fr 1fr 1.2fr 1fr 0.8fr 0.5fr 1fr">
-                    <div>{{ ride.id }}</div>
-                    <div class="user-info-cell"><img :src="ride.user_avatar||'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" class="avatar-small"><div class="sub">{{ ride.user_nickname }}</div></div>
-                    <div class="sub">{{ ride.created_at?.split('T')[0] }}</div>
-                    <div><div class="bold">{{ ride.origin }}</div><div class="sub">↓</div><div class="bold">{{ ride.destination }}</div></div>
-                    <div class="sub">{{ formatDate(ride.date) }}</div>
-                    <div><span style="color:red">¥{{ ride.price }}</span><br><span class="sub">{{ ride.seats }}座</span></div>
-                    <div><van-tag :type="ride.is_hidden?'warning':'primary'">{{ ride.is_hidden?'隐':'显' }}</van-tag></div>
-                    <div style="display:flex;align-items:center;"><van-icon name="qr" size="20" @click="handleShowQRCode(ride)" style="cursor:pointer;margin-right:8px;color:#1989fa;" /><van-button size="mini" :type="ride.is_hidden?'primary':'warning'" @click="toggleRideVisible(ride)" style="margin-right:3px;">{{ ride.is_hidden?'显':'隐' }}</van-button><van-button size="mini" type="danger" @click="deleteRideAdmin(ride.id)">删</van-button></div>
+                <div class="admin-table-header" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr">
+                    <span>路线</span><span>价格</span><span>时间</span><span>状态</span><span>操作</span>
+                </div>
+                <div v-for="ride in adminRideList" :key="ride.id" class="admin-table-row" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr">
+                    <div>{{ ride.origin }}->{{ ride.destination }}</div>
+                    <div>{{ ride.price }}</div>
+                    <div>{{ formatDate(ride.date) }}</div>
+                    <div>{{ ride.status===1?'正常':'删' }}</div>
+                    <div><van-button size="mini" type="danger" @click="deleteRideAdmin(ride.id)">删除</van-button></div>
                 </div>
             </div>
           </div>
 
-          <div v-if="adminActiveMenu==='config'"><van-form @submit="saveSystemConfig"><van-tabs v-model:active="adminSettingTab" type="card" color="#1989fa"><van-tab title="基础"><div class="config-card"><van-field v-model="sysConfig.amap_key" label="高德Key" /><van-field v-model="sysConfig.platform_name" label="平台名称" /><van-field v-model="sysConfig.kefu_wechat" label="客服微信" /><van-field v-model="sysConfig.notice_text" label="滚动公告" type="textarea" /><van-field v-model="sysConfig.banners" label="轮播图URL" type="textarea" /></div></van-tab><van-tab title="业务"><div class="config-card"><van-cell center title="显示过期帖子"><template #right-icon><van-switch v-model="sysConfig.show_all_posts" size="20" /></template></van-cell><van-cell center title="司机强制认证"><template #right-icon><van-switch v-model="sysConfig.driver_cert_required" size="20" /></template></van-cell><van-field v-model="sysConfig.passenger_fee" label="乘客发布费" type="number" /><van-field v-model="sysConfig.driver_fee" label="司机发布费" type="number" /></div></van-tab></van-tabs><div style="margin:20px;"><van-button block type="primary" native-type="submit">保存配置</van-button></div></van-form></div>
+          <div v-if="adminActiveMenu==='config'">
+             <van-form @submit="saveSystemConfig">
+                <van-cell-group inset>
+                    <van-field v-model="sysConfig.amap_key" label="高德Key" />
+                    <van-field v-model="sysConfig.platform_name" label="平台名称" />
+                    <van-field v-model="sysConfig.notice_text" label="公告" />
+                </van-cell-group>
+                <div style="margin:20px;"><van-button block type="primary" native-type="submit">保存配置</van-button></div>
+             </van-form>
+          </div>
         </div>
-        
-        <van-dialog v-model:show="uiState.showAddUser" title="添加新用户" show-cancel-button @confirm="handleAdminAddUser">
-            <div style="padding:15px;">
-                <van-field v-model="addUserForm.nickname" label="昵称" placeholder="请输入昵称" border />
-                <van-field v-model="addUserForm.phone" label="手机号" placeholder="11位手机号" border />
-                <van-field v-model="addUserForm.balance" label="余额" placeholder="初始余额" type="number" border />
-            </div>
-        </van-dialog>
-
-        <van-dialog v-model:show="uiState.showQRCode" title="分享行程" confirm-button-text="关闭">
-            <div style="text-align:center;padding:20px;background:#f9f9f9;">
-                <div style="font-weight:bold;margin-bottom:5px;font-size:16px;color:#333;">{{ sysConfig.platform_name }}</div>
-                <div v-if="uiState.currentRideInfo.origin" style="margin-bottom:15px;color:#1989fa;font-weight:bold;font-size:14px;">
-                   {{ uiState.currentRideInfo.origin }} <van-icon name="arrow" /> {{ uiState.currentRideInfo.destination }}
-                </div>
-                <div style="background:#fff;padding:10px;display:inline-block;border-radius:8px;position:relative;">
-                    <img :src="uiState.currentQRCodeUrl" style="width:180px;height:180px;display:block;" />
-                    <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:36px;height:36px;background:#fff;padding:2px;border-radius:4px;">
-                        <img src="/logo.png" style="width:100%;height:100%;object-fit:contain;" />
-                    </div>
-                </div>
-                <div style="margin-top:15px;font-size:12px;color:#999;">长按保存图片或直接分享</div>
-                <div v-if="!uiState.isWeChat" style="margin-top:10px;">
-                    <van-button type="success" size="small" icon="wechat" @click="openWeChat">打开微信</van-button>
-                </div>
-            </div>
-        </van-dialog>
       </div>
     </div>
 
     <div v-else class="user-wrapper">
+      
       <div v-if="activeTab === 1" class="page-post">
         <van-nav-bar title="发布行程" left-arrow @click-left="switchTab(0)" />
         <div class="post-card">
@@ -407,7 +431,7 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
       </div>
 
       <div v-show="activeTab === 0" class="page-home">
-        <van-notice-bar v-if="activeTab === 0" left-icon="volume-o" :text="sysConfig.notice_text" style="height:36px;margin-bottom:5px;" scrollable />
+        <van-notice-bar left-icon="volume-o" :text="sysConfig.notice_text" style="height:36px;margin-bottom:5px;" scrollable />
         <van-swipe :autoplay="3000" class="home-banner" style="height:45vw;max-height:200px;"><van-swipe-item v-for="i in bannersList" :key="i"><img :src="i" style="width:100%;height:100%;object-fit:cover;"/></van-swipe-item></van-swipe>
         <div class="nav-grid two-cols">
           <div class="nav-btn btn-blue" :class="{active: filterType==='driver'}" @click="() => setFilter('driver')"><van-icon name="logistics" /> 车找人</div>
@@ -443,18 +467,6 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
             <van-grid-item icon="info-o" text="关于" @click="showDialog({title:'关于', message: sysConfig.about_us})" />
           </van-grid>
         </div>
-        <van-tabs style="margin-top:10px;">
-          <van-tab title="我的发布">
-            <div v-if="myRidesList.length === 0" style="text-align:center;padding:20px;color:#999;">暂无记录</div>
-            <div v-else>
-              <div v-for="item in myRidesList" :key="item.id" class="ride-card">
-                <div class="card-row-1"><span class="route">{{ item.origin }} → {{ item.destination }}</span></div>
-                <div class="card-row-2"><span>{{ formatDate(item.date) }}</span><span class="price-val">¥{{ item.price }}</span></div>
-                <div style="text-align:right;margin-top:10px;"><van-button size="small" type="danger" plain @click="handleUserDelete(item.id)">删除</van-button></div>
-              </div>
-            </div>
-          </van-tab>
-        </van-tabs>
         <div style="padding:20px;"><van-button block color="#ee0a24" @click="handleLogout">退出登录</van-button></div>
       </div>
 
@@ -466,7 +478,7 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
       
       <van-popup v-model:show="uiState.showAuth" position="bottom" style="height:40%;padding:20px;z-index:2020;" :close-on-click-overlay="false">
         <h3 style="text-align:center">欢迎来到宜人出行</h3>
-        <div style="text-align:center;margin-bottom:15px;color:#999;font-size:12px;">为了提供更好的服务，请先授权登录</div>
+        <div style="text-align:center;margin-bottom:15px;color:#999;font-size:12px;">请先授权登录</div>
         <div v-if="authStep===1"><van-button block type="primary" color="#07c160" @click="handleWeChatAuth">微信一键授权</van-button></div>
         <div v-else><van-field v-model="registerForm.phone" placeholder="请输入手机号" border /><van-button block type="primary" @click="handleBindPhone" style="margin-top:10px;">确认绑定</van-button></div>
       </van-popup>
@@ -514,12 +526,30 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
           </div>
         </div>
       </van-popup>
+
+      <van-dialog v-model:show="uiState.showQRCode" title="分享行程" confirm-button-text="关闭">
+          <div style="text-align:center;padding:20px;background:#f9f9f9;">
+              <div style="font-weight:bold;margin-bottom:5px;font-size:16px;color:#333;">{{ sysConfig.platform_name }}</div>
+              <div v-if="uiState.currentRideInfo.origin" style="margin-bottom:15px;color:#1989fa;font-weight:bold;font-size:14px;">
+                 {{ uiState.currentRideInfo.origin }} <van-icon name="arrow" /> {{ uiState.currentRideInfo.destination }}
+              </div>
+              <div style="background:#fff;padding:10px;display:inline-block;border-radius:8px;position:relative;">
+                  <img :src="uiState.currentQRCodeUrl" style="width:180px;height:180px;display:block;" />
+                  <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:36px;height:36px;background:#fff;padding:2px;border-radius:4px;">
+                      <img src="/logo.png" style="width:100%;height:100%;object-fit:contain;" />
+                  </div>
+              </div>
+              <div style="margin-top:15px;font-size:12px;color:#999;">长按保存图片或直接分享</div>
+              <div v-if="!uiState.isWeChat" style="margin-top:10px;">
+                  <van-button type="success" size="small" icon="wechat" @click="openWeChat">打开微信</van-button>
+              </div>
+          </div>
+      </van-dialog>
     </div>
   </div>
 </template>
 
 <style>
-/* CSS */
 :root { --blue: #1989fa; --green: #07c160; --bg: #f7f8fa; --orange: #ff6600; }
 body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16px; padding-bottom: 70px; }
 .admin-wrapper { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #f5f5f5; z-index: 9999; }
@@ -533,7 +563,6 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .admin-table-header { display: grid; background: #f0f2f5; padding: 12px 10px; font-weight: bold; font-size: 13px; color: #333; }
 .admin-table-row { display: grid; padding: 12px 10px; border-bottom: 1px solid #eee; align-items: center; font-size: 13px; }
 .admin-table-row:hover { background: #f9f9f9; }
-.admin-table-row.hidden { opacity: 0.5; background: #f0f0f0; }
 .user-info-cell { display: flex; align-items: center; }
 .avatar-small { width: 32px; height: 32px; border-radius: 50%; margin-right: 8px; }
 .bold { font-weight: bold; color: #333; }
@@ -541,7 +570,6 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .phone-tag { color: #1989fa; background: #e6f7ff; padding: 2px 4px; border-radius: 2px; border: 1px solid #91d5ff; font-size: 12px; }
 .config-card { background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
 .van-field, .van-cell { margin-bottom: 12px; border-radius: 4px; border: 1px solid #eee; }
-.van-tabs__content { padding-top: 15px; }
 .user-wrapper { position: relative; z-index: 1; padding-bottom: 70px; }
 .page-home { padding: 10px; }
 .ride-card { background: #fff; margin: 10px; padding: 15px; padding-right: 15px; border-radius: 12px; position: relative; box-shadow: 0 2px 8px rgba(0,0,0,0.02); }
@@ -606,12 +634,4 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .share-arrow { position: absolute; right: 20px; top: 20px; font-size: 60px; color: #fff; transform: rotate(-90deg); }
 .share-text { margin-top: 100px; color: #fff; text-align: center; font-size: 18px; line-height: 1.6; }
 .bottom-action { position: relative; z-index: 999; }
-.admin-home .data-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
-.data-card { padding: 20px; border-radius: 8px; color: #fff; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-.data-card.blue { background: linear-gradient(135deg, #1890ff, #36cfc9); }
-.data-card.green { background: linear-gradient(135deg, #52c41a, #95de64); }
-.data-card.orange { background: linear-gradient(135deg, #fa8c16, #ffd666); }
-.data-card .val { font-size: 24px; font-weight: bold; margin: 10px 0; }
-.data-card .sub { font-size: 12px; opacity: 0.8; }
-.data-card .sub-row { font-size: 13px; margin-top: 10px; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 5px; }
 </style>
