@@ -3,7 +3,6 @@ export async function onRequest(context) {
     const url = new URL(request.url);
     const method = request.method;
 
-    // 跨域头
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': '*',
@@ -43,28 +42,22 @@ export async function onRequest(context) {
             }
         }
 
-        // 2. 列表 (最简逻辑，防止报错)
+        // 2. 列表与详情
         if (url.pathname === '/api/rides' && method === 'GET') {
             const id = url.searchParams.get('id');
-            // 详情
+            // ★ 单条详情 (用于分享直达) ★
             if (id) {
                 const ride = await env.DB.prepare('SELECT * FROM rides WHERE id=?').bind(id).first();
                 return jsonResponse({ ride });
             }
-            // 列表
+
             const type = url.searchParams.get('type');
             let q = 'SELECT * FROM rides WHERE status=1 AND is_hidden=0';
             const p = [];
-            
-            // 读取配置判断是否显示过期
-            try {
-                const conf = await env.DB.prepare('SELECT show_all_posts FROM system_config').first();
-                if (conf && !conf.show_all_posts) { q += " AND date >= ?"; p.push(nowStr); }
-            } catch(e) {}
-
+            const conf = await env.DB.prepare('SELECT show_all_posts FROM system_config').first();
+            if (conf && !conf.show_all_posts) { q += " AND date >= ?"; p.push(nowStr); }
             if (type && type !== 'all') { q += ' AND type=?'; p.push(type); }
             q += ' ORDER BY created_at DESC LIMIT 50';
-            
             const { results } = await env.DB.prepare(q).bind(...p).all();
             return jsonResponse({ results: results || [] });
         }
@@ -82,29 +75,24 @@ export async function onRequest(context) {
             return jsonResponse({ success: true, id: res.meta.last_row_id });
         }
 
-        // 4. 后台
+        // 4. 后台管理
         if (url.pathname.includes('/api/admin')) {
              if (url.pathname.includes('stats')) {
-                const totalUsers = await env.DB.prepare('SELECT COUNT(*) as c FROM users').first('c') || 0;
-                const newUsersToday = await env.DB.prepare(`SELECT COUNT(*) as c FROM users WHERE created_at LIKE '${today}%'`).first('c') || 0;
-                return jsonResponse({ totalUsers, newUsersToday }); // 简化返回，防止报错
+                const totalUsers = await env.DB.prepare('SELECT COUNT(*) as c FROM users').first('c');
+                const newUsersToday = await env.DB.prepare(`SELECT COUNT(*) as c FROM users WHERE created_at LIKE '${today}%'`).first('c');
+                return jsonResponse({ totalUsers, newUsersToday });
              }
              if (url.pathname.includes('users')) {
-                 const { results } = await env.DB.prepare('SELECT * FROM users ORDER BY created_at DESC LIMIT 50').all();
+                 const { results } = await env.DB.prepare('SELECT * FROM users ORDER BY created_at DESC LIMIT 100').all();
                  return jsonResponse({ results: results || [] });
              }
              if (url.pathname.includes('all_rides')) {
-                 const { results } = await env.DB.prepare('SELECT * FROM rides ORDER BY created_at DESC LIMIT 50').all();
+                 const { results } = await env.DB.prepare(`SELECT r.*, u.nickname as user_nickname, u.avatar as user_avatar FROM rides r LEFT JOIN users u ON r.user_id = u.id ORDER BY r.created_at DESC LIMIT 100`).all();
                  return jsonResponse({ results: results || [] });
              }
-             if (url.pathname.includes('get_config')) {
-                 const c = await env.DB.prepare('SELECT * FROM system_config WHERE id=1').first();
-                 return jsonResponse(c || {});
-             }
-             if (url.pathname.includes('save_config')) {
-                 const b = await request.json();
-                 await env.DB.prepare(`UPDATE system_config SET platform_name=?, notice_text=?, banners=?, tags_driver=?, tags_passenger=? WHERE id=1`)
-                    .bind(b.platform_name, b.notice_text, b.banners, b.tags_driver, b.tags_passenger).run();
+             if (url.pathname.includes('user') && method === 'DELETE') {
+                 const id = url.searchParams.get('id');
+                 await env.DB.prepare('DELETE FROM users WHERE id=?').bind(id).run();
                  return jsonResponse({ success: true });
              }
              if (url.pathname.includes('toggle_user')) {
@@ -112,9 +100,20 @@ export async function onRequest(context) {
                  await env.DB.prepare('UPDATE users SET status=? WHERE id=?').bind(b.status, b.id).run();
                  return jsonResponse({ success: true });
              }
-             if (url.pathname.includes('user') && method === 'DELETE') {
-                 const id = url.searchParams.get('id');
-                 await env.DB.prepare('DELETE FROM users WHERE id=?').bind(id).run();
+             if (url.pathname.includes('get_config')) {
+                 const c = await env.DB.prepare('SELECT * FROM system_config WHERE id=1').first();
+                 return jsonResponse(c || {});
+             }
+             if (url.pathname.includes('save_config')) {
+                 const b = await request.json();
+                 await env.DB.prepare(`UPDATE system_config SET platform_name=?, amap_key=?, notice_text=?, banners=?, tags_driver=?, tags_passenger=? WHERE id=1`)
+                    .bind(b.platform_name, b.amap_key, b.notice_text, b.banners, b.tags_driver, b.tags_passenger).run();
+                 return jsonResponse({ success: true });
+             }
+             if (url.pathname.includes('add_user')) {
+                 const b = await request.json();
+                 const newId = 'u_' + Date.now();
+                 await env.DB.prepare(`INSERT INTO users (id, nickname, phone, balance, status, created_at, last_login) VALUES (?, ?, ?, ?, 1, ?, ?)`).bind(newId, b.nickname, b.phone, Number(b.balance)||0, nowStr, nowStr).run();
                  return jsonResponse({ success: true });
              }
              if (url.pathname.includes('toggle_ride')) {
@@ -132,6 +131,6 @@ export async function onRequest(context) {
 
         return jsonResponse({ error: 'Not Found' }, 404);
     } catch (e) {
-        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+        return new Response(JSON.stringify({ error: e.message }), { status: 500 });
     }
 }
