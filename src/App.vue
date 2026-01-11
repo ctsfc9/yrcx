@@ -8,9 +8,11 @@ onErrorCaptured((err) => { console.error("Error:", err); return false; });
 
 const sysConfig = reactive({
   platform_name: '宜人出行',
-  banners: '', tags_driver: '', tags_passenger: '', amap_key: 'a4f6e1e5da68bc9fe5f984d69a3f6b2e', notice_text: '',
+  amap_key: 'a4f6e1e5da68bc9fe5f984d69a3f6b2e',
+  banners: '', tags_driver: '', tags_passenger: '', notice_text: '',
   show_all_posts: true, passenger_fee: 0, driver_fee: 0, driver_cert_required: false,
-  platform_desc: '', kefu_wechat: '', allow_driver_repost: true
+  platform_desc: '', kefu_wechat: '', allow_driver_repost: true,
+  sms_account: '', sms_password: ''
 });
 
 const isSystemAdmin = ref(false);
@@ -18,7 +20,7 @@ const isLogined = ref(false);
 let exitCounter = 0;
 
 const adminLoginData = reactive({ username: '', password: '' });
-const adminActiveMenu = ref('home'); // 默认进总览
+const adminActiveMenu = ref('users'); 
 const adminSettingTab = ref(0);
 const adminUserList = ref([]); 
 const adminRideList = ref([]);
@@ -38,7 +40,8 @@ const submitLoading = ref(false);
 const uiState = reactive({
   showRole: false, showDate: false, showPayment: false, 
   showMap: false, showAuth: false, showShare: false,
-  showAddUser: false, 
+  showAddUser: false, showQRCode: false, // 新增：二维码弹窗
+  currentQRCodeUrl: '',
   selectedRide: null, authStep: 1
 });
 
@@ -85,11 +88,8 @@ const getCarClass = (model) => {
   return 'gas';
 };
 
-// ===================== 初始化 =====================
 onMounted(async () => {
-  // ★★★ 核心：封存前返回逻辑 ★★★
-  // 进入页面立即压入一个状态，防止误触退出
-  window.history.pushState({ page: 'home' }, null, document.URL);
+  try { if (!window.location.hash) window.history.replaceState({ page: 'home' }, null, document.URL); } catch(e){}
   window.addEventListener('popstate', handlePopState);
 
   try {
@@ -128,7 +128,7 @@ onMounted(async () => {
 
 onUnmounted(() => window.removeEventListener('popstate', handlePopState));
 
-// ===================== 核心业务 =====================
+// ===================== 业务逻辑 =====================
 const handleWeChatAuth = () => {
     showLoadingToast('微信授权中...');
     setTimeout(() => {
@@ -194,11 +194,9 @@ const saveSystemConfig = async () => {
 const fetchAdminData = async () => {
     if (!isLogined.value) return;
     try {
-        // 总览数据
         const statsRes = await fetch('/api/admin/stats');
         if(statsRes.ok) Object.assign(adminStats, await statsRes.json());
 
-        // 列表数据
         const uRes = await fetch('/api/admin/users');
         if(uRes.ok) { const d = await uRes.json(); adminUserList.value = d.results || []; }
         const rRes = await fetch('/api/admin/all_rides'); 
@@ -206,33 +204,23 @@ const fetchAdminData = async () => {
     } catch(e){}
 };
 
-const handleAdminAddUser = async () => {
-    if(!addUserForm.nickname || !addUserForm.phone) { showToast('请填写完整'); return; }
-    showLoadingToast('添加中...');
+// ★★★ 后台功能修复：状态切换 ★★★
+const toggleUserStatus = async (user) => {
+    const newVal = user.status === 1 ? 0 : 1;
+    showLoadingToast({ message: '处理中...', forbidClick: true });
     try {
-        const res = await fetch('/api/admin/add_user', { method: 'POST', body: JSON.stringify(addUserForm) });
-        if(res.ok) {
-            showSuccessToast('添加成功');
-            uiState.showAddUser = false;
-            fetchAdminData();
-            addUserForm.nickname=''; addUserForm.phone=''; addUserForm.balance='';
-        } else showFailToast('添加失败');
-    } catch(e) { showFailToast('网络错误'); }
+        await fetch('/api/admin/toggle_user', { method: 'POST', body: JSON.stringify({id: user.id, status: newVal}) });
+        user.status = newVal;
+        showSuccessToast('操作成功');
+    } catch(e) { showFailToast('操作失败'); }
 };
 
 const handleAdminDeleteUser = (user) => {
-    showDialog({ title: '警告', message: '确定删除该用户？不可恢复', showCancelButton: true }).then(async () => {
+    showDialog({ title: '警告', message: '确定删除该用户？', showCancelButton: true }).then(async () => {
         await fetch(`/api/admin/user?id=${user.id}`, { method: 'DELETE' });
         showSuccessToast('已删除');
         fetchAdminData();
     });
-};
-
-const toggleUserStatus = async (user) => {
-    const newVal = user.status === 1 ? 0 : 1;
-    await fetch('/api/admin/toggle_user', { method: 'POST', body: JSON.stringify({id: user.id, status: newVal}) });
-    user.status = newVal;
-    showSuccessToast('操作成功');
 };
 
 const toggleRideVisible = async (ride) => {
@@ -242,55 +230,49 @@ const toggleRideVisible = async (ride) => {
     showSuccessToast('操作成功');
 };
 
+// ★★★ 后台功能：生成二维码 ★★★
+const handleShowQRCode = (ride) => {
+    // 使用公开的二维码生成API
+    const shareLink = window.location.origin + '/?ride_id=' + ride.id;
+    uiState.currentQRCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(shareLink)}`;
+    uiState.showQRCode = true;
+};
+
 const formatDate = (str) => {
   if (!str) return '待定';
   try {
-    // 简单提取日期部分
-    return str.split('T')[0] + ' ' + (str.split('T')[1] || '').slice(0,5);
+    const d = str.split('T');
+    return d[0] + ' ' + (d[1]||'').slice(0,5);
   } catch (e) { return str; }
 };
 
 const openDetail = (item) => { uiState.selectedRide = item; window.history.pushState({ popup: 'detail' }, null, '#detail'); };
 const closeDetail = () => window.history.back();
 
-// ★★★ 核心修复：返回逻辑 ★★★
 const handlePopState = () => {
-  // 1. 关闭详情页
-  if (window.location.hash.includes('detail')) { uiState.selectedRide = null; return; }
-  if (uiState.selectedRide) { uiState.selectedRide = null; return; }
+  if (!window.location.hash.includes('detail') && uiState.selectedRide) { uiState.selectedRide = null; return; }
   
-  // 2. 强制授权状态下，死锁页面
-  if (uiState.showAuth && !userProfile.phone) { 
-      window.history.pushState({ page: 'home' }, null, document.URL); 
-      return; 
-  }
-
-  // 3. 关闭普通弹窗
   if (Object.values(uiState).some(v=>v===true && v!==uiState.selectedRide)) {
+      if (uiState.showAuth && !userProfile.phone) { 
+          window.history.pushState({ page: 'home' }, null, document.URL); 
+          return; 
+      }
       uiState.showRole=false; uiState.showMap=false; uiState.showShare=false;
-      uiState.showDate=false; uiState.showPayment=false; uiState.showAddUser=false;
+      uiState.showDate=false; uiState.showPayment=false; uiState.showAddUser=false; uiState.showQRCode=false;
       window.history.pushState({ page: 'home' }, null, document.URL);
       return;
   }
 
-  // 4. 如果在发布页，点击返回 -> 回到首页
-  if (activeTab.value === 1 || activeTab.value === 2) {
-      activeTab.value = 0;
-      window.history.pushState({ page: 'home' }, null, document.URL); // 压入状态，防止退出
-      return;
-  }
-
-  // 5. 首页双击退出
   if (activeTab.value === 0) {
     exitCounter++;
     if (exitCounter < 2) {
       showToast('再按一次退出');
-      // 关键：再次压入状态，抵消刚才的后退
       window.history.pushState({ page: 'home' }, null, document.URL);
       setTimeout(() => exitCounter=0, 2000);
-    } else {
-      // 允许退出 (不再 pushState)
-    }
+    } 
+  } else {
+    activeTab.value = 0;
+    window.history.replaceState({ page: 'home' }, null, document.URL.split('#')[0]);
   }
 };
 
@@ -327,28 +309,38 @@ const handleRealPublish = async () => {
 };
 
 const switchAdminMenu = (m) => { adminActiveMenu.value = m; if(m!=='config') fetchAdminData(); };
-const deleteRideAdmin = async (id) => { await fetch(`/api/rides?id=${id}`, { method: 'DELETE' }); fetchAdminData(); showSuccessToast('删除成功'); };
+const deleteRideAdmin = async (id) => { 
+    showDialog({ title:'警告', message:'确定删除?' }).then(async()=>{
+        await fetch(`/api/rides?id=${id}`, { method: 'DELETE' }); 
+        fetchAdminData(); 
+        showSuccessToast('删除成功'); 
+    });
+};
 const handleUserDelete = (id) => { showDialog({title:'提示',message:'确认删除?'}).then(async ()=>{ await fetch(`/api/rides?id=${id}&user_id=${userProfile.id}`, { method: 'DELETE' }); fetchMyRides(); }); };
 const fetchMyRides = async () => { if(!userProfile.id) return; try{ const res=await fetch(`/api/rides?type=all`); const d=await res.json(); if(d.results) myRidesList.value=d.results.filter(i=>i.user_id===userProfile.id); }catch(e){} };
+
+// ★★★ 修复：发布页选择弹窗逻辑 ★★★
+const selectRoleAndGo = async (r) => { 
+    postForm.type=r; 
+    postForm.date=''; 
+    postForm.remark=[]; 
+    // 1. 先关闭弹窗
+    uiState.showRole = false; 
+    // 2. 等待 DOM 更新，确保遮罩层消失
+    await nextTick();
+    // 3. 切换页面
+    switchTab(1); 
+};
+
 const switchTab = (idx) => { 
     activeTab.value=idx; 
     if(idx===0){refreshing.value=true;onLoad();} 
-    else if(idx===1){ 
-        // ★★★ 进入发布页，立即自动定位 ★★★
-        nextTick(() => setTimeout(autoLocate, 500)); 
-    }
+    else if(idx===1){ nextTick(() => setTimeout(autoLocate, 500)); }
     else if(idx===2) fetchMyRides(); 
 };
 const handleCall = (p) => { if(p&&p.length>5) location.href=`tel:${p}`; else showFailToast('无号码'); };
 const swapLocation = () => { const t=postForm.origin; postForm.origin=postForm.destination; postForm.destination=t; };
 const onPreSubmit = () => { if(!postForm.origin||!postForm.destination){showFailToast('请完善路线');return;} if(!userProfile.phone){uiState.showAuth=true;return;} uiState.showPayment=true; };
-const selectRoleAndGo = (r) => { 
-    postForm.type=r; 
-    postForm.date=''; 
-    postForm.remark=[]; 
-    uiState.showRole=false; 
-    switchTab(1); 
-};
 const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postForm.remark.splice(i,1); else postForm.remark.push(t); };
 const onConfirmDate = ({selectedOptions}) => { const v = selectedOptions.map(o=>o.value); postForm.dateDisplay=`${v[0]}年${v[1]}月${v[2]}日 ${v[3]}点`; postForm.date=`${v[0]}-${String(v[1]).padStart(2,'0')}-${String(v[2]).padStart(2,'0')}T${String(v[3]).padStart(2,'0')}:00:00`; uiState.showDate=false; };
 const setFilter = (t) => { filterType.value=t; refreshing.value=true; onLoad(); };
@@ -398,8 +390,8 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
       <div v-if="!isLogined" class="admin-login-box">
         <h3>后台管理系统</h3>
         <van-form @submit="handleAdminLogin">
-          <van-field v-model="adminLoginData.username" label="账号" required />
-          <van-field v-model="adminLoginData.password" type="password" label="密码" required />
+          <van-field v-model="adminLoginData.username" label="账号" placeholder="admin" required />
+          <van-field v-model="adminLoginData.password" type="password" label="密码" placeholder="默认123456" required />
           <div style="margin:20px;"><van-button block type="primary" native-type="submit">安全登录</van-button></div>
         </van-form>
       </div>
@@ -431,16 +423,19 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
                 </div>
             </div>
             <div class="admin-table-container">
-                <div class="admin-table-header" style="grid-template-columns: 1.5fr 1fr 1fr 0.8fr 0.8fr 1fr">
-                    <span>用户</span><span>联系方式</span><span>注册/登录</span><span>状态</span><span>推荐人</span><span>操作</span>
+                <div class="admin-table-header" style="grid-template-columns: 1.8fr 1fr 1.2fr 0.6fr 0.8fr 1fr">
+                    <span>用户(头像/昵称/ID)</span><span>联系方式</span><span>注册/登录</span><span>状态</span><span>推荐人</span><span>操作</span>
                 </div>
-                <div v-for="user in adminUserList" :key="user.id" class="admin-table-row" style="grid-template-columns: 1.5fr 1fr 1fr 0.8fr 0.8fr 1fr">
+                <div v-for="user in adminUserList" :key="user.id" class="admin-table-row" style="grid-template-columns: 1.8fr 1fr 1.2fr 0.6fr 0.8fr 1fr">
                     <div class="user-info-cell">
                         <img :src="user.avatar||'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" class="avatar-small">
-                        <div><div class="bold">{{ user.nickname }}</div><div class="sub">ID:{{ user.id.slice(-6) }}</div></div>
+                        <div style="line-height:1.2;">
+                            <div class="bold">{{ user.nickname }}</div>
+                            <div class="sub" style="font-size:10px;color:#999;">{{ user.id }}</div>
+                        </div>
                     </div>
                     <div><span class="phone-tag">{{ user.phone || '未授权' }}</span></div>
-                    <div class="sub">注册:{{ user.created_at?.split(' ')[0] }}<br>登录:{{ user.last_login?.split(' ')[0] }}</div>
+                    <div class="sub">注:{{ user.created_at?.split('T')[0] }}<br>登:{{ user.last_login?.split('T')[0] }}</div>
                     <div><van-tag :type="user.status===1?'success':'danger'">{{ user.status===1?'正常':'封禁' }}</van-tag></div>
                     <div>{{ user.referrer || '无' }}</div>
                     <div style="display:flex;gap:5px;">
@@ -457,22 +452,22 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
                 <van-button size="small" icon="replay" @click="fetchAdminData">刷新</van-button>
             </div>
             <div class="admin-table-container">
-                <div class="admin-table-header" style="grid-template-columns: 0.5fr 1fr 1fr 1.2fr 1fr 0.8fr 0.8fr 1fr">
-                    <span>ID</span><span>用户</span><span>发布时间</span><span>路线</span><span>出发时间</span><span>价格/座</span><span>状态</span><span>操作</span>
+                <div class="admin-table-header" style="grid-template-columns: 0.5fr 1fr 1fr 1.2fr 1fr 0.8fr 0.5fr 1fr">
+                    <span>ID</span><span>用户</span><span>发布</span><span>路线</span><span>出发</span><span>价格</span><span>状态</span><span>二维码/操作</span>
                 </div>
-                <div v-for="ride in adminRideList" :key="ride.id" class="admin-table-row" style="grid-template-columns: 0.5fr 1fr 1fr 1.2fr 1fr 0.8fr 0.8fr 1fr">
+                <div v-for="ride in adminRideList" :key="ride.id" class="admin-table-row" style="grid-template-columns: 0.5fr 1fr 1fr 1.2fr 1fr 0.8fr 0.5fr 1fr">
                     <div>{{ ride.id }}</div>
                     <div class="user-info-cell">
                         <img :src="ride.user_avatar||'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" class="avatar-small">
                         <div class="sub">{{ ride.user_nickname }}</div>
                     </div>
-                    <div class="sub">{{ ride.created_at?.split(' ')[0] }}</div>
+                    <div class="sub">{{ ride.created_at?.split('T')[0] }}</div>
                     <div><div class="bold">{{ ride.origin }}</div><div class="sub">↓</div><div class="bold">{{ ride.destination }}</div></div>
                     <div class="sub">{{ formatDate(ride.date) }}</div>
                     <div><span style="color:red">¥{{ ride.price }}</span><br><span class="sub">{{ ride.seats }}座</span></div>
-                    <div><van-tag :type="ride.is_hidden?'warning':'primary'">{{ ride.is_hidden?'隐藏':'显示' }}</van-tag></div>
-                    <div>
-                        <van-button size="mini" icon="qr" style="margin-right:3px;"></van-button>
+                    <div><van-tag :type="ride.is_hidden?'warning':'primary'">{{ ride.is_hidden?'隐':'显' }}</van-tag></div>
+                    <div style="display:flex;align-items:center;">
+                        <van-icon name="qr" size="20" @click="handleShowQRCode(ride)" style="cursor:pointer;margin-right:8px;color:#1989fa;" />
                         <van-button size="mini" :type="ride.is_hidden?'primary':'warning'" @click="toggleRideVisible(ride)" style="margin-right:3px;">{{ ride.is_hidden?'显':'隐' }}</van-button>
                         <van-button size="mini" type="danger" @click="deleteRideAdmin(ride.id)">删</van-button>
                     </div>
@@ -485,7 +480,7 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
               <van-tabs v-model:active="adminSettingTab" type="card" color="#1989fa">
                 <van-tab title="基础">
                   <div class="config-card">
-                    <van-field v-model="sysConfig.amap_key" label="高德地图Key" placeholder="Web端 JS API Key" />
+                    <van-field v-model="sysConfig.amap_key" label="高德地图Key" />
                     <van-field v-model="sysConfig.platform_name" label="平台名称" />
                     <van-field v-model="sysConfig.kefu_wechat" label="客服微信" />
                     <van-field v-model="sysConfig.notice_text" label="滚动公告" type="textarea" />
@@ -511,6 +506,13 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
                 <van-field v-model="addUserForm.nickname" label="昵称" placeholder="请输入昵称" border />
                 <van-field v-model="addUserForm.phone" label="手机号" placeholder="11位手机号" border />
                 <van-field v-model="addUserForm.balance" label="余额" placeholder="初始余额" type="number" border />
+            </div>
+        </van-dialog>
+
+        <van-dialog v-model:show="uiState.showQRCode" title="拼车二维码" confirm-button-text="关闭">
+            <div style="text-align:center;padding:20px;">
+                <img :src="uiState.currentQRCodeUrl" style="width:200px;height:200px;" />
+                <div style="margin-top:10px;font-size:12px;color:#999;">扫码查看详情</div>
             </div>
         </van-dialog>
       </div>
@@ -650,14 +652,14 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
         <div class="tab-item" :class="{active: activeTab===2}" @click="switchTab(2)"><van-icon name="user-o"/>我的</div>
       </div>
       
-      <van-popup v-model:show="uiState.showAuth" position="bottom" style="height:40%;padding:20px;z-index:9999;" :close-on-click-overlay="false">
+      <van-popup v-model:show="uiState.showAuth" position="bottom" style="height:40%;padding:20px;z-index:2020;" :close-on-click-overlay="false">
         <h3 style="text-align:center">欢迎来到宜人出行</h3>
         <div style="text-align:center;margin-bottom:15px;color:#999;font-size:12px;">为了提供更好的服务，请先授权登录</div>
         <div v-if="authStep===1"><van-button block type="primary" color="#07c160" @click="handleWeChatAuth">微信一键授权</van-button></div>
         <div v-else><van-field v-model="registerForm.phone" placeholder="请输入手机号" border /><van-button block type="primary" @click="handleBindPhone" style="margin-top:10px;">确认绑定</van-button></div>
       </van-popup>
       
-      <van-popup v-model:show="uiState.showRole" position="bottom" style="height:45%;background:#f7f8fa;z-index:2000;">
+      <van-popup v-model:show="uiState.showRole" position="bottom" style="height:45%;background:#f7f8fa;z-index:2010;">
         <div style="padding:30px;display:flex;flex-direction:column;gap:20px;height:100%;justify-content:center;">
           <div class="role-select-card driver" @click="selectRoleAndGo('driver')">
             <van-icon name="logistics" size="40" />
@@ -670,7 +672,7 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
         </div>
       </van-popup>
 
-      <van-popup v-model:show="uiState.showMap" position="bottom" :style="{height:'90%'}" round style="z-index:2005;">
+      <van-popup v-model:show="uiState.showMap" position="bottom" :style="{height:'90%'}" round style="z-index:2015;">
         <div class="map-popup-content" style="display:flex;flex-direction:column;height:100%;">
           <van-search v-model="mapSearchKeyword" show-action placeholder="搜索地点" @search="openMapSelector"><template #action><div @click="uiState.showMap=false">关闭</div></template></van-search>
           <div id="picker-map-container" style="width:100%;height:300px;position:relative;flex-shrink:0;">
@@ -679,7 +681,9 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
              </div>
           </div>
           <div style="padding:15px;background:#fff;border-top:1px solid #eee;">
-            <div style="margin-bottom:10px;font-size:14px;color:#333;font-weight:bold;"><van-icon name="location-o" /> {{ mapSelectionText }}</div>
+            <div style="margin-bottom:10px;font-size:14px;color:#333;font-weight:bold;">
+                <van-icon name="location-o" /> {{ mapSelectionText }}
+            </div>
             <van-button block type="primary" @click="confirmMapSelection">确定选择此位置</van-button>
           </div>
           <div style="flex:1;overflow-y:auto;">
@@ -760,7 +764,8 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .van-field, .van-cell { margin-bottom: 12px; border-radius: 4px; border: 1px solid #eee; }
 .van-tabs__content { padding-top: 15px; }
 
-/* 复刻原版前端样式 */
+/* 前端样式 */
+.user-wrapper { position: relative; z-index: 1; padding-bottom: 70px; }
 .page-home { padding: 10px; }
 .ride-card { background: #fff; margin: 10px; padding: 15px; padding-right: 15px; border-radius: 12px; position: relative; box-shadow: 0 2px 8px rgba(0,0,0,0.02); }
 .card-row-1 { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
@@ -778,8 +783,6 @@ body { background: var(--bg); margin: 0; font-family: sans-serif; font-size: 16p
 .car-badge.hybrid { background: #f3e5f5; color: #9c27b0; border: 1px solid #e1bee7; }
 .card-row-3 { font-size: 13px; color: #999; background: #f8f8f8; padding: 8px; border-radius: 6px; }
 .call-btn { flex-shrink: 0; font-size: 22px; color: #fff; background: #ff6600; padding: 0; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 42px; height: 42px; }
-/* ★ 修复：前台层级，防止被遮挡 */
-.user-wrapper { position: relative; z-index: 1; padding-bottom: 70px; }
 .custom-tabbar { position: fixed; bottom: 0; width: 100%; height: 65px; background: #fff; display: flex; border-top: 1px solid #eee; z-index: 999; padding-bottom: constant(safe-area-inset-bottom); padding-bottom: env(safe-area-inset-bottom); }
 .tab-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 14px; color: #666; font-weight: 500; }
 .tab-item.active { color: var(--orange); font-weight: bold; }
