@@ -42,6 +42,7 @@ const uiState = reactive({
   showMap: false, showAuth: false, showShare: false,
   showAddUser: false, showQRCode: false,
   currentQRCodeUrl: '', currentRideInfo: {},
+  isWeChat: false, // 是否在微信中
   selectedRide: null, authStep: 1
 });
 
@@ -91,8 +92,11 @@ const getCarClass = (model) => {
 // ===================== 初始化 =====================
 onMounted(async () => {
   try { 
-      // 默认清空 hash
-      if (window.location.hash) window.history.replaceState({ page: 'home' }, null, document.URL.split('#')[0]); 
+      // 检测微信环境
+      const ua = navigator.userAgent.toLowerCase();
+      uiState.isWeChat = ua.indexOf('micromessenger') !== -1;
+
+      if (!window.location.hash) window.history.replaceState({ page: 'home' }, null, document.URL.split('#')[0]); 
   } catch(e){}
   window.addEventListener('popstate', handlePopState);
 
@@ -146,22 +150,34 @@ const handleWeChatAuth = () => {
 const handleBindPhone = async () => {
     if(!registerForm.phone || registerForm.phone.length !== 11) { showToast('请输入11位手机号'); return; }
     showLoadingToast({ message: '同步中...', forbidClick: true });
-    userProfile.phone = registerForm.phone;
-    const success = await syncUserToBackend(false);
-    if (success) {
-        localStorage.setItem('user_info', JSON.stringify(userProfile));
-        uiState.showAuth = false;
-        showSuccessToast('登录成功');
-    }
+    
+    try {
+        // 请求后端，带上手机号
+        const payload = { ...userProfile, phone: registerForm.phone };
+        const res = await fetch('/api/login', { method: 'POST', body: JSON.stringify(payload) });
+        
+        if (res.ok) {
+            const data = await res.json();
+            // ★★★ 核心：如果后端返回了新的 ID (老用户找回)，要覆盖本地 ID ★★★
+            if (data.userId && data.userId !== userProfile.id) {
+                userProfile.id = data.userId;
+                showSuccessToast('欢迎回来 (老用户)');
+            } else {
+                showSuccessToast('注册成功');
+            }
+            userProfile.phone = registerForm.phone;
+            localStorage.setItem('user_info', JSON.stringify(userProfile));
+            uiState.showAuth = false;
+        } else {
+            showFailToast('登录失败');
+        }
+    } catch(e) { showFailToast('网络错误'); }
 };
 
 const syncUserToBackend = async (silent) => {
     try {
         const res = await fetch('/api/login', { method: 'POST', body: JSON.stringify(userProfile) });
-        if (!res.ok) {
-            if (!silent) showFailToast('同步失败');
-            return false;
-        }
+        if (!res.ok) return false;
         return true;
     } catch(e) { if (!silent) showToast('网络错误'); return false; }
 };
@@ -206,14 +222,13 @@ const fetchAdminData = async () => {
     } catch(e){}
 };
 
-// ★★★ 修复：用户封禁/删除 ★★★
 const toggleUserStatus = async (user) => {
     const newVal = user.status === 1 ? 0 : 1;
     showLoadingToast({message:'更新中...', forbidClick:true});
     try {
         await fetch('/api/admin/toggle_user', { method: 'POST', body: JSON.stringify({id: user.id, status: newVal}) });
         user.status = newVal;
-        showSuccessToast('已更新');
+        showSuccessToast('操作成功');
     } catch(e) { showFailToast('操作失败'); }
 };
 
@@ -223,7 +238,7 @@ const handleAdminDeleteUser = (user) => {
         const res = await fetch(`/api/admin/user?id=${user.id}`, { method: 'DELETE' });
         if(res.ok) {
             showSuccessToast('已删除');
-            fetchAdminData(); // 强制刷新列表
+            fetchAdminData();
         } else showFailToast('删除失败');
     });
 };
@@ -246,14 +261,18 @@ const handleAdminAddUser = async () => {
     } else showFailToast('失败');
 };
 
-// ★★★ 修复：生成并展示二维码 ★★★
+// ★★★ 修复：二维码逻辑 ★★★
 const handleShowQRCode = (ride) => {
-    // 构造分享链接（假设首页带参数能识别）
     const shareLink = `${window.location.origin}/?ride_id=${ride.id}`;
-    // 使用 QR Server 生成图片
+    // 使用公开API，但前端渲染时会叠加 Logo
     uiState.currentQRCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(shareLink)}`;
     uiState.currentRideInfo = ride;
     uiState.showQRCode = true;
+};
+
+// 唤起微信
+const openWeChat = () => {
+    location.href = "weixin://";
 };
 
 const formatDate = (str) => {
@@ -267,42 +286,31 @@ const formatDate = (str) => {
 const openDetail = (item) => { uiState.selectedRide = item; window.history.pushState({ popup: 'detail' }, null, '#detail'); };
 const closeDetail = () => window.history.back();
 
-// ★★★ 修复：返回逻辑 (首页双击退，发布页回首页) ★★★
+// ★★★ 修复：返回逻辑 (发布页直接回首页) ★★★
 const handlePopState = () => {
-  // 1. 详情页处理
-  if (window.location.hash.includes('detail') && uiState.selectedRide) { 
-      uiState.selectedRide = null; 
-      return; 
-  }
+  if (window.location.hash.includes('detail') && uiState.selectedRide) { uiState.selectedRide = null; return; }
   
-  // 2. 弹窗处理
   if (Object.values(uiState).some(v=>v===true && v!==uiState.selectedRide)) {
-      if (uiState.showAuth && !userProfile.phone) { 
-          // 强制授权页，禁止退
-          window.history.pushState({ page: 'home' }, null, document.URL); 
-          return; 
-      }
+      if (uiState.showAuth && !userProfile.phone) { window.history.pushState({ page: 'home' }, null, document.URL); return; }
       uiState.showRole=false; uiState.showMap=false; uiState.showShare=false;
       uiState.showDate=false; uiState.showPayment=false; uiState.showAddUser=false; uiState.showQRCode=false;
-      // 弹窗关闭后，停留在当前页面，不一定回首页，所以这里不强制 pushState，除非为了抵消 back
       window.history.pushState({ page: 'home' }, null, document.URL); 
       return;
   }
 
-  // 3. 发布页/个人中心 -> 返回首页
-  if (activeTab.value === 1 || activeTab.value === 2) {
-      activeTab.value = 0;
-      // 替换当前历史记录为首页，防止无限堆栈
+  // 非首页按返回 -> 回到首页 (Tab 0)
+  if (activeTab.value !== 0) {
+      switchTab(0);
+      // 核心：替换当前历史为首页，不产生新历史，防止死循环
       window.history.replaceState({ page: 'home' }, null, document.URL.split('#')[0]);
       return;
   }
 
-  // 4. 首页双击退出
+  // 首页双击退出
   if (activeTab.value === 0) {
     exitCounter++;
     if (exitCounter < 2) {
       showToast('再按一次退出');
-      // 核心：压入状态，抵消后退
       window.history.pushState({ page: 'home' }, null, document.URL);
       setTimeout(() => exitCounter=0, 2000);
     } 
@@ -352,31 +360,23 @@ const deleteRideAdmin = async (id) => {
 const handleUserDelete = (id) => { showDialog({title:'提示',message:'确认删除?'}).then(async ()=>{ await fetch(`/api/rides?id=${id}&user_id=${userProfile.id}`, { method: 'DELETE' }); fetchMyRides(); }); };
 const fetchMyRides = async () => { if(!userProfile.id) return; try{ const res=await fetch(`/api/rides?type=all`); const d=await res.json(); if(d.results) myRidesList.value=d.results.filter(i=>i.user_id===userProfile.id); }catch(e){} };
 
-// ★★★ 修复：发布页选择弹窗逻辑 ★★★
 const selectRoleAndGo = async (r) => { 
     postForm.type=r; 
     postForm.date=''; 
     postForm.remark=[]; 
-    // 关闭弹窗
     uiState.showRole = false; 
     await nextTick();
-    // 切换页面并压入历史
     switchTab(1); 
 };
 
 const switchTab = (idx) => { 
     activeTab.value=idx; 
-    if(idx===0){
-        refreshing.value=true;onLoad();
-    } 
+    if(idx===0){refreshing.value=true;onLoad();} 
     else if(idx===1){ 
-        // 进入发布页，压入 hash，配合 handlePopState 返回首页
         window.history.pushState({ page: 'publish' }, null, '#publish');
         nextTick(() => setTimeout(autoLocate, 500)); 
     }
-    else if(idx===2) {
-        fetchMyRides(); 
-    }
+    else if(idx===2) fetchMyRides(); 
 };
 const handleCall = (p) => { if(p&&p.length>5) location.href=`tel:${p}`; else showFailToast('无号码'); };
 const swapLocation = () => { const t=postForm.origin; postForm.origin=postForm.destination; postForm.destination=t; };
@@ -389,6 +389,8 @@ const priceFormatter = (val) => { if(val && val.length > 4) return val.slice(0, 
 
 // 地图
 const loadAMapScript = (key) => { if(window.AMap) return; try{ window._AMapSecurityConfig={securityJsCode:'f6c5bf3568831b3f4b5f3ae35d9bfa08'}; const s=document.createElement('script'); s.src=`https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.Map,AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder,AMap.CitySearch`; document.body.appendChild(s); }catch(e){} };
+
+// ★★★ 修复：优先区县 > 市 ★★★
 const autoLocate = () => { 
     if(!window.AMap){showFailToast('地图加载中');return;} 
     showLoadingToast('定位中...'); 
@@ -397,11 +399,16 @@ const autoLocate = () => {
         geolocation.getCurrentPosition(function(status, result){
             if(status=='complete' && result.addressComponent){
                 const ac = result.addressComponent;
-                let addr = ac.district || ac.city || ac.province;
-                postForm.origin = addr.replace(/^(.*?省|.*?市)/, '');
+                let addr = ac.district; 
+                // 只有当 district 真正有值时才用，否则降级到 city
+                if (!addr || addr.length === 0) addr = ac.city;
+                // 去除后缀
+                postForm.origin = addr.replace(/.*?(省|市|自治区)$/, '');
                 closeToast();
             } else {
-                AMap.plugin('AMap.CitySearch', function(){ new AMap.CitySearch().getLocalCity(function(s,r){ if(s==='complete'&&r.info==='OK') postForm.origin=r.city.replace(/^(.*?省)/, ''); closeToast(); }); });
+                AMap.plugin('AMap.CitySearch', function(){ 
+                    new AMap.CitySearch().getLocalCity(function(s,r){ if(s==='complete'&&r.info==='OK') postForm.origin=r.city.replace(/^(.*?省)/, ''); closeToast(); }); 
+                });
             }
         });
     });
@@ -416,15 +423,16 @@ const openMapSelector = (f) => {
     }, 300); 
 };
 const resolveAddress = (lnglat) => { if(!window.AMap) return; AMap.plugin('AMap.Geocoder', function() { if(!mapGeocoder) mapGeocoder = new AMap.Geocoder(); mapGeocoder.getAddress(lnglat, function(status, result) { if (status === 'complete' && result.regeocode) { mapSelectionText.value = result.regeocode.formattedAddress; } }); }); };
+
+// ★★★ 修复：手动选点赋值 ★★★
 const confirmMapSelection = () => { 
-    // ★ 修复：确保点击确认后赋值正确 ★
     const val = mapSearchKeyword.value || mapSelectionText.value;
     if(val && val !== '拖动地图以定位...'){ 
         if(currentMapField.value==='origin') postForm.origin=val; 
         else postForm.destination=val; 
         uiState.showMap=false; 
     } else {
-        showToast('请等待定位完成');
+        showToast('请等待定位');
     }
 };
 const selectSearchResult = (item) => { if(currentMapField.value==='origin') postForm.origin=item.name; else postForm.destination=item.name; uiState.showMap=false; };
@@ -561,13 +569,26 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
         </van-dialog>
 
         <van-dialog v-model:show="uiState.showQRCode" title="拼车分享" confirm-button-text="关闭">
-            <div style="text-align:center;padding:20px;">
-                <div style="font-weight:bold;margin-bottom:10px;">{{ sysConfig.platform_name }}</div>
-                <div v-if="uiState.currentRideInfo.origin" style="margin-bottom:15px;color:#666;">
+            <div style="text-align:center;padding:20px;position:relative;">
+                <div style="font-weight:bold;margin-bottom:5px;font-size:16px;">{{ sysConfig.platform_name }}</div>
+                <div v-if="uiState.currentRideInfo.origin" style="margin-bottom:15px;color:#1989fa;font-weight:bold;">
+                    <van-tag :type="uiState.currentRideInfo.type==='driver'?'success':'warning'">{{uiState.currentRideInfo.type==='driver'?'车找人':'人找车'}}</van-tag> 
                     {{ uiState.currentRideInfo.origin }} → {{ uiState.currentRideInfo.destination }}
                 </div>
-                <img :src="uiState.currentQRCodeUrl" style="width:200px;height:200px;" />
-                <div style="margin-top:10px;font-size:12px;color:#999;">扫码查看详情</div>
+                <div style="position:relative;width:200px;height:200px;margin:0 auto;">
+                    <img :src="uiState.currentQRCodeUrl" style="width:100%;height:100%;" />
+                    <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:40px;height:40px;background:#fff;border-radius:5px;padding:2px;">
+                        <img src="https://fastly.jsdelivr.net/npm/@vant/assets/logo.png" style="width:100%;height:100%;" />
+                    </div>
+                </div>
+                <div style="margin-top:15px;font-size:12px;color:#999;">{{ uiState.currentRideInfo.date }} 出发</div>
+                <div style="margin-top:10px;">
+                    <div style="font-size:12px;color:#666;margin-bottom:5px;">{{ window.location.href }}</div>
+                    <div v-if="!uiState.isWeChat" style="margin-top:10px;">
+                        <div style="color:red;font-size:12px;">请使用微信扫码打开</div>
+                        <van-button type="success" size="small" @click="openWeChat">打开微信</van-button>
+                    </div>
+                </div>
             </div>
         </van-dialog>
       </div>
