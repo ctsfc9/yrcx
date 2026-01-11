@@ -66,6 +66,18 @@ export async function onRequest(context) {
             }
             return jsonResponse({ success: true });
         }
+        // 封号/解封
+        if (url.pathname === '/api/admin/toggle_user' && method === 'POST') {
+            const body = await request.json();
+            await env.DB.prepare('UPDATE users SET status = ? WHERE id = ?').bind(body.status, body.id).run();
+            return jsonResponse({ success: true });
+        }
+        // 删除用户
+        if (url.pathname === '/api/admin/user' && method === 'DELETE') {
+            const id = url.searchParams.get('id');
+            await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run();
+            return jsonResponse({ success: true });
+        }
 
         // ======================= 3. 发布拼车 =======================
         if (url.pathname === '/api/rides' && method === 'POST') {
