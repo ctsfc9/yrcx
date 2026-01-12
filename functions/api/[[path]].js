@@ -42,7 +42,6 @@ export async function onRequest(context) {
         // 2. 列表 & 详情
         if (url.pathname === '/api/rides' && method === 'GET') {
             const id = url.searchParams.get('id');
-            // ★ 单条查询 (直达链接用) ★
             if (id) {
                 const ride = await env.DB.prepare('SELECT * FROM rides WHERE id=?').bind(id).first();
                 return jsonResponse({ ride });
@@ -96,27 +95,16 @@ export async function onRequest(context) {
                  await env.DB.prepare('UPDATE users SET status=? WHERE id=?').bind(b.status, b.id).run();
                  return jsonResponse({ success: true });
              }
-             
-             // ★★★ 核心：保存所有前端配置字段 ★★★
              if (url.pathname.includes('save_config')) {
                  const b = await request.json();
-                 await env.DB.prepare(`UPDATE system_config SET 
-                    platform_name=?, notice_text=?, banners=?, tags_driver=?, tags_passenger=?, 
-                    show_all_posts=?, passenger_fee=?, driver_fee=?, driver_cert_required=?,
-                    platform_desc=?, kefu_wechat=?, allow_driver_repost=?
-                    WHERE id=1`)
-                    .bind(
-                        b.platform_name, b.notice_text, b.banners, b.tags_driver, b.tags_passenger,
-                        b.show_all_posts?1:0, b.passenger_fee, b.driver_fee, b.driver_cert_required?1:0,
-                        b.platform_desc, b.kefu_wechat, b.allow_driver_repost?1:0
-                    ).run();
+                 await env.DB.prepare(`UPDATE system_config SET platform_name=?, notice_text=?, banners=?, tags_driver=?, tags_passenger=?, show_all_posts=?, passenger_fee=?, driver_fee=?, driver_cert_required=?, platform_desc=?, kefu_wechat=?, allow_driver_repost=? WHERE id=1`)
+                    .bind(b.platform_name, b.notice_text, b.banners, b.tags_driver, b.tags_passenger, b.show_all_posts?1:0, b.passenger_fee, b.driver_fee, b.driver_cert_required?1:0, b.platform_desc, b.kefu_wechat, b.allow_driver_repost?1:0).run();
                  return jsonResponse({ success: true });
              }
              if (url.pathname.includes('get_config')) {
                  const c = await env.DB.prepare('SELECT * FROM system_config WHERE id=1').first();
                  return jsonResponse(c || {});
              }
-             
              if (url.pathname.includes('add_user')) {
                  const b = await request.json();
                  const newId = 'u_' + Date.now();
