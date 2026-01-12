@@ -2,7 +2,7 @@
 import { ref, reactive, computed, nextTick, onMounted, onUnmounted, onErrorCaptured, watch } from 'vue';
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
-// 1. 地图与安全配置 (前端保留)
+// 1. 地图配置 (必须置顶)
 window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' };
 
 // 2. 状态定义
@@ -13,17 +13,16 @@ onErrorCaptured((err) => { console.error("Vue Error:", err); return false; });
 const isUrlAdmin = location.pathname.includes('/admin') || location.search.includes('admin');
 const isSystemAdmin = ref(isUrlAdmin);
 
-// 3. 兜底默认标签 (仅当后台无配置或加载失败时使用)
+// 默认标签
 const defaultTags = '无行李,有行李,行李多,需空后备箱,有大件,可带货,高速费AA,不走高速,车内禁烟,准时出发,时间协商,带宠物,有婴儿,有孕妇,有老人,红包补偿,顺路接送,帮开车,不收费';
 
-// 系统配置 (初始值为空或默认，完全依赖后台加载覆盖)
 const sysConfig = reactive({
   platform_name: '宜人出行',
-  amap_key: 'a4f6e1e5da68bc9fe5f984d69a3f6b2e', // 默认Key，后台可覆盖
+  amap_key: 'a4f6e1e5da68bc9fe5f984d69a3f6b2e', // 前端默认Key，保证地图能立即加载
   banners: '', 
   tags_driver: defaultTags, 
   tags_passenger: defaultTags, 
-  notice_text: '加载中...',
+  notice_text: '正在连接服务器...',
   show_all_posts: true, passenger_fee: 0, driver_fee: 0, driver_cert_required: false,
   platform_desc: '', kefu_wechat: '', allow_driver_repost: true,
   sms_account: '', sms_password: ''
@@ -69,19 +68,23 @@ const mapSelectionText = ref('拖动地图以定位...');
 let mapInstance = null;
 let mapGeocoder = null;
 
+// ★★★ 修复：直达链接参数捕获 ★★★
+const urlParams = new URLSearchParams(window.location.search);
+const startRideId = urlParams.get('ride_id');
+
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
   return [...list.value].sort((a, b) => b.id - a.id);
 });
 
+// ★★★ 优化：移除 jsdelivr 外部图片，防止卡顿 ★★★
 const bannersList = computed(() => {
-  if (!sysConfig.banners) return ['https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg'];
+  if (!sysConfig.banners) return []; // 默认不显示，或显示本地占位
   return sysConfig.banners.split(',').filter(s => s.trim());
 });
 
 const currentRemarkOptions = computed(() => {
   const str = postForm.type === 'driver' ? sysConfig.tags_driver : sysConfig.tags_passenger;
-  // 确保不为空
   return (str || defaultTags).split(/[,，]/).filter(s => s.trim());
 });
 const remarkDisplayText = computed(() => (postForm.remark || []).join('，'));
@@ -102,18 +105,17 @@ const getCarClass = (model) => {
   return 'gas';
 };
 
-// ===================== 初始化 =====================
+// ===================== 初始化 (极速模式) =====================
 onMounted(async () => {
   const ua = navigator.userAgent.toLowerCase();
   uiState.isWeChat = ua.indexOf('micromessenger') !== -1;
 
-  // 1. 历史守卫 (防止一按返回就退出)
-  if (!window.location.search.includes('ride_id')) {
+  // 1. 历史守卫 (不使用 Hash)
+  if (!startRideId) {
       window.history.replaceState({ page: 'home' }, null, document.URL); 
   }
   window.history.pushState({ page: 'home' }, null, document.URL); 
   window.addEventListener('popstate', handlePopState);
-  window.addEventListener('pagehide', handlePageHide); // 兼容性补充
 
   try {
     if (isSystemAdmin.value) {
@@ -125,22 +127,23 @@ onMounted(async () => {
       return;
     }
 
-    // 2. ★★★ 并行加载：配置 + 列表 ★★★
-    // 不用 await 阻塞，让它们同时跑
-    const configPromise = fetchSystemConfig().then(() => {
-        // 配置加载完，立刻加载地图脚本 (依赖 amap_key)
-        loadAMapScript(sysConfig.amap_key);
-    });
+    // 2. ★★★ 并行启动所有网络请求 (关键优化) ★★★
     
-    // 列表立即加载
+    // A. 立即加载地图脚本 (使用默认Key，不用等接口)
+    loadAMapScript(sysConfig.amap_key);
+
+    // B. 立即加载列表数据
     onLoad(); 
 
-    // 3. 直达链接 (优先)
-    const params = new URLSearchParams(window.location.search);
-    const rideId = params.get('ride_id');
-    if (rideId) fetchRideDetail(rideId);
+    // C. 异步加载后台配置 (成功后会自动更新界面)
+    fetchSystemConfig();
 
-    // 4. 用户
+    // 3. 直达链接处理
+    if (startRideId) {
+        fetchRideDetail(startRideId);
+    }
+
+    // 4. 用户逻辑
     const u = localStorage.getItem('user_info');
     if (u) {
       Object.assign(userProfile, JSON.parse(u));
@@ -158,61 +161,49 @@ onMounted(async () => {
   } catch(e) { console.error(e); }
 });
 
-onUnmounted(() => {
-    window.removeEventListener('popstate', handlePopState);
-    window.removeEventListener('pagehide', handlePageHide);
-});
+onUnmounted(() => window.removeEventListener('popstate', handlePopState));
 
-// ===================== 核心：返回逻辑 (加强版) =====================
+// ===================== 核心：返回逻辑 =====================
 const handlePopState = () => {
-    // 1. 弹窗/详情页优先关闭
-    if (uiState.selectedRide || Object.values(uiState).some(v=>v===true && v!==uiState.selectedRide)) {
-        if(uiState.showAuth && !userProfile.phone) {
-             window.history.pushState(null, null, document.URL); 
-             return;
-        }
-        
-        if (uiState.selectedRide) {
-            uiState.selectedRide = null;
-            if (window.location.search.includes('ride_id')) window.location.href = window.location.origin;
-            else window.history.pushState(null, null, document.URL);
-        } else {
-            closeAllModals();
-            window.history.pushState(null, null, document.URL);
-        }
-        return;
-    }
+    if (exitCounter > 0) return; // 退出中
 
-    // 2. 二级页面 -> 回首页
-    if (activeTab.value !== 0) {
-        activeTab.value = 0;
-        // 不补 pushState，利用浏览器回退自然回到首页
-        return;
-    }
+    let preventExit = false;
 
-    // 3. 首页 -> 退出提示
-    if (activeTab.value === 0) {
-        if (exitCounter === 0) {
-            showToast('再按一次退出');
-            exitCounter++;
-            window.history.pushState(null, null, document.URL); // 强留
-            setTimeout(() => { exitCounter = 0; }, 2000);
-        }
-    }
-};
-
-// 辅助监听：页面隐藏时尝试清理状态
-const handlePageHide = () => {
-    if (uiState.selectedRide || Object.values(uiState).some(v => v === true && v !== uiState.selectedRide)) {
-        closeAllModals();
+    // 1. 关详情页
+    if (uiState.selectedRide) {
         uiState.selectedRide = null;
+        if (startRideId) window.location.href = window.location.origin; // 直达链接彻底重置
+        preventExit = true;
+    }
+    // 2. 关弹窗
+    else if (Object.values(uiState).some(v=>v===true)) {
+        if(uiState.showAuth && !userProfile.phone) { /* 强留 */ } 
+        else closeAllModals();
+        preventExit = true;
+    }
+    // 3. 回首页
+    else if (activeTab.value !== 0) {
+        activeTab.value = 0;
+        preventExit = true;
+    }
+    // 4. 首页退出提示
+    else if (activeTab.value === 0) {
+        showToast('再按一次退出');
+        exitCounter++;
+        setTimeout(() => { exitCounter = 0; }, 2000);
+        preventExit = true;
+    }
+
+    // 补回守卫
+    if (preventExit) {
+        window.history.pushState({ page: 'guard' }, null, document.URL);
     }
 };
 
 const switchTab = (idx) => { 
     if (activeTab.value === idx) return;
-
-    // 进子页面，手动压栈
+    
+    // 切换 Tab 时手动压栈，确保有东西可退
     if (activeTab.value === 0 && idx !== 0) {
         window.history.pushState({ page: 'sub' }, null, '');
     }
@@ -221,7 +212,7 @@ const switchTab = (idx) => {
     
     if(idx===0){ refreshing.value=true; onLoad(); } 
     else if(idx===1){ 
-        // 进发布页，强制定位
+        // 进发布页，延迟执行定位 (等待页面过渡动画)
         setTimeout(autoLocate, 300); 
     } 
     else if(idx===2) { fetchMyRides(); }
@@ -232,58 +223,61 @@ const closeAllModals = () => {
     uiState.showPayment = false; uiState.showAddUser = false; uiState.showQRCode = false;
 };
 
-// ===================== 地图与定位 (CitySearch 优先策略) =====================
+// ===================== 地图与定位 (CitySearch 优先) =====================
 const loadAMapScript = (key) => { 
-    if(window.AMap) { autoLocate(); return; }
+    if(window.AMap) { 
+        // 如果脚本已存在，直接定位 (针对SPA切换)
+        if(activeTab.value === 1) autoLocate();
+        return; 
+    }
     try{ 
         const s=document.createElement('script'); 
-        // 必须包含 CitySearch
         s.src=`https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.CitySearch,AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder`; 
         s.onload = () => { 
+            // 脚本加载完毕。如果在发布页，立即定位。
             if (activeTab.value === 1) autoLocate(); 
         }; 
         document.body.appendChild(s); 
     }catch(e){} 
 };
 
-// ★★★ 修复：自动定位 (保证不空) ★★★
+// ★★★ 自动定位 (确保起点不为空) ★★★
 const autoLocate = () => { 
+    // 还没加载完，稍后重试
     if(!window.AMap) {
-        setTimeout(autoLocate, 800);
+        setTimeout(autoLocate, 500);
         return; 
     }
-    showLoadingToast({ message: '定位中...', duration: 5000 }); // 给足时间
+    showLoadingToast({ message: '获取位置...', duration: 5000 });
     
-    // 1. CitySearch (IP定位，无需权限，最快)
+    // 1. CitySearch (IP定位，速度快，无视权限)
     const citySearch = new AMap.CitySearch();
     citySearch.getLocalCity(function (status, result) {
         if (status === 'complete' && result.info === 'OK') {
             const city = result.city || result.province;
             if (city) {
+                // 立即填充
                 postForm.origin = city.replace(/省|市|自治区/g, ''); 
                 closeToast();
             }
-            
-            // 2. GPS 静默修正 (获取区县)
-            const geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 5000 });
-            geolocation.getCurrentPosition(function(status2, result2){
+            // 2. 尝试 GPS 获取区县 (静默更新)
+            const geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 3000 });
+            geolocation.getCurrentPosition((status2, result2) => {
                 if(status2 === 'complete' && result2.addressComponent){
                     const d = result2.addressComponent.district;
-                    if (d && typeof d === 'string' && d.length > 0) {
-                        postForm.origin = d.replace(/省|市|自治区/g, '');
-                    }
+                    if (d && d.length > 0) postForm.origin = d.replace(/省|市|自治区/g, '');
                 }
             });
         } else {
-            // IP定位失败，直接走 GPS 兜底
+            // IP 失败，直接 GPS 兜底
             const geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 5000 });
-            geolocation.getCurrentPosition(function(s, r){
+            geolocation.getCurrentPosition((s, r) => {
                 closeToast();
                 if(s === 'complete' && r.addressComponent){
                     const d = r.addressComponent.district || r.addressComponent.city;
                     postForm.origin = d.replace(/省|市|自治区/g, '');
                 } else {
-                    postForm.origin = '全国'; // 最终兜底
+                    postForm.origin = '全国'; // 最终兜底，绝不留白
                     showFailToast('定位失败，请手动选择');
                 }
             });
@@ -317,24 +311,24 @@ const selectSearchResult = (item) => {
 
 // ===================== 业务逻辑 =====================
 const handleWeChatAuth = () => { showLoadingToast('微信授权中...'); setTimeout(() => { userProfile.nickname = '微信用户_' + String(Math.random()).slice(-4); userProfile.avatar = 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'; closeToast(); uiState.authStep = 2; }, 500); };
-const handleBindPhone = async () => { if(!register ★★★ 修复：后台配置加载逻辑 ★★★
+const handleBindPhone = async () => { if(!registerForm.phone) return; userProfile.phone = registerForm.phone; const res = await fetch('/api/login', { method: 'POST', body: JSON.stringify(userProfile) }); if(res.ok){ const d=await res.json(); if(d.userId && d.userId!==userProfile.id) userProfile.id=d.userId; localStorage.setItem('user_info',JSON.stringify(userProfile)); uiState.showAuth=false; showSuccessToast('成功'); } else showFailToast('失败'); };
+const syncUserToBackend = async (silent) => { try { const res = await fetch('/api/login', { method: 'POST', body: JSON.stringify(userProfile) }); if(res.ok){const d=await res.json(); if(d.userId) userProfile.id=d.userId; return true;} return false; } catch(e){ return false; } };
+const handleLogout = () => { showDialog({title:'提示',message:'确定退出?'}).then(()=>{ localStorage.clear(); location.reload(); }); };
+const fetchAdminData = async () => { if (!isLogined.value) return; try { const s=await fetch('/api/admin/stats'); if(s.ok) Object.assign(adminStats, await s.json()); const u=await fetch('/api/admin/users'); if(u.ok) adminUserList.value = (await u.json()).results; const r=await fetch('/api/admin/all_rides'); if(r.ok) adminRideList.value = (await r.json()).results; } catch(e){} };
+
+// 配置加载 (后台化)
 const fetchSystemConfig = async () => { 
     try { 
         const res = await fetch('/api/admin?action=get_config'); 
         if (res.ok) {
             const data = await res.json();
             Object.assign(sysConfig, data); 
-            // 确保 tags 字段有值，如果没有，使用默认值
+            // 确保 tags 字段有值
             if (!sysConfig.tags_driver) sysConfig.tags_driver = defaultTags;
             if (!sysConfig.tags_passenger) sysConfig.tags_passenger = defaultTags;
         }
     } catch (e) {} 
 };
-
-const handleBindPhoneConfirm = async () => { if(!registerForm.phone) return; userProfile.phone = registerForm.phone; const res = await fetch('/api/login', { method: 'POST', body: JSON.stringify(userProfile) }); if(res.ok){ const d=await res.json(); if(d.userId && d.userId!==userProfile.id) userProfile.id=d.userId; localStorage.setItem('user_info',JSON.stringify(userProfile)); uiState.showAuth=false; showSuccessToast('成功'); } else showFailToast('失败'); };
-const syncUserToBackend = async (silent) => { try { const res = await fetch('/api/login', { method: 'POST', body: JSON.stringify(userProfile) }); if(res.ok){const d=await res.json(); if(d.userId) userProfile.id=d.userId; return true;} return false; } catch(e){ return false; } };
-const handleLogout = () => { showDialog({title:'提示',message:'确定退出?'}).then(()=>{ localStorage.clear(); location.reload(); }); };
-const fetchAdminData = async () => { if (!isLogined.value) return; try { const s=await fetch('/api/admin/stats'); if(s.ok) Object.assign(adminStats, await s.json()); const u=await fetch('/api/admin/users'); if(u.ok) adminUserList.value = (await u.json()).results; const r=await fetch('/api/admin/all_rides'); if(r.ok) adminRideList.value = (await r.json()).results; } catch(e){} };
 
 const handleAdminDeleteUser = (user) => { showDialog({ title: '警告', message: '确定删除?' }).then(async () => { const res = await fetch(`/api/admin/user?id=${user.id}`, { method: 'DELETE' }); if(res.ok) { showSuccessToast('已删除'); fetchAdminData(); } else showFailToast('失败'); }); };
 const toggleUserStatus = async (user) => { const newVal = user.status === 1 ? 0 : 1; try { await fetch('/api/admin/toggle_user', { method: 'POST', body: JSON.stringify({id: user.id, status: newVal}) }); user.status = newVal; showSuccessToast('成功'); } catch(e) { showFailToast('失败'); } };
@@ -342,24 +336,20 @@ const toggleRideVisible = async (ride) => { const newVal = ride.is_hidden ? 0 : 
 const deleteRideAdmin = async (id) => { showDialog({ title:'警告', message:'确定删除?' }).then(async()=>{ await fetch(`/api/rides?id=${id}`, { method: 'DELETE' }); fetchAdminData(); showSuccessToast('删除成功'); }); };
 const handleAdminAddUser = async () => { if(!addUserForm.nickname) return; showLoadingToast('添加中'); const res = await fetch('/api/admin/add_user', { method: 'POST', body: JSON.stringify(addUserForm) }); if(res.ok){ uiState.showAddUser=false; fetchAdminData(); showSuccessToast('成功'); } };
 
-// ★★★ 修复：一键复制分享 (保留V73功能) ★★★
+// 一键复制分享 (保留V73兼容版)
 const handleCopyShare = (ride) => {
     const directUrl = `${window.location.origin}/?ride_id=${ride.id}`;
     const typeStr = ride.type === 'driver' ? '车找人' : '人找车';
     const dateStr = formatDate(ride.date);
     const text = `【${sysConfig.platform_name}】-${typeStr}\n${ride.origin} -> ${ride.destination}\n数量：${ride.seats}座\n车型：${ride.car_model || '未填写'}\n出发：${dateStr}\n点击查看: ${directUrl}`;
     
-    // 强制使用 execCommand
     const textArea = document.createElement("textarea");
     textArea.value = text;
-    // 移出可视区但保留
     textArea.style.position = "fixed";
     textArea.style.left = "-9999px";
-    textArea.style.top = "0";
     document.body.appendChild(textArea);
     textArea.focus();
     textArea.select();
-    
     try {
         const successful = document.execCommand('copy');
         if (successful) showSuccessToast('复制成功');
@@ -398,11 +388,14 @@ const fetchRideDetail = async (id) => { try { const res = await fetch(`/api/ride
 const handleRealPublish = async () => { if (!userProfile.phone) { uiState.showAuth = true; return; } submitLoading.value = true; const dateVal = postForm.date || new Date().toISOString(); const remarkStr = Array.isArray(postForm.remark) ? postForm.remark.join('，') : (postForm.remark || '无备注'); const newRide = { ...postForm, user_id: String(userProfile.id), contact: String(userProfile.phone), date: dateVal, remark: remarkStr }; try { const res = await fetch('/api/rides', { method: 'POST', body: JSON.stringify(newRide) }); const data = await res.json(); if (res.ok && data.success) { showSuccessToast('发布成功'); switchTab(0); } else { showFailToast(data.error || '失败'); } } catch(e) { showFailToast('网络错误'); } finally { submitLoading.value = false; } };
 const switchAdminMenu = (m) => { adminActiveMenu.value=m; if(m!=='config') fetchAdminData(); };
 const saveSystemConfig = async () => { const payload = { ...sysConfig, passenger_fee: Number(sysConfig.passenger_fee), driver_fee: Number(sysConfig.driver_fee) }; await fetch('/api/admin?action=save_config', { method: 'POST', body: JSON.stringify(payload) }); showSuccessToast('保存成功'); };
+const handleUserDelete = (id) => { showDialog({title:'提示',message:'确认删除?'}).then(async ()=>{ await fetch(`/api/rides?id=${id}&user_id=${userProfile.id}`, { method: 'DELETE' }); fetchMyRides(); }); };
+const fetchMyRides = async () => { if(!userProfile.id) return; try{ const res=await fetch(`/api/rides?type=all`); const d=await res.json(); if(d.results) myRidesList.value=d.results.filter(i=>i.user_id===userProfile.id); }catch(e){} };
 watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.AutoComplete',function(){ new AMap.AutoComplete({city:'全国'}).search(newVal,(s,r)=>{ if(s==='complete'&&r.tips) mapSearchResults.value=r.tips; }); }); });
 </script>
 
 <template>
   <div v-if="appReady" class="app-container">
+    
     <div v-if="isSystemAdmin" class="admin-wrapper">
       <div v-if="!isLogined" class="admin-login-box">
         <h3>后台管理系统</h3>
@@ -466,8 +459,9 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
                   <div class="config-card"><van-field v-model="sysConfig.amap_key" label="高德Key" /><van-field v-model="sysConfig.platform_name" label="平台名称" /><van-field v-model="sysConfig.kefu_wechat" label="客服微信" /><van-field v-model="sysConfig.notice_text" label="滚动公告" type="textarea" /><van-field v-model="sysConfig.banners" label="轮播图URL" type="textarea" /></div>
                 </van-tab>
                 <van-tab title="业务">
-                  <div class="config-card"><van-cell center title="显示过期帖子"><template #right-icon><van-switch v-model="sysConfig.show_all_posts" size="20" /></template></van-cell><van-cell center title="司机强制认证"><template #right-icon><van-switch v-model="sysConfig.driver_cert_required" size="20" /></template></van-cell><van-field v-model="sysConfig.passenger_fee" label="乘客发布费" type="number" /><van-field v-model="sysConfig.driver_fee" label="司机发布费" type="number" />
-                  <van-field v-model="sysConfig.tags_driver" label="车主标签" type="textarea" rows="3" placeholder="逗号分隔" /><van-field v-model="sysConfig.tags_passenger" label="乘客标签" type="textarea" rows="3" placeholder="逗号分隔" />
+                  <div class="config-card">
+                      <van-cell center title="显示过期帖子"><template #right-icon><van-switch v-model="sysConfig.show_all_posts" size="20" /></template></van-cell><van-cell center title="司机强制认证"><template #right-icon><van-switch v-model="sysConfig.driver_cert_required" size="20" /></template></van-cell><van-field v-model="sysConfig.passenger_fee" label="乘客发布费" type="number" /><van-field v-model="sysConfig.driver_fee" label="司机发布费" type="number" />
+                      <van-field v-model="sysConfig.tags_driver" label="车主标签" type="textarea" rows="3" placeholder="逗号分隔" /><van-field v-model="sysConfig.tags_passenger" label="乘客标签" type="textarea" rows="3" placeholder="逗号分隔" />
                   </div>
                 </van-tab>
               </van-tabs>
@@ -487,6 +481,7 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
                     <img :src="uiState.currentQRCodeUrl" style="width:180px;height:180px;display:block;" />
                     <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:36px;height:36px;background:#fff;padding:2px;border-radius:4px;"><img src="/logo.png" style="width:100%;height:100%;object-fit:contain;" /></div>
                 </div>
+                <div style="margin-top:15px;font-size:14px;color:#333;">转发到微信群或朋友圈</div>
             </div>
         </van-dialog>
       </div>
@@ -503,7 +498,10 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
           </div>
           <div class="info-group">
             <div class="form-row"><div class="label">座位</div><div class="seat-grid"><div v-for="n in 6" :key="n" class="seat-btn" :class="{active:postForm.seats===n}" @click="postForm.seats=n">{{n}}</div></div></div>
-            <div v-if="postForm.type==='driver'" class="form-row"><div class="label">车型</div><van-radio-group v-model="postForm.car_model" direction="horizontal"><van-radio name="油车">油车</van-radio><van-radio name="电车">电车</van-radio><van-radio name="油电混合">油电混合</van-radio></van-radio-group></div>
+            <div v-if="postForm.type==='driver'" class="form-row">
+              <div class="label">车型</div>
+              <van-radio-group v-model="postForm.car_model" direction="horizontal"><van-radio name="油车">油车</van-radio><van-radio name="电车">电车</van-radio><van-radio name="油电混合">油电混合</van-radio></van-radio-group>
+            </div>
             <div class="form-row" @click="uiState.showDate=true"><div class="label">出发时间</div><div style="flex:1;text-align:right;">{{ postForm.dateDisplay || '请选择' }} <van-icon name="arrow" color="#999"/></div></div>
             <div class="form-row"><div class="label">费用</div><div style="flex:1"><van-field v-model="postForm.price" type="digit" :formatter="priceFormatter" placeholder="元" input-align="right" :border="false"/></div></div>
             <div class="form-row" style="align-items:flex-start;border-bottom:none;"><div class="label" style="margin-top:8px;">备注</div><van-field v-model="remarkDisplayText" readonly type="textarea" rows="2" placeholder="请选择下方标签" style="background:#f9f9f9;border-radius:4px;width:100%;padding:8px;" /></div>
