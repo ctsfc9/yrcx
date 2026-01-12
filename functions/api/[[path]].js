@@ -39,10 +39,9 @@ export async function onRequest(context) {
             }
         }
 
-        // 2. 列表 & 详情 (直达链接必须)
+        // 2. 列表 & 详情
         if (url.pathname === '/api/rides' && method === 'GET') {
             const id = url.searchParams.get('id');
-            // ★ 单条查询 ★
             if (id) {
                 const ride = await env.DB.prepare('SELECT * FROM rides WHERE id=?').bind(id).first();
                 return jsonResponse({ ride });
@@ -96,7 +95,6 @@ export async function onRequest(context) {
                  await env.DB.prepare('UPDATE users SET status=? WHERE id=?').bind(b.status, b.id).run();
                  return jsonResponse({ success: true });
              }
-             // 配置保存
              if (url.pathname.includes('save_config')) {
                  const b = await request.json();
                  await env.DB.prepare(`UPDATE system_config SET platform_name=?, notice_text=?, banners=?, tags_driver=?, tags_passenger=?, show_all_posts=?, passenger_fee=?, driver_fee=?, driver_cert_required=?, platform_desc=?, kefu_wechat=?, allow_driver_repost=? WHERE id=1`)
