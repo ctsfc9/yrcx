@@ -2,7 +2,7 @@
 import { ref, reactive, computed, nextTick, onMounted, onUnmounted, onErrorCaptured, watch } from 'vue';
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
-// 1. 地图配置 (必须置顶)
+// 1. 地图配置
 window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' };
 
 // 2. 状态定义
@@ -70,9 +70,9 @@ let mapGeocoder = null;
 const userLocation = ref(null); 
 const hotCities = ['北京', '上海', '广州', '深圳', '杭州', '成都', '武汉', '西安'];
 
-// 直达链接参数
+// ★★★ 1. 优先捕获直达ID ★★★
 const urlParams = new URLSearchParams(window.location.search);
-const startRideId = urlParams.get('ride_id');
+const GLOBAL_RIDE_ID = urlParams.get('ride_id');
 
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
@@ -111,15 +111,14 @@ onMounted(async () => {
   const ua = navigator.userAgent.toLowerCase();
   uiState.isWeChat = ua.indexOf('micromessenger') !== -1;
 
-  // 1. 初始化历史守卫 (单一守卫模式)
-  // 无论当前 URL 是什么，都先清洗一下，然后压入一个守卫
-  // 这个守卫的作用是：当用户点击物理返回键时，popstate 事件会被触发，从而让我们有机会拦截退出
-  if (!startRideId) {
-      window.history.replaceState({ page: 'root' }, null, document.URL.split('?')[0]);
+  // 1. 历史守卫初始化
+  // 如果有直达ID，不要清洗URL，否则直达失效
+  if (!GLOBAL_RIDE_ID) {
+      window.history.replaceState({ page: 'home' }, null, document.URL.split('?')[0]);
       window.history.pushState({ page: 'home' }, null, document.URL.split('?')[0]); 
   } else {
-      // 如果有直达链接，不要洗掉参数，直接压入守卫
-      window.history.pushState({ page: 'home' }, null, document.URL); 
+      // 直达链接：保持 URL，但压入一个状态供返回使用
+      window.history.pushState({ page: 'detail' }, null, document.URL);
   }
   
   window.addEventListener('popstate', handlePopState);
@@ -134,23 +133,15 @@ onMounted(async () => {
       return;
     }
 
-    // 2. 加载数据
-    onLoad(); 
+    // 2. 加载配置 & 数据
     fetchSystemConfig().then(() => {
         loadAMapScript(sysConfig.amap_key);
     });
+    
+    // 如果没有直达ID，正常加载列表
+    if (!GLOBAL_RIDE_ID) onLoad(); 
 
-    // 3. ★★★ 直达链接修复 ★★★
-    if (startRideId) {
-        // 强制确保在首页
-        activeTab.value = 0;
-        // 延迟执行，确保数据加载和组件渲染
-        setTimeout(() => {
-            fetchRideDetail(startRideId);
-        }, 600);
-    }
-
-    // 4. 用户
+    // 3. 用户恢复
     const u = localStorage.getItem('user_info');
     if (u) {
       Object.assign(userProfile, JSON.parse(u));
@@ -165,74 +156,82 @@ onMounted(async () => {
     } else {
         syncUserToBackend(true);
     }
+
+    // 4. ★★★ 修复：直达链接执行 ★★★
+    if (GLOBAL_RIDE_ID) {
+        setTimeout(() => {
+            fetchRideDetail(GLOBAL_RIDE_ID);
+        }, 500);
+    }
   } catch(e) { console.error(e); }
 });
 
 onUnmounted(() => window.removeEventListener('popstate', handlePopState));
 
-// ===================== 核心：返回逻辑 (单一守卫) =====================
-const handlePopState = () => {
-    // 浏览器已经执行了“后退”动作，现在我们需要判断退到了哪里，或者需要做什么
-
-    // 1. 优先关闭详情页
+// ===================== 核心：返回逻辑 (显式栈管理) =====================
+const handlePopState = (event) => {
+    // 1. 关详情页
     if (uiState.selectedRide) {
         uiState.selectedRide = null;
-        // 如果是直达链接，关闭详情页后应重置 URL，防止刷新又弹出来
-        if (startRideId) {
-            window.history.replaceState({ page: 'home' }, null, window.location.pathname);
+        if (GLOBAL_RIDE_ID) {
+            // 如果是直达链接进来的，清除参数回首页
+            window.location.href = window.location.origin;
         } else {
-            // 补回守卫，保持栈深度
-            window.history.pushState({ page: 'home' }, null, document.URL); 
+            // 补回守卫
+            window.history.pushState({ page: 'home' }, null, document.URL);
         }
         return;
     }
 
-    // 2. 关闭弹窗
+    // 2. 关弹窗
     if (Object.values(uiState).some(v=>v===true)) {
         if(uiState.showAuth && !userProfile.phone) {
-             window.history.pushState({ page: 'home' }, null, document.URL); // 强留
+             window.history.pushState(null, null, document.URL); // 强留
              return;
         }
         closeAllModals();
-        window.history.pushState({ page: 'home' }, null, document.URL); // 补回守卫
+        window.history.pushState(null, null, document.URL); // 补回
         return;
     }
 
-    // 3. 如果在二级页面 (发布/我的) -> 强制切回首页
+    // 3. ★★★ 修复：二级页面 -> 回首页 ★★★
+    // 检查 event.state 或者当前 activeTab
     if (activeTab.value !== 0) {
         activeTab.value = 0;
-        window.history.pushState({ page: 'home' }, null, document.URL); // 补回守卫
+        // 浏览器已经退了，刚好回到首页
         return;
     }
 
-    // 4. 真的在首页了 -> 提示退出
+    // 4. 首页 -> 退出
     if (activeTab.value === 0) {
         if (exitCounter === 0) {
             showToast('再按一次退出');
             exitCounter++;
-            window.history.pushState({ page: 'home' }, null, document.URL); // 补回守卫
+            window.history.pushState({ page: 'home' }, null, document.URL); // 补回
             setTimeout(() => { exitCounter = 0; }, 2000);
-        } else {
-            // 允许退出 (不再补 pushState)
         }
     }
 };
 
-// 切换页面 (纯变量控制，不操作 History，完全依赖单一守卫)
+// ★★★ 修复：切换Tab逻辑 (压栈) ★★★
 const switchTab = (idx) => { 
     if (activeTab.value === idx) return;
+    
+    // 如果是从首页进子页面，手动压入历史
+    if (activeTab.value === 0 && idx !== 0) {
+        window.history.pushState({ page: 'sub' }, null, '');
+    }
     
     activeTab.value = idx; 
     
     if(idx===0){ refreshing.value=true; onLoad(); } 
     else if(idx===1){ 
-        // 进发布页，强制定位
-        setTimeout(autoLocate, 300); 
+        // 进发布页，强制定位 (不等待)
+        autoLocate();
     } 
     else if(idx===2) { fetchMyRides(); }
 };
 
-// 手动返回按钮 (模拟物理返回)
 const handleBack = () => {
     window.history.back(); 
 };
@@ -242,72 +241,59 @@ const closeAllModals = () => {
     uiState.showPayment = false; uiState.showAddUser = false; uiState.showQRCode = false;
 };
 
-// ===================== 地图与定位 (IP直出 + GPS修正) =====================
+// ===================== 地图与定位 (CitySearch 优先) =====================
 const loadAMapScript = (key) => { 
     if(window.AMap) { autoLocate(); return; }
     try{ 
         const s=document.createElement('script'); 
         s.src=`https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.CitySearch,AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder`; 
         s.onload = () => { 
-            // 脚本加载完，如果恰好在发布页，或者还没定位，就定一次
-            if (activeTab.value === 1 || !postForm.origin) autoLocate(); 
+            // ★★★ 修复：加载完立即全局定位 ★★★
+            autoLocate(); 
         }; 
         document.body.appendChild(s); 
     }catch(e){} 
 };
 
-// ★★★ 修复：定位逻辑 (保证有值) ★★★
+// ★★★ 修复：自动定位 (CitySearch 必杀技) ★★★
 const autoLocate = () => { 
     if(!window.AMap) {
-        setTimeout(autoLocate, 800);
+        setTimeout(autoLocate, 1000);
         return; 
     }
-    showLoadingToast({ message: '定位中...', duration: 3000 });
     
-    // 1. IP 定位 (主力)
+    // 1. IP 定位 (秒出结果，100%有值)
     const citySearch = new AMap.CitySearch();
     citySearch.getLocalCity(function (status, result) {
-        closeToast(); // 立刻关闭 Loading，不要一直转
-        
         if (status === 'complete' && result.info === 'OK') {
-            // 拿到城市，立刻填入
             const city = result.city || result.province;
+            // 只要拿到城市，立马填入，不要等 GPS
             if (city && !postForm.origin) {
                 postForm.origin = city.replace(/省|市|自治区/g, ''); 
             }
             
-            // 2. 静默 GPS 修正 (如果有更准的区县，覆盖之)
+            // 2. 后台静默 GPS 修正 (如果有区县，再覆盖)
             AMap.plugin('AMap.Geolocation', function() {
-                const geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 5000 });
+                const geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 3000 });
                 geolocation.getCurrentPosition((status2, result2) => {
                     if(status2 === 'complete'){
                         userLocation.value = [result2.position.lng, result2.position.lat];
                         if (result2.addressComponent) {
                              const d = result2.addressComponent.district;
-                             const c = result2.addressComponent.city;
-                             // 优先区县，其次城市
                              if (d && typeof d === 'string' && d.length > 0) {
                                  postForm.origin = d.replace(/省|市|自治区/g, ''); 
-                             } else if (c && typeof c === 'string' && c.length > 0) {
-                                 postForm.origin = c.replace(/省|市|自治区/g, '');
                              }
                         }
                     }
                 });
             });
-        } else {
-             // IP 定位都挂了 (极少见)
-             if (!postForm.origin) {
-                 postForm.origin = '未定位';
-                 showFailToast('定位失败，请手动选择');
-             }
         }
     });
 };
 
 const openMapSelector = (f) => { 
     currentMapField.value=f; uiState.showMap=true; mapSearchKeyword.value=''; mapSearchResults.value=[]; 
-    // 地图弹窗也属于“弹窗”，由单一守卫管理返回
+    window.history.pushState({ popup: 'map' }, null, '');
     setTimeout(()=>{ 
         if(window.AMap && !mapInstance) { 
             const center = userLocation.value || [116.397428, 39.90923];
@@ -322,8 +308,7 @@ const openMapSelector = (f) => {
 const selectHotCity = (city) => {
     if(currentMapField.value==='origin') postForm.origin = city;
     else postForm.destination = city;
-    // 这里不是物理返回，是关闭弹窗，手动处理
-    uiState.showMap = false;
+    window.history.back(); 
 };
 
 const resolveAddress = (lnglat) => { if(!window.AMap) return; AMap.plugin('AMap.Geocoder', function() { if(!mapGeocoder) mapGeocoder = new AMap.Geocoder(); mapGeocoder.getAddress(lnglat, function(status, result) { if (status === 'complete' && result.regeocode) { mapSelectionText.value = result.regeocode.formattedAddress; } }); }); };
@@ -332,12 +317,12 @@ const confirmMapSelection = () => {
     if(val && val !== '拖动地图以定位...'){ 
         if(currentMapField.value==='origin') postForm.origin=val; 
         else postForm.destination=val; 
-        uiState.showMap = false;
+        window.history.back(); 
     } else showToast('请等待定位解析'); 
 };
 const selectSearchResult = (item) => { 
     if(currentMapField.value==='origin') postForm.origin=item.name; else postForm.destination=item.name; 
-    uiState.showMap = false;
+    window.history.back(); 
 };
 
 // ===================== 业务逻辑 =====================
@@ -368,12 +353,10 @@ const toggleRideVisible = async (ride) => { const newVal = ride.is_hidden ? 0 : 
 const deleteRideAdmin = async (id) => { showDialog({ title:'警告', message:'确定删除?' }).then(async()=>{ await fetch(`/api/rides?id=${id}`, { method: 'DELETE' }); fetchAdminData(); showSuccessToast('删除成功'); }); };
 const handleAdminAddUser = async () => { if(!addUserForm.nickname) return; showLoadingToast('添加中'); const res = await fetch('/api/admin/add_user', { method: 'POST', body: JSON.stringify(addUserForm) }); if(res.ok){ uiState.showAddUser=false; fetchAdminData(); showSuccessToast('成功'); } };
 
-// ★★★ 一键复制分享 (URL修复) ★★★
+// ★★★ 修复：一键复制分享 (URL修正) ★★★
 const handleCopyShare = (ride) => {
-    // 确保 URL 格式正确，不带 hash，直接用 ?ride_id=xxx
-    const origin = window.location.origin;
-    const directUrl = `${origin}/?ride_id=${ride.id}`;
-    
+    // 强制使用 ?ride_id= 格式
+    const directUrl = `${window.location.origin}/?ride_id=${ride.id}`;
     const typeStr = ride.type === 'driver' ? '车找人' : '人找车';
     const dateStr = formatDate(ride.date);
     const text = `【${sysConfig.platform_name}】-${typeStr}\n${ride.origin} -> ${ride.destination}\n数量：${ride.seats}座\n车型：${ride.car_model || '未填写'}\n出发：${dateStr}\n点击查看: ${directUrl}`;
@@ -414,7 +397,7 @@ const formatDate = (str) => { if (!str) return '待定'; try { const d = str.spl
 
 const openDetail = (item) => { 
     uiState.selectedRide = item; 
-    // 不需要压栈，因为我们用的是单一守卫，详情页只是覆盖层
+    // 打开详情页不压栈，因为它不是全屏页面，只是覆盖层
 };
 
 const onLoad = async () => { if (refreshing.value) { list.value = []; refreshing.value = false; } loading.value = true; try { const res = await fetch(`/api/rides?type=${filterType.value}`); if(res.ok) { const data = await res.json(); if (data.results) list.value = data.results; } } catch(e) {} loading.value = false; finished.value = true; };
