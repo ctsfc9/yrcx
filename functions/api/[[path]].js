@@ -2,6 +2,7 @@ export async function onRequest(context) {
     const { request, env } = context;
     const url = new URL(request.url);
     const method = request.method;
+
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': '*',
@@ -41,10 +42,10 @@ export async function onRequest(context) {
             }
         }
 
-        // 2. 列表 & 详情 (V68 核心逻辑)
+        // 2. 列表 & 详情 (V75 关键：支持单条查询)
         if (url.pathname === '/api/rides' && method === 'GET') {
             const id = url.searchParams.get('id');
-            // ★ 单条查询 (用于直达链接) ★
+            // ★ 直达链接专用查询 ★
             if (id) {
                 const ride = await env.DB.prepare('SELECT * FROM rides WHERE id=?').bind(id).first();
                 return jsonResponse({ ride });
@@ -77,8 +78,8 @@ export async function onRequest(context) {
         // 4. 后台
         if (url.pathname.includes('/api/admin')) {
              if (url.pathname.includes('stats')) {
-                const totalUsers = await env.DB.prepare('SELECT COUNT(*) as c FROM users').first('c') || 0;
-                const newUsersToday = await env.DB.prepare(`SELECT COUNT(*) as c FROM users WHERE created_at LIKE '${today}%'`).first('c') || 0;
+                const totalUsers = await env.DB.prepare('SELECT COUNT(*) as c FROM users').first('c');
+                const newUsersToday = await env.DB.prepare(`SELECT COUNT(*) as c FROM users WHERE created_at LIKE '${today}%'`).first('c');
                 return jsonResponse({ totalUsers, newUsersToday });
              }
              if (url.pathname.includes('users')) {
