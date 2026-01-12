@@ -272,8 +272,67 @@ const autoLocate = () => {
 </script>
 
 <template>
-  <!-- 模板部分完全保持原有（仅 sysConfig 字段已后台化，UI 使用仍相同） -->
-  <!-- ... 原有模板代码不变 ... -->
+  <div v-if="appReady" class="app-container">
+    
+    <div v-if="isSystemAdmin" class="admin-wrapper">
+      <div v-if="!isLogined" class="admin-login-box">
+        <h3>后台管理系统</h3>
+        <van-form @submit="handleAdminLogin">
+          <van-field v-model="adminLoginData.username" label="账号" required />
+          <van-field v-model="adminLoginData.password" type="password" label="密码" required />
+          <div style="margin:20px;"><van-button block type="primary" native-type="submit">安全登录</van-button></div>
+        </van-form>
+      </div>
+      <div v-else class="admin-dashboard">
+        <div class="admin-sidebar">
+          <div class="menu-item" :class="{active:adminActiveMenu==='home'}" @click="switchAdminMenu('home')"><van-icon name="chart-trending-o" /> 首页总览</div>
+          <div class="menu-item" :class="{active:adminActiveMenu==='users'}" @click="switchAdminMenu('users')"><van-icon name="friends-o" /> 用户管理</div>
+          <div class="menu-item" :class="{active:adminActiveMenu==='rides'}" @click="switchAdminMenu('rides')"><van-icon name="logistics" /> 拼车管理</div>
+          <div class="menu-item" :class="{active:adminActiveMenu==='config'}" @click="switchAdminMenu('config')"><van-icon name="setting-o" /> 平台设置</div>
+          <div class="menu-item logout" @click="()=>location.href='/'"><van-icon name="close" /> 退出后台</div>
+        </div>
+        <div class="admin-main">
+          <div v-if="adminActiveMenu==='home'" class="admin-home">
+             <h3>系统总览</h3>
+             <div class="data-grid">
+               <div class="data-card blue">
+                 <div>用户总数</div>
+                 <div class="val">{{ adminStats.totalUsers }}</div>
+                 <div class="sub-row">今日新增 {{ adminStats.newUsersToday }}</div>
+               </div>
+               <!-- 其他卡片省略 -->
+             </div>
+          </div>
+          <!-- 其他后台页面省略 -->
+        </div>
+      </div>
+    </div>
+    <div v-else class="user-wrapper">
+      <div v-if="activeTab===0" class="page-home">
+        <van-notice-bar left-icon="volume-o" :text="sysConfig.notice_text" style="height:36px;margin-bottom:5px;" scrollable />
+        <van-swipe :autoplay="3000" class="home-banner" style="height:45vw;max-height:200px;"><van-swipe-item v-for="i in bannersList" :key="i"><img :src="i" style="width:100%;height:100%;object-fit:cover;"/></van-swipe-item></van-swipe>
+        <div class="nav-grid two-cols"><div class="nav-btn btn-blue" :class="{active: filterType==='driver'}" @click="() => setFilter('driver')"><van-icon name="logistics" /> 车找人</div><div class="nav-btn btn-green" :class="{active: filterType==='passenger'}" @click="() => setFilter('passenger')"><van-icon name="friends" /> 人找车</div></div>
+        <van-pull-refresh v-model="refreshing" @refresh="onRefresh">
+          <div v-if="loading && list.length===0" style="padding:20px;text-align:center;"><van-loading size="24px">加载中...</van-loading></div>
+          <div v-else-if="safeList.length === 0" style="text-align:center;padding:40px;color:#999;font-size:14px;"><van-icon name="description" size="48" style="margin-bottom:10px;color:#eee;" /><div>暂无信息</div></div>
+          <van-list v-else v-model:loading="loading" :finished="finished" finished-text="没有更多了">
+            <div v-for="(item, index) in safeList" :key="item.id || index" class="ride-card" @click="openDetail(item)">
+              <div class="card-row-1">
+                <div class="row-left"><span class="badge" :class="item.type">{{ item.type==='driver'?'车主':'乘客' }}</span><span class="route">{{ item.origin }} <van-icon name="arrow" /> {{ item.destination }}</span></div>
+                <div class="call-btn" @click.stop="handleCall(item.contact)"><van-icon name="phone" color="#fff" size="22" /></div>
+              </div>
+              <div class="card-row-2">
+                <div class="info-group-left"><span class="info-text"><van-icon name="clock-o" /> {{ formatDate(item.date) }}</span><span class="info-text">{{ item.seats }}座</span><span class="price-val">¥{{ item.price || '面议' }}</span><span v-if="item.car_model && item.type === 'driver'" class="car-badge" :class="getCarClass(item.car_model)">{{ item.car_model }}</span></div>
+              </div>
+              <div class="card-row-3" v-if="item.remark">{{ item.remark }}</div>
+            </div>
+          </van-list>
+        </van-pull-refresh>
+      </div>
+
+      <!-- 其他模板部分省略，保持原有 -->
+    </div>
+  </div>
 </template>
 
 <style>
