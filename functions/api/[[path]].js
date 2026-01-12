@@ -39,7 +39,7 @@ export async function onRequest(context) {
             }
         }
 
-        // 2. 列表 & 详情
+        // 2. 列表 & 详情 (直达链接必须)
         if (url.pathname === '/api/rides' && method === 'GET') {
             const id = url.searchParams.get('id');
             if (id) {
