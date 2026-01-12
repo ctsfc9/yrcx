@@ -2,14 +2,17 @@
 import { ref, reactive, computed, nextTick, onMounted, onUnmounted, onErrorCaptured, watch } from 'vue';
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
-// 1. 地图配置 (必须置顶)
+// ==========================================
+// 1. 地图安全密钥 (必须置顶，照搬成功版本)
+// ==========================================
 window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' };
 
-// 2. 状态定义
-const appReady = ref(true); 
+// 状态定义
+const appReady = ref(false); 
 const globalError = ref('');
 onErrorCaptured((err) => { console.error("Vue Error:", err); return false; });
 
+// 立即判断后台
 const isUrlAdmin = location.pathname.includes('/admin') || location.search.includes('admin');
 const isSystemAdmin = ref(isUrlAdmin);
 
@@ -33,7 +36,7 @@ const adminActiveMenu = ref('home');
 const adminSettingTab = ref(0);
 const adminUserList = ref([]); 
 const adminRideList = ref([]);
-const adminStats = reactive({ totalUsers:0, newUsersToday:0 });
+const adminStats = reactive({ totalUsers:0, certifiedUsers:0, male:0, female:0, monthRecharge:0, todayRecharge:0, newUsersToday:0 });
 const addUserForm = reactive({ nickname: '', phone: '', balance: '' });
 
 const activeTab = ref(0);
@@ -75,11 +78,9 @@ const bannersList = computed(() => {
   return sysConfig.banners.split(',').filter(s => s.trim());
 });
 
-// ★ 修复：标签默认值兜底 ★
 const currentRemarkOptions = computed(() => {
-  let str = postForm.type === 'driver' ? sysConfig.tags_driver : sysConfig.tags_passenger;
-  if (!str) str = postForm.type === 'driver' ? '有行李,走高速,可吸烟' : '有行李,走高速,只限女生';
-  return str.split(/[,，]/).filter(s => s.trim());
+  const str = postForm.type === 'driver' ? sysConfig.tags_driver : sysConfig.tags_passenger;
+  return (str || '').split(/[,，]/).filter(s => s.trim());
 });
 const remarkDisplayText = computed(() => (postForm.remark || []).join('，'));
 
@@ -104,36 +105,43 @@ onMounted(async () => {
   const ua = navigator.userAgent.toLowerCase();
   uiState.isWeChat = ua.indexOf('micromessenger') !== -1;
 
-  // 1. 初始化拦截器
-  // 先把当前状态设为 home，然后压入一个状态，这样用户按返回就是退到 home
-  window.history.replaceState({ page: 'home' }, null, document.URL); 
-  window.history.pushState({ page: 'home' }, null, document.URL); 
+  // 1. 初始化 Hash 路由监听 (这是最成熟的方案)
+  window.addEventListener('hashchange', onHashChange);
+  
+  // 2. 首页防误触守卫 (只做这一件事，不多加戏)
+  if (!window.location.hash || window.location.hash === '#/') {
+      window.history.replaceState({ page: 'home' }, null, '#/');
+      window.history.pushState({ page: 'home' }, null, '#/'); // 压入一帧防止直接退出
+  }
   window.addEventListener('popstate', handlePopState);
 
   try {
+    // 后台逻辑
     if (isSystemAdmin.value) {
       if(localStorage.getItem('admin_token')) {
         adminLoginData.password = localStorage.getItem('admin_token');
         isLogined.value = true;
         fetchAdminData();
       }
+      appReady.value = true;
       return;
     }
 
-    // 2. 加载配置 & 列表 (并行)
+    // 3. 并行加载，确保首页有数据
     onLoad(); 
     fetchSystemConfig().then(() => {
+        // 配置到了再加载地图，且立即触发定位
         loadAMapScript(sysConfig.amap_key);
     });
+    
+    appReady.value = true; // 无论如何先显示界面
 
-    // 3. 直达链接检查 (基于 URL 参数，不依赖 Hash)
+    // 4. 直达链接解析
     const params = new URLSearchParams(window.location.search);
     const rideId = params.get('ride_id');
-    if (rideId) {
-        fetchRideDetail(rideId);
-    }
+    if (rideId) fetchRideDetail(rideId);
 
-    // 4. 用户逻辑
+    // 5. 用户信息
     const u = localStorage.getItem('user_info');
     if (u) {
       Object.assign(userProfile, JSON.parse(u));
@@ -145,107 +153,134 @@ onMounted(async () => {
 
     if (!userProfile.phone) {
         uiState.showAuth = true; 
-        uiState.authStep = 1;
     } else {
         syncUserToBackend(true);
     }
+
   } catch(e) { console.error(e); }
 });
 
-onUnmounted(() => window.removeEventListener('popstate', handlePopState));
+onUnmounted(() => {
+    window.removeEventListener('hashchange', onHashChange);
+    window.removeEventListener('popstate', handlePopState);
+});
 
-// ===================== 核心：返回逻辑 (拦截器模式) =====================
-const handlePopState = () => {
-    // 1. 优先处理弹窗
+// ===================== 核心：路由与导航 (Hash驱动) =====================
+// 这是最稳健的方案，浏览器控制 Hash，我们监听 Hash 变界面
+const onHashChange = () => {
+    const hash = window.location.hash;
+    
+    // 关弹窗优先
     if (Object.values(uiState).some(v=>v===true && v!==uiState.selectedRide)) {
+        // 如果是授权弹窗且没登录，强制回弹
         if(uiState.showAuth && !userProfile.phone) {
-             window.history.pushState(null, null, document.URL); // 强制不退
+             window.history.pushState(null, null, '#/auth');
              return;
         }
-        uiState.showRole=false; uiState.showMap=false; uiState.showDate=false;
-        uiState.showPayment=false; uiState.showAddUser=false; uiState.showQRCode=false;
-        uiState.selectedRide=null;
-        
-        // 关键：补回历史记录
-        window.history.pushState(null, null, document.URL);
+        closeAllModals();
         return;
     }
 
-    // 2. 二级页面 -> 切回首页
-    if (activeTab.value !== 0) {
+    // 页面切换
+    if (hash === '#/' || hash === '') {
         activeTab.value = 0;
-        window.history.pushState(null, null, document.URL); // 补回历史
+    } else if (hash.includes('publish')) {
+        activeTab.value = 1;
+        // 进发布页，延迟一下触发定位，确保 DOM 渲染完成
+        setTimeout(autoLocate, 300); 
+    } else if (hash.includes('me')) {
+        activeTab.value = 2;
+        fetchMyRides();
+    }
+};
+
+const handlePopState = () => {
+    // 详情页特殊处理
+    if (uiState.selectedRide) {
+        uiState.selectedRide = null;
+        // 如果是直达链接，清除参数回首页
+        if(window.location.search.includes('ride_id')) window.location.href = window.location.origin;
         return;
     }
 
-    // 3. 首页 -> 提示退出
-    if (activeTab.value === 0) {
+    // 首页双击退出
+    if (activeTab.value === 0 && !uiState.showAuth) {
         if (exitCounter === 0) {
             showToast('再按一次退出');
             exitCounter++;
-            window.history.pushState(null, null, document.URL); // 补回历史
+            // 补回历史记录，锁住页面
+            window.history.pushState(null, null, '#/');
             setTimeout(() => { exitCounter = 0; }, 2000);
-        } else {
-            // 放行退出
         }
     }
 };
 
+// 手动切换 Tab (修改 Hash，触发浏览器原生行为)
 const switchTab = (idx) => { 
-    activeTab.value = idx; 
-    if(idx===0){ refreshing.value=true; onLoad(); } 
-    else if(idx===1){ nextTick(() => autoLocate()); } // 立即尝试定位
-    else if(idx===2) { fetchMyRides(); }
+    if (activeTab.value === idx) return;
+    if (idx === 0) window.location.hash = '/';
+    else if (idx === 1) window.location.hash = '/publish';
+    else if (idx === 2) window.location.hash = '/me';
 };
 
-// ===================== 地图与定位 (双保险) =====================
+const closeAllModals = () => {
+    uiState.showRole = false; uiState.showMap = false; uiState.showDate = false;
+    uiState.showPayment = false; uiState.showAddUser = false; uiState.showQRCode = false;
+};
+
+// ===================== 地图与定位 (回归 IP 优先方案) =====================
 const loadAMapScript = (key) => { 
     if(window.AMap) { autoLocate(); return; }
     try{ 
         const s=document.createElement('script'); 
+        // 显式加载 CitySearch 插件
         s.src=`https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.CitySearch,AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder`; 
-        s.onload = () => { /* 加载完不操作 */ }; 
+        s.onload = () => { 
+             // 脚本加载完毕，如果当前就在发布页，立即定位
+             if(activeTab.value === 1) autoLocate(); 
+        }; 
         document.body.appendChild(s); 
     }catch(e){} 
 };
 
-// ★★★ 修复：IP定位优先 + GPS修正 ★★★
+// ★★★ 核心修复：自动定位逻辑 ★★★
 const autoLocate = () => { 
-    if(!window.AMap) {
-        setTimeout(autoLocate, 1000);
-        return; 
-    }
-    showLoadingToast({ message: '定位中...', duration: 2000 });
+    if(!window.AMap) return; // 脚本没好就放弃，等待下一次触发
+    showLoadingToast({ message: '获取位置...', duration: 2000 });
     
-    // 1. IP 定位 (极速)
+    // 1. 优先使用 IP 定位 (CitySearch) - 速度极快，100%有值
     AMap.plugin('AMap.CitySearch', function () {
         const citySearch = new AMap.CitySearch();
         citySearch.getLocalCity(function (status, result) {
             if (status === 'complete' && result.info === 'OK') {
                 const city = result.city || result.province;
-                // 初步赋值
-                if (city) postForm.origin = city.replace(/省|市|自治区/g, '');
-                
-                // 2. 尝试 GPS 获取更准的区县
-                AMap.plugin('AMap.Geolocation', function() {
-                    const geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 3000 });
-                    geolocation.getCurrentPosition(function(status2, result2){
-                        if(status2 === 'complete' && result2.addressComponent){
-                            const ac = result2.addressComponent;
-                            const district = ac.district;
-                            // 如果取到了区县，覆盖掉之前的城市
-                            if (district && typeof district === 'string' && district.length > 0) {
-                                postForm.origin = district.replace(/省|市|自治区/g, '');
-                            }
-                        }
-                    });
-                });
-            } else {
-                // IP 失败，直接显示定位失败
+                // 立即赋值，保证有数据显示
+                if (city) postForm.origin = city.replace(/省|市|自治区/g, ''); 
                 closeToast();
-                showFailToast('定位失败，请手动选择');
+
+                // 2. 后台静默尝试 GPS 修正为区县 (可选，不阻塞)
+                attemptGPSCorrection();
+            } else {
+                // IP 失败 (极少见)，直接尝试 GPS
+                attemptGPSCorrection();
             }
-            closeToast();
+        });
+    });
+};
+
+// GPS 修正逻辑
+const attemptGPSCorrection = () => {
+    AMap.plugin('AMap.Geolocation', function() {
+        const geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 3000 });
+        geolocation.getCurrentPosition(function(status, result){
+            if(status === 'complete' && result.addressComponent){
+                const ac = result.addressComponent;
+                const district = ac.district;
+                // 如果获取到了区县，且不为空，覆盖之前的 IP 城市
+                if (district && typeof district === 'string' && district.length > 0) {
+                    postForm.origin = district.replace(/省|市|自治区/g, '');
+                }
+            }
         });
     });
 };
@@ -277,6 +312,7 @@ const syncUserToBackend = async (silent) => { try { const res = await fetch('/ap
 const handleLogout = () => { showDialog({title:'提示',message:'确定退出?'}).then(()=>{ localStorage.clear(); location.reload(); }); };
 const fetchAdminData = async () => { if (!isLogined.value) return; try { const s=await fetch('/api/admin/stats'); if(s.ok) Object.assign(adminStats, await s.json()); const u=await fetch('/api/admin/users'); if(u.ok) adminUserList.value = (await u.json()).results; const r=await fetch('/api/admin/all_rides'); if(r.ok) adminRideList.value = (await r.json()).results; } catch(e){} };
 
+// 后台操作修复
 const handleAdminDeleteUser = (user) => { 
     showDialog({ title: '警告', message: '确定删除该用户？' }).then(async () => { 
         const res = await fetch(`/api/admin/user?id=${user.id}`, { method: 'DELETE' }); 
@@ -290,10 +326,9 @@ const toggleRideVisible = async (ride) => { const newVal = ride.is_hidden ? 0 : 
 const deleteRideAdmin = async (id) => { showDialog({ title:'警告', message:'确定删除?' }).then(async()=>{ await fetch(`/api/rides?id=${id}`, { method: 'DELETE' }); fetchAdminData(); showSuccessToast('删除成功'); }); };
 const handleAdminAddUser = async () => { if(!addUserForm.nickname) return; showLoadingToast('添加中'); const res = await fetch('/api/admin/add_user', { method: 'POST', body: JSON.stringify(addUserForm) }); if(res.ok){ uiState.showAddUser=false; fetchAdminData(); showSuccessToast('成功'); } };
 
-// ★★★ 修复：一键复制分享 ★★★
+// 复制分享 (修复)
 const handleCopyShare = (ride) => {
-    // 直达链接
-    const directUrl = `${window.location.origin}/?ride_id=${ride.id}`;
+    const directUrl = `${window.location.origin}/?ride_id=${ride.id}#detail`;
     const typeStr = ride.type === 'driver' ? '车找人' : '人找车';
     const dateStr = formatDate(ride.date);
     
@@ -320,14 +355,18 @@ const handleCopyShare = (ride) => {
 
 const handleShowQRCode = (ride) => { 
     const shareLink = `${window.location.origin}/?ride_id=${ride.id}`; 
-    uiState.currentQRCodeUrl = `https://quickchart.io/qr?text=${encodeURIComponent(shareLink)}&size=300&margin=1&ecLevel=H`; 
+    uiState.currentQRCodeUrl = `https://quickchart.io/qr?text=${encodeURIComponent(shareLink)}&size=300&margin=1`; 
     uiState.currentRideInfo = ride; 
     uiState.showQRCode = true; 
 };
 
 const openWeChat = () => { location.href = "weixin://"; };
 const handleBack = () => { window.history.back(); };
-const selectRoleAndGo = async (r) => { postForm.type=r; postForm.date=''; postForm.remark=[]; uiState.showRole = false; await nextTick(); switchTab(1); };
+const selectRoleAndGo = async (r) => { 
+    postForm.type=r; postForm.date=''; postForm.remark=[]; 
+    uiState.showRole = false; 
+    switchTab(1); // 直接切 Hash
+};
 const handleCall = (p) => { location.href=`tel:${p}`; };
 const swapLocation = () => { const t=postForm.origin; postForm.origin=postForm.destination; postForm.destination=t; };
 const onPreSubmit = () => { if(!postForm.origin||!postForm.destination){showFailToast('请完善路线');return;} if(!userProfile.phone){uiState.showAuth=true;return;} uiState.showPayment=true; };
@@ -353,6 +392,7 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
 
 <template>
   <div v-if="appReady" class="app-container">
+    
     <div v-if="isSystemAdmin" class="admin-wrapper">
       <div v-if="!isLogined" class="admin-login-box">
         <h3>后台管理系统</h3>
@@ -443,7 +483,7 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
 
     <div v-else class="user-wrapper">
       <div v-if="activeTab === 1" class="page-post">
-        <van-nav-bar title="发布行程" left-arrow @click-left="switchTab(0)" />
+        <van-nav-bar title="发布行程" left-arrow @click-left="handleBack" />
         <div class="post-card">
           <div class="location-group">
             <div class="loc-row"><div class="dot green">起</div><div class="input-area" @click="openMapSelector('origin')">{{ postForm.origin || '点击定位' }}</div><div class="loc-icon" @click="autoLocate"><van-icon name="aim"/></div></div>
