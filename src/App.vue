@@ -13,7 +13,6 @@ onErrorCaptured((err) => { console.error("Vue Error:", err); return false; });
 const isUrlAdmin = location.pathname.includes('/admin') || location.search.includes('admin');
 const isSystemAdmin = ref(isUrlAdmin);
 
-// 默认标签
 const defaultTags = '无行李,有行李,行李多,需空后备箱,有大件,可带货,高速费AA,不走高速,车内禁烟,准时出发,时间协商,带宠物,有婴儿,有孕妇,有老人,红包补偿,顺路接送,帮开车,不收费';
 
 const sysConfig = reactive({
@@ -22,7 +21,7 @@ const sysConfig = reactive({
   banners: '', 
   tags_driver: defaultTags, 
   tags_passenger: defaultTags, 
-  notice_text: '欢迎使用宜人出行，拼车请注意安全！', // ★ 修复：给个默认值，防止空白
+  notice_text: '欢迎使用宜人出行，拼车请注意安全！',
   show_all_posts: true, passenger_fee: 0, driver_fee: 0, driver_cert_required: false,
   platform_desc: '', kefu_wechat: '', allow_driver_repost: true,
   sms_account: '', sms_password: ''
@@ -61,6 +60,11 @@ const userProfile = reactive({ id: '', nickname: '未登录', avatar: '', phone:
 const registerForm = reactive({ phone: '' });
 const postForm = reactive({ type: '', origin: '', destination: '', date: '', dateDisplay: '', seats: 1, price: '', remark: [], contact: '', car_model: '' });
 
+// ★★★ 新增：当前用户坐标 ★★★
+const userLocation = ref(null); // [lng, lat]
+// ★★★ 新增：热门城市 ★★★
+const hotCities = ['北京', '上海', '广州', '深圳', '杭州', '成都', '武汉', '西安'];
+
 const mapSearchKeyword = ref('');
 const mapSearchResults = ref([]);
 const currentMapField = ref(''); 
@@ -68,7 +72,6 @@ const mapSelectionText = ref('拖动地图以定位...');
 let mapInstance = null;
 let mapGeocoder = null;
 
-// ★★★ 修复：直达链接参数捕获 ★★★
 const urlParams = new URLSearchParams(window.location.search);
 const startRideId = urlParams.get('ride_id');
 
@@ -77,15 +80,8 @@ const safeList = computed(() => {
   return [...list.value].sort((a, b) => b.id - a.id);
 });
 
-// ★★★ 修复：轮播图兜底 ★★★
 const bannersList = computed(() => {
-  // 如果后台没配置，或者配置为空，显示默认图
-  if (!sysConfig.banners || sysConfig.banners.length < 5) {
-      return [
-          'https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg',
-          'https://fastly.jsdelivr.net/npm/@vant/assets/apple-2.jpeg'
-      ];
-  }
+  if (!sysConfig.banners || sysConfig.banners.length < 5) return ['https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg', 'https://fastly.jsdelivr.net/npm/@vant/assets/apple-2.jpeg'];
   return sysConfig.banners.split(',').filter(s => s.trim());
 });
 
@@ -133,17 +129,12 @@ onMounted(async () => {
       return;
     }
 
-    // 2. 并行启动
     loadAMapScript(sysConfig.amap_key);
     onLoad(); 
-    fetchSystemConfig(); // 获取后台配置（轮播图、公告等）
+    fetchSystemConfig();
 
-    // 3. 直达链接
-    if (startRideId) {
-        fetchRideDetail(startRideId);
-    }
+    if (startRideId) fetchRideDetail(startRideId);
 
-    // 4. 用户
     const u = localStorage.getItem('user_info');
     if (u) {
       Object.assign(userProfile, JSON.parse(u));
@@ -163,31 +154,25 @@ onMounted(async () => {
 
 onUnmounted(() => window.removeEventListener('popstate', handlePopState));
 
-// ===================== 核心：返回逻辑 =====================
+// ===================== 核心：返回逻辑 (严格修复) =====================
 const handlePopState = () => {
     if (exitCounter > 0) return;
 
     let preventExit = false;
 
-    // 1. 关详情页
     if (uiState.selectedRide) {
         uiState.selectedRide = null;
         if (startRideId) window.location.href = window.location.origin;
         preventExit = true;
-    }
-    // 2. 关弹窗
-    else if (Object.values(uiState).some(v=>v===true)) {
+    } else if (Object.values(uiState).some(v=>v===true)) {
         if(uiState.showAuth && !userProfile.phone) { /* 强留 */ } 
         else closeAllModals();
         preventExit = true;
-    }
-    // 3. 回首页
-    else if (activeTab.value !== 0) {
+    } else if (activeTab.value !== 0) {
+        // ★★★ 修复：如果在发布页，返回时强制切回首页 ★★★
         activeTab.value = 0;
         preventExit = true;
-    }
-    // 4. 首页退出提示
-    else if (activeTab.value === 0) {
+    } else if (activeTab.value === 0) {
         showToast('再按一次退出');
         exitCounter++;
         setTimeout(() => { exitCounter = 0; }, 2000);
@@ -202,7 +187,7 @@ const handlePopState = () => {
 const switchTab = (idx) => { 
     if (activeTab.value === idx) return;
     
-    // 压入历史，保证能返回
+    // 手动压入历史，保证能返回
     if (activeTab.value === 0 && idx !== 0) {
         window.history.pushState({ page: 'sub' }, null, '');
     }
@@ -216,10 +201,9 @@ const switchTab = (idx) => {
     else if(idx===2) { fetchMyRides(); }
 };
 
-// ★★★ 修复：返回上一级 ★★★
+// ★★★ 修复：返回按钮逻辑 ★★★
 const handleBack = () => {
-    // 触发浏览器的后退，这会触发 popstate，进而执行 handlePopState 逻辑（回首页）
-    window.history.back();
+    window.history.back(); // 模拟物理返回，触发 popstate
 };
 
 const closeAllModals = () => {
@@ -227,71 +211,101 @@ const closeAllModals = () => {
     uiState.showPayment = false; uiState.showAddUser = false; uiState.showQRCode = false;
 };
 
-// ===================== 地图与定位 (修复定位不准) =====================
+// ===================== 地图与定位 (优先区县 + 坐标保存) =====================
 const loadAMapScript = (key) => { 
-    if(window.AMap) { 
-        if(activeTab.value === 1) autoLocate();
-        return; 
-    }
+    if(window.AMap) { if(activeTab.value === 1) autoLocate(); return; }
     try{ 
         const s=document.createElement('script'); 
         s.src=`https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.CitySearch,AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder`; 
-        s.onload = () => { 
-            if (activeTab.value === 1) autoLocate(); 
-        }; 
+        s.onload = () => { if (activeTab.value === 1) autoLocate(); }; 
         document.body.appendChild(s); 
     }catch(e){} 
 };
 
-// ★★★ 修复：自动定位 (CitySearch 为主) ★★★
+// ★★★ 修复：优先区县逻辑 ★★★
 const autoLocate = () => { 
-    if(!window.AMap) {
-        setTimeout(autoLocate, 500);
-        return; 
-    }
-    showLoadingToast({ message: '获取位置...', duration: 3000 });
+    if(!window.AMap) { setTimeout(autoLocate, 500); return; }
+    showLoadingToast({ message: '定位中...', duration: 5000 });
     
-    // 1. 使用 CitySearch (最快，最稳，无需GPS权限)
+    // 1. 优先 CitySearch (兜底)
     AMap.plugin('AMap.CitySearch', function () {
         const citySearch = new AMap.CitySearch();
         citySearch.getLocalCity(function (status, result) {
-            closeToast();
             if (status === 'complete' && result.info === 'OK') {
                 const city = result.city || result.province;
-                // 立即显示城市，不等待 GPS
-                if (city) {
-                    postForm.origin = city.replace(/省|市|自治区/g, ''); 
-                }
-                
-                // 2. 静默尝试 GPS (如果成功则更新为区县，不成功也不报错)
+                // 先赋值 City
+                if (city) postForm.origin = city.replace(/省|市|自治区/g, ''); 
+                closeToast();
+
+                // 2. 尝试 GPS (获取坐标 + 区县)
                 AMap.plugin('AMap.Geolocation', function() {
-                    const geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 3000 });
+                    const geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 5000 });
                     geolocation.getCurrentPosition((status2, result2) => {
-                        if(status2 === 'complete' && result2.addressComponent){
-                            const d = result2.addressComponent.district;
-                            if (d && d.length > 0) postForm.origin = d.replace(/省|市|自治区/g, '');
+                        if(status2 === 'complete'){
+                            // 保存坐标，供地图弹窗使用
+                            userLocation.value = [result2.position.lng, result2.position.lat];
+                            
+                            if (result2.addressComponent) {
+                                const d = result2.addressComponent.district;
+                                const c = result2.addressComponent.city;
+                                // 优先用区县覆盖
+                                if (d && d.length > 0) {
+                                    postForm.origin = d.replace(/省|市|自治区/g, '');
+                                } else if (c && c.length > 0) {
+                                    postForm.origin = c.replace(/省|市|自治区/g, '');
+                                }
+                            }
                         }
                     });
                 });
             } else {
-                // 如果 IP 定位都失败了，给个默认值，别报错
-                postForm.origin = '未定位';
-                showFailToast('定位失败，请手动选择');
+                // IP 失败，直接 GPS 兜底
+                AMap.plugin('AMap.Geolocation', function() {
+                    const geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 5000 });
+                    geolocation.getCurrentPosition((s, r) => {
+                        closeToast();
+                        if(s === 'complete'){
+                            userLocation.value = [r.position.lng, r.position.lat];
+                            if(r.addressComponent) {
+                                const d = r.addressComponent.district || r.addressComponent.city;
+                                postForm.origin = d.replace(/省|市|自治区/g, '');
+                            }
+                        } else {
+                            postForm.origin = '未定位'; // 最终兜底
+                            showFailToast('定位失败，请手动选择');
+                        }
+                    });
+                });
             }
         });
     });
 };
 
+// ★★★ 修复：地图跟随 + 热门城市 ★★★
 const openMapSelector = (f) => { 
     currentMapField.value=f; uiState.showMap=true; mapSearchKeyword.value=''; mapSearchResults.value=[]; 
     window.history.pushState({ popup: 'map' }, null, '');
+    
     setTimeout(()=>{ 
         if(window.AMap && !mapInstance) { 
-            mapInstance = new AMap.Map(document.getElementById('picker-map-container'), { zoom: 15 }); 
+            // 优先使用定位到的坐标，否则默认北京
+            const center = userLocation.value || [116.397428, 39.90923];
+            mapInstance = new AMap.Map(document.getElementById('picker-map-container'), { zoom: 15, center: center }); 
             mapInstance.on('moveend', () => { const center = mapInstance.getCenter(); resolveAddress(center); }); 
-        } 
+        } else if (mapInstance && userLocation.value) {
+            // 如果已有实例，更新中心点
+            mapInstance.setCenter(userLocation.value);
+        }
     }, 300); 
 };
+
+// 热门城市点击
+const selectHotCity = (city) => {
+    if(currentMapField.value==='origin') postForm.origin = city;
+    else postForm.destination = city;
+    window.history.back(); // 关闭弹窗
+};
+
 const resolveAddress = (lnglat) => { if(!window.AMap) return; AMap.plugin('AMap.Geocoder', function() { if(!mapGeocoder) mapGeocoder = new AMap.Geocoder(); mapGeocoder.getAddress(lnglat, function(status, result) { if (status === 'complete' && result.regeocode) { mapSelectionText.value = result.regeocode.formattedAddress; } }); }); };
 const confirmMapSelection = () => { 
     const val = mapSearchKeyword.value || mapSelectionText.value;
@@ -313,13 +327,12 @@ const syncUserToBackend = async (silent) => { try { const res = await fetch('/ap
 const handleLogout = () => { showDialog({title:'提示',message:'确定退出?'}).then(()=>{ localStorage.clear(); location.reload(); }); };
 const fetchAdminData = async () => { if (!isLogined.value) return; try { const s=await fetch('/api/admin/stats'); if(s.ok) Object.assign(adminStats, await s.json()); const u=await fetch('/api/admin/users'); if(u.ok) adminUserList.value = (await u.json()).results; const r=await fetch('/api/admin/all_rides'); if(r.ok) adminRideList.value = (await r.json()).results; } catch(e){} };
 
-// ★★★ 修复：获取配置 (覆盖默认值) ★★★
+// 修复：后台配置加载
 const fetchSystemConfig = async () => { 
     try { 
         const res = await fetch('/api/admin?action=get_config'); 
         if (res.ok) {
             const data = await res.json();
-            // 只覆盖有值的字段
             Object.keys(data).forEach(k => {
                 if(data[k]) sysConfig[k] = data[k];
             });
@@ -333,7 +346,7 @@ const toggleRideVisible = async (ride) => { const newVal = ride.is_hidden ? 0 : 
 const deleteRideAdmin = async (id) => { showDialog({ title:'警告', message:'确定删除?' }).then(async()=>{ await fetch(`/api/rides?id=${id}`, { method: 'DELETE' }); fetchAdminData(); showSuccessToast('删除成功'); }); };
 const handleAdminAddUser = async () => { if(!addUserForm.nickname) return; showLoadingToast('添加中'); const res = await fetch('/api/admin/add_user', { method: 'POST', body: JSON.stringify(addUserForm) }); if(res.ok){ uiState.showAddUser=false; fetchAdminData(); showSuccessToast('成功'); } };
 
-// 分享复制
+// 复制分享
 const handleCopyShare = (ride) => {
     const directUrl = `${window.location.origin}/?ride_id=${ride.id}`;
     const typeStr = ride.type === 'driver' ? '车找人' : '人找车';
@@ -560,7 +573,10 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
           </div>
           <div style="padding:15px;background:#fff;border-top:1px solid #eee;">
             <div style="margin-bottom:10px;font-size:14px;color:#333;font-weight:bold;"><van-icon name="location-o" /> {{ mapSelectionText }}</div>
-            <van-button block type="primary" @click="confirmMapSelection">确定选择此位置</van-button>
+            <div style="display:flex;gap:10px;">
+                <div v-for="c in hotCities" :key="c" @click="selectHotCity(c)" style="padding:4px 8px;background:#f0f0f0;border-radius:4px;font-size:12px;">{{c}}</div>
+            </div>
+            <van-button block type="primary" @click="confirmMapSelection" style="margin-top:10px;">确定选择此位置</van-button>
           </div>
           <div style="flex:1;overflow-y:auto;"><van-list><van-cell v-for="(i,k) in mapSearchResults" :key="k" :title="i.name" @click="selectSearchResult(i)"/></van-list></div>
         </div>
