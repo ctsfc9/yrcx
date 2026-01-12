@@ -2,7 +2,6 @@ export async function onRequest(context) {
     const { request, env } = context;
     const url = new URL(request.url);
     const method = request.method;
-
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': '*',
@@ -10,9 +9,7 @@ export async function onRequest(context) {
     };
 
     if (method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
-
-    const jsonResponse = (data, status = 200) => 
-      new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    const jsonResponse = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
     try {
         if (!env.DB) throw new Error("D1 Not Bound");
@@ -45,22 +42,17 @@ export async function onRequest(context) {
         // 2. 列表 & 详情
         if (url.pathname === '/api/rides' && method === 'GET') {
             const id = url.searchParams.get('id');
-            // 直达链接查询
             if (id) {
                 const ride = await env.DB.prepare('SELECT * FROM rides WHERE id=?').bind(id).first();
                 return jsonResponse({ ride });
             }
-
             const type = url.searchParams.get('type');
             let q = 'SELECT * FROM rides WHERE status=1 AND is_hidden=0';
             const p = [];
-            
-            // 读取配置判断过期
             try {
                 const conf = await env.DB.prepare('SELECT show_all_posts FROM system_config').first();
                 if (conf && !conf.show_all_posts) { q += " AND date >= ?"; p.push(nowStr); }
             } catch(e) {}
-
             if (type && type !== 'all') { q += ' AND type=?'; p.push(type); }
             q += ' ORDER BY created_at DESC LIMIT 50';
             const { results } = await env.DB.prepare(q).bind(...p).all();
@@ -72,10 +64,8 @@ export async function onRequest(context) {
             const data = await request.json();
             const user = await env.DB.prepare('SELECT phone FROM users WHERE id=?').bind(data.user_id).first();
             if (!user || !user.phone) return jsonResponse({ error: '请先绑定手机号' }, 403);
-            
             const ban = await env.DB.prepare('SELECT id FROM users WHERE phone=? AND status=0').bind(user.phone).first();
             if (ban) return jsonResponse({ error: '账号已被封禁' }, 403);
-
             const res = await env.DB.prepare(`INSERT INTO rides (user_id, type, origin, destination, date, seats, price, remark, contact, car_model, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`).bind(data.user_id, data.type, data.origin, data.destination, data.date, data.seats, data.price, data.remark, data.contact, data.car_model||'', nowStr).run();
             return jsonResponse({ success: true, id: res.meta.last_row_id });
         }
@@ -105,18 +95,19 @@ export async function onRequest(context) {
                  await env.DB.prepare('UPDATE users SET status=? WHERE id=?').bind(b.status, b.id).run();
                  return jsonResponse({ success: true });
              }
-             // ★★★ 核心：全字段配置保存 ★★★
+             // ★★★ 修复：后台保存逻辑 ★★★
              if (url.pathname.includes('save_config')) {
                  const b = await request.json();
+                 // 使用 UPDATE 语句，确保所有字段都正确映射
                  await env.DB.prepare(`UPDATE system_config SET 
                     platform_name=?, notice_text=?, banners=?, tags_driver=?, tags_passenger=?, 
-                    show_all_posts=?, passenger_fee=?, driver_fee=?, driver_cert_required=?, 
-                    platform_desc=?, kefu_wechat=?, allow_driver_repost=? 
+                    show_all_posts=?, passenger_fee=?, driver_fee=?, driver_cert_required=?,
+                    platform_desc=?, kefu_wechat=?, allow_driver_repost=?
                     WHERE id=1`)
                     .bind(
                         b.platform_name, b.notice_text, b.banners, b.tags_driver, b.tags_passenger,
-                        b.show_all_posts?1:0, b.passenger_fee, b.driver_fee, b.driver_cert_required?1:0,
-                        b.platform_desc, b.kefu_wechat, b.allow_driver_repost?1:0
+                        b.show_all_posts ? 1 : 0, b.passenger_fee, b.driver_fee, b.driver_cert_required ? 1 : 0,
+                        b.platform_desc || '', b.kefu_wechat || '', b.allow_driver_repost ? 1 : 0
                     ).run();
                  return jsonResponse({ success: true });
              }
