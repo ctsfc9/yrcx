@@ -2,23 +2,14 @@
 import { ref, reactive, computed, nextTick, onMounted, onUnmounted, onErrorCaptured, watch } from 'vue';
 import { showToast, showSuccessToast, showFailToast, showDialog, showLoadingToast, closeToast } from 'vant';
 
-// ==========================================
-// 1. 地图安全密钥 (必须置顶)
-// ==========================================
+// 1. 地图配置
 window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' };
 
 // 2. 状态定义
-// ★★★ 修复白屏：默认直接为 true，页面立即渲染，不再等待接口 ★★★
-const appReady = ref(true); 
+const appReady = ref(true); // 立即渲染，拒绝白屏
 const globalError = ref('');
+onErrorCaptured((err) => { console.error("Vue Error:", err); return false; });
 
-// 捕获所有渲染错误，防止白屏
-onErrorCaptured((err) => { 
-    console.error("Vue Error:", err); 
-    return false; // 防止错误向上传播导致崩溃
-});
-
-// 立即判断后台
 const isUrlAdmin = location.pathname.includes('/admin') || location.search.includes('admin');
 const isSystemAdmin = ref(isUrlAdmin);
 
@@ -42,7 +33,7 @@ const adminActiveMenu = ref('home');
 const adminSettingTab = ref(0);
 const adminUserList = ref([]); 
 const adminRideList = ref([]);
-const adminStats = reactive({ totalUsers:0, certifiedUsers:0, male:0, female:0, monthRecharge:0, todayRecharge:0, newUsersToday:0 });
+const adminStats = reactive({ totalUsers:0, newUsersToday:0 });
 const addUserForm = reactive({ nickname: '', phone: '', balance: '' });
 
 const activeTab = ref(0);
@@ -111,17 +102,12 @@ onMounted(async () => {
   const ua = navigator.userAgent.toLowerCase();
   uiState.isWeChat = ua.indexOf('micromessenger') !== -1;
 
-  // 1. 初始化 Hash 路由
-  window.addEventListener('hashchange', onHashChange);
-  // 首页防误触守卫
-  if (!window.location.hash || window.location.hash === '#/') {
-      window.history.replaceState({ page: 'home' }, null, '#/');
-      window.history.pushState({ page: 'home' }, null, '#/'); 
-  }
+  // 1. 初始化历史记录，用于拦截返回键
+  // 清除 URL 中的参数，保持干净，防止刷新重复弹窗 (可选，这里先保留)
+  window.history.replaceState({ page: 'home' }, null, window.location.href); 
   window.addEventListener('popstate', handlePopState);
 
   try {
-    // 后台逻辑
     if (isSystemAdmin.value) {
       if(localStorage.getItem('admin_token')) {
         adminLoginData.password = localStorage.getItem('admin_token');
@@ -131,20 +117,16 @@ onMounted(async () => {
       return;
     }
 
-    // 2. ★★★ 异步并行加载 (不阻塞 UI) ★★★
-    // 之前这里用了 await 导致白屏，现在直接调用，不等待
+    // 2. ★★★ 优先处理直达链接 (V68成功逻辑) ★★★
+    // 独立于列表加载，单独请求，确保一定能弹出来
+    handleDeepLink();
+
+    // 3. 并行加载数据
     onLoad(); 
     fetchSystemConfig().then(() => {
-        // 配置到了再加载地图
         loadAMapScript(sysConfig.amap_key);
     });
 
-    // 3. 直达链接解析
-    const params = new URLSearchParams(window.location.search);
-    const rideId = params.get('ride_id');
-    if (rideId) fetchRideDetail(rideId);
-
-    // 4. 用户信息
     const u = localStorage.getItem('user_info');
     if (u) {
       Object.assign(userProfile, JSON.parse(u));
@@ -156,65 +138,90 @@ onMounted(async () => {
 
     if (!userProfile.phone) {
         uiState.showAuth = true; 
+        uiState.authStep = 1;
     } else {
         syncUserToBackend(true);
     }
-
-  } catch(e) { console.error("Init Error:", e); }
+  } catch(e) { console.error(e); }
 });
 
-onUnmounted(() => {
-    window.removeEventListener('hashchange', onHashChange);
-    window.removeEventListener('popstate', handlePopState);
-});
+onUnmounted(() => window.removeEventListener('popstate', handlePopState));
 
-// ===================== 核心：路由与导航 =====================
-const onHashChange = () => {
-    const hash = window.location.hash;
+// ★★★ 核心：直达链接处理 ★★★
+const handleDeepLink = async () => {
+    const params = new URLSearchParams(window.location.search);
+    const rideId = params.get('ride_id');
+    if (rideId) {
+        // 显示加载中，但不阻塞页面
+        showLoadingToast({ message: '加载分享...', duration: 2000 });
+        try {
+            const res = await fetch(`/api/rides?id=${rideId}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.ride) {
+                    // 延迟一点点，确保 vant 组件准备好
+                    setTimeout(() => {
+                        uiState.selectedRide = data.ride;
+                        // 压入一个状态，使得点击返回能关闭详情页
+                        window.history.pushState({ popup: 'detail' }, null, document.URL);
+                    }, 500);
+                }
+            }
+        } catch (e) {}
+    }
+};
+
+// ===================== 核心：页面导航与返回 =====================
+const switchTab = (idx) => { 
+    if (activeTab.value === idx) return;
+
+    // ★★★ 核心修复：进入子页面时压入历史记录 ★★★
+    if (activeTab.value === 0 && idx !== 0) {
+        window.history.pushState({ page: 'sub' }, null, '');
+    }
     
-    // 关弹窗
-    if (Object.values(uiState).some(v=>v===true && v!==uiState.selectedRide)) {
-        if(uiState.showAuth && !userProfile.phone) {
-             window.history.pushState(null, null, '#/auth');
-             return;
-        }
-        closeAllModals();
-        return;
-    }
-
-    // 页面切换
-    if (hash === '#/' || hash === '') {
-        activeTab.value = 0;
-    } else if (hash.includes('publish')) {
-        activeTab.value = 1;
-        setTimeout(autoLocate, 500); 
-    } else if (hash.includes('me')) {
-        activeTab.value = 2;
-        fetchMyRides();
-    }
+    activeTab.value = idx; 
+    
+    if(idx===0){ refreshing.value=true; onLoad(); } 
+    else if(idx===1){ nextTick(() => autoLocate()); } 
+    else if(idx===2) { fetchMyRides(); }
 };
 
 const handlePopState = () => {
-    if (uiState.selectedRide) {
-        uiState.selectedRide = null;
-        if(window.location.search.includes('ride_id')) window.location.href = window.location.origin;
+    // 1. 关弹窗
+    if (Object.values(uiState).some(v=>v===true && v!==uiState.selectedRide)) {
+        if(uiState.showAuth && !userProfile.phone) {
+             window.history.pushState(null, null, document.URL); 
+             return;
+        }
+        uiState.showRole=false; uiState.showMap=false; uiState.showDate=false;
+        uiState.showPayment=false; uiState.showAddUser=false; uiState.showQRCode=false;
+        uiState.selectedRide=null;
         return;
     }
-    if (activeTab.value === 0 && !uiState.showAuth) {
+
+    // 2. 关详情页
+    if (uiState.selectedRide) {
+        uiState.selectedRide = null;
+        // 如果是从外链进来的，关闭详情后应该还在首页
+        return;
+    }
+
+    // 3. 二级页面回首页
+    if (activeTab.value !== 0) {
+        activeTab.value = 0;
+        return;
+    }
+
+    // 4. 首页退出
+    if (activeTab.value === 0) {
         if (exitCounter === 0) {
             showToast('再按一次退出');
             exitCounter++;
-            window.history.pushState(null, null, '#/');
+            window.history.pushState(null, null, document.URL); 
             setTimeout(() => { exitCounter = 0; }, 2000);
         }
     }
-};
-
-const switchTab = (idx) => { 
-    if (activeTab.value === idx) return;
-    if (idx === 0) window.location.hash = '/';
-    else if (idx === 1) window.location.hash = '/publish';
-    else if (idx === 2) window.location.hash = '/me';
 };
 
 const closeAllModals = () => {
@@ -222,39 +229,43 @@ const closeAllModals = () => {
     uiState.showPayment = false; uiState.showAddUser = false; uiState.showQRCode = false;
 };
 
-// ===================== 地图与定位 (IP优先) =====================
+// ===================== 地图与定位 (IP优先 + GPS) =====================
 const loadAMapScript = (key) => { 
     if(window.AMap) { autoLocate(); return; }
     try{ 
         const s=document.createElement('script'); 
         s.src=`https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.CitySearch,AMap.Geolocation,AMap.AutoComplete,AMap.Geocoder`; 
-        s.onload = () => { 
-             if(activeTab.value === 1) autoLocate(); 
-        }; 
+        s.onload = () => { /* 加载完暂不操作 */ }; 
         document.body.appendChild(s); 
     }catch(e){} 
 };
 
+// ★★★ 自动定位：优先 IP 城市 (速度最快)，其次 GPS ★★★
 const autoLocate = () => { 
-    if(!window.AMap) return; 
-    showLoadingToast({ message: '定位中...', duration: 2000 });
+    if(!window.AMap) {
+        setTimeout(autoLocate, 500); // 还没加载完，重试
+        return; 
+    }
+    showLoadingToast({ message: '获取位置...', duration: 2000 });
     
-    // 1. IP定位 (速度快)
+    // 1. IP 定位 (极速)
     AMap.plugin('AMap.CitySearch', function () {
         const citySearch = new AMap.CitySearch();
         citySearch.getLocalCity(function (status, result) {
             if (status === 'complete' && result.info === 'OK') {
                 const city = result.city || result.province;
+                // 立即赋值，保证有数据
                 if (city) postForm.origin = city.replace(/省|市|自治区/g, ''); 
                 closeToast();
 
-                // 2. 静默 GPS 修正 (获取区县)
+                // 2. 静默尝试 GPS 获取更准的区县
                 AMap.plugin('AMap.Geolocation', function() {
                     const geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 3000 });
                     geolocation.getCurrentPosition(function(status2, result2){
                         if(status2 === 'complete' && result2.addressComponent){
                             const ac = result2.addressComponent;
                             const district = ac.district;
+                            // 覆盖之前的 IP 城市
                             if (district && typeof district === 'string' && district.length > 0) {
                                 postForm.origin = district.replace(/省|市|自治区/g, '');
                             }
@@ -271,6 +282,8 @@ const autoLocate = () => {
 
 const openMapSelector = (f) => { 
     currentMapField.value=f; uiState.showMap=true; mapSearchKeyword.value=''; mapSearchResults.value=[]; 
+    // 打开地图选择时，压入历史，方便返回关闭
+    window.history.pushState({ popup: 'map' }, null, '');
     setTimeout(()=>{ 
         if(window.AMap && !mapInstance) { 
             mapInstance = new AMap.Map(document.getElementById('picker-map-container'), { zoom: 15 }); 
@@ -284,10 +297,14 @@ const confirmMapSelection = () => {
     if(val && val !== '拖动地图以定位...'){ 
         if(currentMapField.value==='origin') postForm.origin=val; 
         else postForm.destination=val; 
-        uiState.showMap=false; 
+        // 模拟返回键关闭弹窗
+        window.history.back();
     } else showToast('请等待定位解析'); 
 };
-const selectSearchResult = (item) => { if(currentMapField.value==='origin') postForm.origin=item.name; else postForm.destination=item.name; uiState.showMap=false; };
+const selectSearchResult = (item) => { 
+    if(currentMapField.value==='origin') postForm.origin=item.name; else postForm.destination=item.name; 
+    window.history.back();
+};
 
 // ===================== 业务逻辑 =====================
 const handleWeChatAuth = () => { showLoadingToast('微信授权中...'); setTimeout(() => { userProfile.nickname = '微信用户_' + String(Math.random()).slice(-4); userProfile.avatar = 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'; closeToast(); uiState.authStep = 2; }, 500); };
@@ -296,14 +313,7 @@ const syncUserToBackend = async (silent) => { try { const res = await fetch('/ap
 const handleLogout = () => { showDialog({title:'提示',message:'确定退出?'}).then(()=>{ localStorage.clear(); location.reload(); }); };
 const fetchAdminData = async () => { if (!isLogined.value) return; try { const s=await fetch('/api/admin/stats'); if(s.ok) Object.assign(adminStats, await s.json()); const u=await fetch('/api/admin/users'); if(u.ok) adminUserList.value = (await u.json()).results; const r=await fetch('/api/admin/all_rides'); if(r.ok) adminRideList.value = (await r.json()).results; } catch(e){} };
 
-const handleAdminDeleteUser = (user) => { 
-    showDialog({ title: '警告', message: '确定删除该用户？' }).then(async () => { 
-        const res = await fetch(`/api/admin/user?id=${user.id}`, { method: 'DELETE' }); 
-        if(res.ok) { showSuccessToast('已删除'); fetchAdminData(); } 
-        else showFailToast('删除失败');
-    }); 
-};
-
+const handleAdminDeleteUser = (user) => { showDialog({ title: '警告', message: '确定删除?' }).then(async () => { const res = await fetch(`/api/admin/user?id=${user.id}`, { method: 'DELETE' }); if(res.ok) { showSuccessToast('已删除'); fetchAdminData(); } else showFailToast('失败'); }); };
 const toggleUserStatus = async (user) => { const newVal = user.status === 1 ? 0 : 1; try { await fetch('/api/admin/toggle_user', { method: 'POST', body: JSON.stringify({id: user.id, status: newVal}) }); user.status = newVal; showSuccessToast('成功'); } catch(e) { showFailToast('失败'); } };
 const toggleRideVisible = async (ride) => { const newVal = ride.is_hidden ? 0 : 1; await fetch('/api/admin/toggle_ride', { method: 'POST', body: JSON.stringify({id: ride.id, hidden: newVal}) }); ride.is_hidden = newVal; showSuccessToast('成功'); };
 const deleteRideAdmin = async (id) => { showDialog({ title:'警告', message:'确定删除?' }).then(async()=>{ await fetch(`/api/rides?id=${id}`, { method: 'DELETE' }); fetchAdminData(); showSuccessToast('删除成功'); }); };
@@ -311,22 +321,16 @@ const handleAdminAddUser = async () => { if(!addUserForm.nickname) return; showL
 
 // 分享复制
 const handleCopyShare = (ride) => {
-    const directUrl = `${window.location.origin}/?ride_id=${ride.id}#detail`;
+    const directUrl = `${window.location.origin}/?ride_id=${ride.id}`;
     const typeStr = ride.type === 'driver' ? '车找人' : '人找车';
     const dateStr = formatDate(ride.date);
     const text = `【${sysConfig.platform_name}】-${typeStr}\n${ride.origin} -> ${ride.destination}\n数量：${ride.seats}座\n车型：${ride.car_model || '未填写'}\n出发：${dateStr}\n点击查看: ${directUrl}`;
     
-    // 兼容写法
     const textArea = document.createElement("textarea");
     textArea.value = text;
     document.body.appendChild(textArea);
     textArea.select();
-    try {
-        document.execCommand('copy');
-        showSuccessToast('复制成功');
-    } catch (err) {
-        showFailToast('复制失败');
-    }
+    try { document.execCommand('copy'); showSuccessToast('复制成功'); } catch (err) { showFailToast('复制失败'); }
     document.body.removeChild(textArea);
 };
 
@@ -349,8 +353,11 @@ const setFilter = (t) => { filterType.value=t; refreshing.value=true; onLoad(); 
 const handleAdminLogin = () => { if(adminLoginData.username==='admin'&&adminLoginData.password==='123456'){ isLogined.value=true; localStorage.setItem('admin_token','mock'); fetchAdminData(); }else showFailToast('Error'); };
 const priceFormatter = (val) => { if(val && val.length > 4) return val.slice(0, 4); return val; };
 const formatDate = (str) => { if (!str) return '待定'; try { const d = str.split('T'); return d[0] + ' ' + (d[1]||'').slice(0,5); } catch (e) { return str; } };
-const openDetail = (item) => { uiState.selectedRide = item; window.history.pushState({ popup: 'detail' }, null, '#detail'); };
-const closeDetail = () => { if(window.location.search.includes('ride_id')) window.location.href='/'; else window.history.back(); };
+const openDetail = (item) => { 
+    uiState.selectedRide = item; 
+    window.history.pushState({ popup: 'detail' }, null, ''); 
+};
+const closeDetail = () => window.history.back(); 
 const onLoad = async () => { if (refreshing.value) { list.value = []; refreshing.value = false; } loading.value = true; try { const res = await fetch(`/api/rides?type=${filterType.value}`); if(res.ok) { const data = await res.json(); if (data.results) list.value = data.results; } } catch(e) {} loading.value = false; finished.value = true; };
 const fetchRideDetail = async (id) => { try { const res = await fetch(`/api/rides?id=${id}`); if(res.ok) { const d = await res.json(); if(d.ride) openDetail(d.ride); } } catch(e){} };
 const handleRealPublish = async () => { if (!userProfile.phone) { uiState.showAuth = true; return; } submitLoading.value = true; const dateVal = postForm.date || new Date().toISOString(); const remarkStr = Array.isArray(postForm.remark) ? postForm.remark.join('，') : (postForm.remark || '无备注'); const newRide = { ...postForm, user_id: String(userProfile.id), contact: String(userProfile.phone), date: dateVal, remark: remarkStr }; try { const res = await fetch('/api/rides', { method: 'POST', body: JSON.stringify(newRide) }); const data = await res.json(); if (res.ok && data.success) { showSuccessToast('发布成功'); switchTab(0); } else { showFailToast(data.error || '失败'); } } catch(e) { showFailToast('网络错误'); } finally { submitLoading.value = false; } };
@@ -362,6 +369,7 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
 
 <template>
   <div v-if="appReady" class="app-container">
+    
     <div v-if="isSystemAdmin" class="admin-wrapper">
       <div v-if="!isLogined" class="admin-login-box">
         <h3>后台管理系统</h3>
@@ -435,8 +443,7 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
         <van-dialog v-model:show="uiState.showAddUser" title="添加新用户" show-cancel-button @confirm="handleAdminAddUser">
             <div style="padding:15px;"><van-field v-model="addUserForm.nickname" label="昵称" placeholder="昵称" border /><van-field v-model="addUserForm.phone" label="手机" placeholder="11位手机" border /><van-field v-model="addUserForm.balance" label="余额" placeholder="0" type="number" border /></div>
         </van-dialog>
-        
-        <van-dialog v-model:show="uiState.showQRCode" title="拼车分享" confirm-button-text="关闭" style="z-index:20000 !important;">
+        <van-dialog v-model:show="uiState.showQRCode" title="分享行程" confirm-button-text="关闭" style="z-index:20000 !important;">
             <div style="text-align:center;padding:20px;background:#f9f9f9;">
                 <div style="font-weight:bold;margin-bottom:5px;font-size:16px;color:#333;">{{ sysConfig.platform_name }}</div>
                 <div v-if="uiState.currentRideInfo.origin" style="margin-bottom:15px;color:#1989fa;font-weight:bold;font-size:16px;">{{ uiState.currentRideInfo.origin }} <van-icon name="arrow" /> {{ uiState.currentRideInfo.destination }}</div>
@@ -461,10 +468,7 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
           </div>
           <div class="info-group">
             <div class="form-row"><div class="label">座位</div><div class="seat-grid"><div v-for="n in 6" :key="n" class="seat-btn" :class="{active:postForm.seats===n}" @click="postForm.seats=n">{{n}}</div></div></div>
-            <div v-if="postForm.type==='driver'" class="form-row">
-              <div class="label">车型</div>
-              <van-radio-group v-model="postForm.car_model" direction="horizontal"><van-radio name="油车">油车</van-radio><van-radio name="电车">电车</van-radio><van-radio name="油电混合">油电混合</van-radio></van-radio-group>
-            </div>
+            <div v-if="postForm.type==='driver'" class="form-row"><div class="label">车型</div><van-radio-group v-model="postForm.car_model" direction="horizontal"><van-radio name="油车">油车</van-radio><van-radio name="电车">电车</van-radio><van-radio name="油电混合">油电混合</van-radio></van-radio-group></div>
             <div class="form-row" @click="uiState.showDate=true"><div class="label">出发时间</div><div style="flex:1;text-align:right;">{{ postForm.dateDisplay || '请选择' }} <van-icon name="arrow" color="#999"/></div></div>
             <div class="form-row"><div class="label">费用</div><div style="flex:1"><van-field v-model="postForm.price" type="digit" :formatter="priceFormatter" placeholder="元" input-align="right" :border="false"/></div></div>
             <div class="form-row" style="align-items:flex-start;border-bottom:none;"><div class="label" style="margin-top:8px;">备注</div><van-field v-model="remarkDisplayText" readonly type="textarea" rows="2" placeholder="请选择下方标签" style="background:#f9f9f9;border-radius:4px;width:100%;padding:8px;" /></div>
@@ -479,7 +483,8 @@ watch(mapSearchKeyword, (newVal) => { if(newVal&&window.AMap) AMap.plugin('AMap.
         <van-swipe :autoplay="3000" class="home-banner" style="height:45vw;max-height:200px;"><van-swipe-item v-for="i in bannersList" :key="i"><img :src="i" style="width:100%;height:100%;object-fit:cover;"/></van-swipe-item></van-swipe>
         <div class="nav-grid two-cols"><div class="nav-btn btn-blue" :class="{active: filterType==='driver'}" @click="() => setFilter('driver')"><van-icon name="logistics" /> 车找人</div><div class="nav-btn btn-green" :class="{active: filterType==='passenger'}" @click="() => setFilter('passenger')"><van-icon name="friends" /> 人找车</div></div>
         <van-pull-refresh v-model="refreshing" @refresh="onRefresh">
-          <div v-if="safeList.length === 0" style="text-align:center;padding:40px;color:#999;font-size:14px;"><van-icon name="description" size="48" style="margin-bottom:10px;color:#eee;" /><div>暂无信息</div></div>
+          <div v-if="loading && list.length===0" style="padding:20px;text-align:center;"><van-loading size="24px">加载中...</van-loading></div>
+          <div v-else-if="safeList.length === 0" style="text-align:center;padding:40px;color:#999;font-size:14px;"><van-icon name="description" size="48" style="margin-bottom:10px;color:#eee;" /><div>暂无信息</div></div>
           <van-list v-else v-model:loading="loading" :finished="finished" finished-text="没有更多了">
             <div v-for="(item, index) in safeList" :key="item.id || index" class="ride-card" @click="openDetail(item)">
               <div class="card-row-1">
