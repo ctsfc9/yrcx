@@ -1,10 +1,10 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue';
-import { useSystem } from '../composables/useSystem';
+import { useSystemStore } from '../store/system';
 import { fetchRides, deleteRide } from '../api';
 import { showSuccessToast, showFailToast } from 'vant';
 
-const { sysConfig } = useSystem();
+const systemStore = useSystemStore();
 const isLogined = ref(false);
 const adminLoginData = reactive({ username: '', password: '' });
 const adminActiveMenu = ref('basic');
@@ -65,9 +65,9 @@ onMounted(() => {
       <van-tabs v-model:active="adminActiveMenu">
         <van-tab title="系统设置" name="basic">
           <van-cell-group inset style="margin-top: 15px;">
-            <van-field v-model="sysConfig.platform_name" label="平台名称" />
-            <van-field v-model="sysConfig.notice_text" label="公告内容" type="textarea" />
-            <van-field v-model="sysConfig.amap_key" label="地图 Key" />
+            <van-field v-model="systemStore.sysConfig.platform_name" label="平台名称" />
+            <van-field v-model="systemStore.sysConfig.notice_text" label="公告内容" type="textarea" />
+            <van-field v-model="systemStore.sysConfig.amap_key" label="地图 Key" />
           </van-cell-group>
           <div style="margin: 16px;">
             <van-button block type="primary">保存配置</van-button>
@@ -81,7 +81,7 @@ onMounted(() => {
             </div>
             <van-button size="small" type="danger" @click="handleDelete(item.id)">删除</van-button>
           </div>
-        </tab>
+        </van-tab>
       </van-tabs>
     </div>
   </div>

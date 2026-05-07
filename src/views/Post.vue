@@ -1,14 +1,14 @@
 <script setup>
 import { reactive, ref, computed, onMounted } from 'vue';
-import { useUser } from '../composables/useUser';
-import { useSystem } from '../composables/useSystem';
+import { useUserStore } from '../store/user';
+import { useSystemStore } from '../store/system';
 import { postRide } from '../api';
 import { showSuccessToast, showFailToast, showLoadingToast } from 'vant';
 import { useRouter } from 'vue-router';
 
 const router = useRouter();
-const { userProfile } = useUser();
-const { sysConfig } = useSystem();
+const userStore = useUserStore();
+const systemStore = useSystemStore();
 
 const postForm = reactive({
   type: 'driver',
@@ -35,7 +35,10 @@ const initCurrentTime = () => {
   const d = now.getDate();
   const h = now.getHours();
   
-  selectedDateValues.ref = [y, m, d, h];
+  // 设置选择器的初始选中值
+  selectedDateValues.value = [y, m, d, h];
+  
+  // 设置表单显示的默认值
   postForm.dateDisplay = `${y}年${m}月${d}日 ${h}点`;
   postForm.date = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}T${String(h).padStart(2, '0')}:00:00`;
 };
@@ -45,7 +48,7 @@ onMounted(() => {
 });
 
 const currentRemarkOptions = computed(() => {
-  const str = postForm.type === 'driver' ? sysConfig.tags_driver : sysConfig.tags_passenger;
+  const str = postForm.type === 'driver' ? systemStore.sysConfig.tags_driver : systemStore.sysConfig.tags_passenger;
   return (str || '').split(',').filter(Boolean);
 });
 
@@ -86,8 +89,8 @@ const onSubmit = async () => {
   try {
     const data = {
       ...postForm,
-      user_id: userProfile.id,
-      contact: userProfile.phone || postForm.contact,
+      user_id: userStore.userProfile.id,
+      contact: userStore.userProfile.phone || postForm.contact,
       remark: postForm.remark.join('，') || '无备注'
     };
     await postRide(data);

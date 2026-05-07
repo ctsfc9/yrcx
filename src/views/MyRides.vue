@@ -1,20 +1,20 @@
 <script setup>
 import { ref, onMounted } from 'vue';
-import { useUser } from '../composables/useUser';
+import { useUserStore } from '../store/user';
 import { fetchRides, deleteRide } from '../api';
 import { showSuccessToast, showFailToast, showDialog } from 'vant';
 
-const { userProfile } = useUser();
+const userStore = useUserStore();
 const myRidesList = ref([]);
 const loading = ref(false);
 
 const loadMyRides = async () => {
-  if (!userProfile.id) return;
+  if (!userStore.userProfile.id) return;
   loading.value = true;
   try {
     const data = await fetchRides('all');
     if (data.results) {
-      myRidesList.value = data.results.filter(item => item.user_id === userProfile.id);
+      myRidesList.value = data.results.filter(item => item.user_id === userStore.userProfile.id);
     }
   } catch (e) {
     showFailToast('加载失败');
@@ -29,7 +29,7 @@ const handleDelete = (id) => {
     message: '确认删除该行程吗？',
   }).then(async () => {
     try {
-      await deleteRide(id, userProfile.id);
+      await deleteRide(id, userStore.userProfile.id);
       showSuccessToast('删除成功');
       loadMyRides();
     } catch (e) {
@@ -50,8 +50,8 @@ onMounted(() => {
     <div class="user-info-card">
       <van-image round width="60" height="60" src="https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg" />
       <div class="info">
-        <div class="nickname">{{ userProfile.nickname }}</div>
-        <div class="phone">{{ userProfile.phone || '未绑定手机号' }}</div>
+        <div class="nickname">{{ userStore.userProfile.nickname }}</div>
+        <div class="phone">{{ userStore.userProfile.phone || '未绑定手机号' }}</div>
       </div>
     </div>
 

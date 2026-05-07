@@ -1,26 +1,20 @@
 <script setup>
 import { onMounted } from 'vue';
-import { useUser } from './composables/useUser';
-import { useSystem } from './composables/useSystem';
+import { useUserStore } from './store/user';
+import { useSystemStore } from './store/system';
 import { useRouter, useRoute } from 'vue-router';
 
-const { initUser } = useUser();
-const { fetchConfig } = useSystem();
+const userStore = useUserStore();
+const systemStore = useSystemStore();
 const router = useRouter();
 const route = useRoute();
 
 onMounted(() => {
-  initUser();
-  fetchConfig();
-  
-  // 处理手势返回或浏览器后退时的 Tab 状态同步
-  window.addEventListener('popstate', () => {
-    // 可以在这里处理一些全局的返回逻辑
-  });
+  userStore.initUser();
+  systemStore.fetchConfig();
 });
 
 const switchTab = (name) => {
-  // 使用 replace 避免在 Tab 切换时产生过多的历史记录，优化返回体验
   router.replace({ name });
 };
 </script>
@@ -58,7 +52,6 @@ body {
   min-height: 100vh;
 }
 
-/* 页面切换动画 */
 .fade-enter-active,
 .fade-leave-active {
   transition: opacity 0.2s ease;
@@ -69,7 +62,6 @@ body {
   opacity: 0;
 }
 
-/* 优化移动端点击高亮 */
 * {
   -webkit-tap-highlight-color: transparent;
 }

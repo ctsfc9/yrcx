@@ -1,17 +1,17 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
-import { useSystem } from '../composables/useSystem';
+import { useSystemStore } from '../store/system';
 import { fetchRides } from '../api';
 import { showToast } from 'vant';
 
-const { sysConfig } = useSystem();
+const systemStore = useSystemStore();
 const list = ref([]);
 const loading = ref(false);
 const refreshing = ref(false);
 const finished = ref(false);
 const filterType = ref('all');
 
-const bannersList = computed(() => (sysConfig.banners || '').split(',').filter(Boolean));
+const bannersList = computed(() => (systemStore.sysConfig.banners || '').split(',').filter(Boolean));
 
 // 排序逻辑：置顶 -> 最近时间出发 -> 过期信息
 const safeList = computed(() => {
@@ -20,25 +20,27 @@ const safeList = computed(() => {
   const now = new Date();
   
   return [...list.value].sort((a, b) => {
-    // 1. 置顶优先级最高 (假设 is_top 为 1 或 true)
-    if (a.is_top !== b.is_top) {
-      return b.is_top ? 1 : -1;
-    }
+    // 1. 置顶优先级最高
+    const topA = a.is_top ? 1 : 0;
+    const topB = b.is_top ? 1 : 0;
+    if (topA !== topB) return topB - topA;
     
     const dateA = new Date(a.date);
     const dateB = new Date(b.date);
     const isExpiredA = dateA < now;
     const isExpiredB = dateB < now;
     
-    // 2. 过期信息优先级最低
+    // 2. 过期状态优先级
     if (isExpiredA !== isExpiredB) {
-      return isExpiredA ? 1 : -1;
+      return isExpiredA ? 1 : -1; // 未过期的排在前面
     }
     
-    // 3. 未过期的按时间正序（最近出发在前），已过期的按时间倒序（最近过期在前）
+    // 3. 时间排序
     if (!isExpiredA) {
+      // 未过期的：按出发时间正序（最近出发在前）
       return dateA - dateB;
     } else {
+      // 已过期的：按出发时间倒序（最近过期在前）
       return dateB - dateA;
     }
   });
@@ -91,7 +93,7 @@ const isExpired = (dateStr) => {
 
 <template>
   <div class="page-home">
-    <van-notice-bar left-icon="volume-o" :text="sysConfig.notice_text" scrollable />
+    <van-notice-bar left-icon="volume-o" :text="systemStore.sysConfig.notice_text" scrollable />
     
     <van-swipe :autoplay="3000" class="home-banner">
       <van-swipe-item v-for="i in bannersList" :key="i">
