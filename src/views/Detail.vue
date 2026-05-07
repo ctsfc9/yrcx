@@ -18,8 +18,10 @@ const loadDetail = async () => {
       item.value = data.results.find(r => String(r.id) === String(id));
     }
     if (item.value) {
-      // 静态引入后，直接尝试初始化 SDK
-      initWechatSDK();
+      // 延迟初始化 SDK，确保环境稳定
+      setTimeout(() => {
+        initWechatSDK();
+      }, 1000);
     } else {
       showToast('未找到该行程');
     }
@@ -33,8 +35,10 @@ const loadDetail = async () => {
 const initWechatSDK = async () => {
   if (!window.wx || !item.value) return;
 
-  // 微信签名 URL 必须是 # 之前的完整路径
+  // 关键：微信签名 URL 必须是 # 之前的完整路径，且必须与后端签名时一致
   const currentUrl = window.location.href.split('#')[0];
+  console.log('Wechat Sign URL:', currentUrl);
+
   try {
     const res = await fetch(`/api/wechat?url=${encodeURIComponent(currentUrl)}`);
     const config = await res.json();
@@ -48,8 +52,8 @@ const initWechatSDK = async () => {
       jsApiList: [
         'updateAppMessageShareData', 
         'updateTimelineShareData',
-        'onMenuShareAppMessage', // 保底：旧版接口
-        'onMenuShareTimeline'    // 保底：旧版接口
+        'onMenuShareAppMessage', 
+        'onMenuShareTimeline'
       ]
     });
 
@@ -65,13 +69,14 @@ const initWechatSDK = async () => {
         }
       };
       
-      // 1. 新版接口
       window.wx.updateAppMessageShareData(shareData);
       window.wx.updateTimelineShareData(shareData);
-      
-      // 2. 旧版接口保底
       window.wx.onMenuShareAppMessage(shareData);
       window.wx.onMenuShareTimeline(shareData);
+    });
+    
+    window.wx.error((res) => {
+      console.error('Wechat SDK Error:', res);
     });
   } catch (e) {
     console.error('Wechat SDK Init Failed:', e);

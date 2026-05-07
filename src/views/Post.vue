@@ -47,29 +47,17 @@ const initCurrentTime = () => {
 
 onMounted(() => {
   initCurrentTime();
-  // 静态引入后，直接尝试定位
-  checkAndLocate();
+  // 延迟触发定位，确保 AMap 插件就绪
+  setTimeout(() => {
+    autoLocate();
+  }, 1000);
 });
 
-const checkAndLocate = () => {
-  if (window.AMap && window.AMap.Geolocation) {
-    autoLocate();
-  } else {
-    // 如果还没加载完，轮询检查
-    let retryCount = 0;
-    const timer = setInterval(() => {
-      retryCount++;
-      if (window.AMap && window.AMap.Geolocation) {
-        clearInterval(timer);
-        autoLocate();
-      }
-      if (retryCount > 20) clearInterval(timer); // 最多等10秒
-    }, 500);
-  }
-};
-
 const autoLocate = () => {
-  if (!window.AMap || !window.AMap.Geolocation) return;
+  if (!window.AMap || !window.AMap.Geolocation) {
+    console.error('AMap Geolocation not ready');
+    return;
+  }
   
   const geolocation = new AMap.Geolocation({
     enableHighAccuracy: true,
@@ -216,6 +204,7 @@ const handlePublish = async () => {
       </van-tabs>
 
       <van-cell-group inset class="form-group">
+        <!-- 使用 van-cell 包装，确保点击整行触发 -->
         <van-cell title="起点" is-link @click="openMap('origin')" required class="clickable-cell">
           <template #value>
             <span :class="{ 'placeholder-text': !postForm.origin }">{{ postForm.origin || '点击定位或手动输入' }}</span>
