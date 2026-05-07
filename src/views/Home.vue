@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { useSystemStore } from '../store/system';
 import { fetchRides } from '../api';
-import { showToast, showSuccessToast } from 'vant';
+import { showToast } from 'vant';
 import { useRouter } from 'vue-router';
 
 const router = useRouter();
@@ -12,9 +12,6 @@ const loading = ref(false);
 const refreshing = ref(false);
 const finished = ref(false);
 const filterType = ref('all');
-
-const showShareCard = ref(false);
-const selectedItem = ref(null);
 
 const bannersList = computed(() => (systemStore.sysConfig.banners || '').split(',').filter(Boolean));
 
@@ -72,21 +69,6 @@ const getCarModelStyle = (model) => {
   return { color: '#1989fa', fontWeight: 'bold' };
 };
 
-const openShare = (item) => {
-  selectedItem.value = item;
-  showShareCard.value = true;
-};
-
-const copyShareText = () => {
-  const item = selectedItem.value;
-  // 动态生成详情页链接
-  const detailUrl = `${window.location.origin}/#/detail/${item.id}`;
-  const text = `【${item.type === 'driver' ? '车找人' : '人找车'}】${item.origin} → ${item.destination}\n时间：${formatDate(item.date)}\n人数：${item.seats}人\n费用：${item.price || '面议'}元/人\n详情：${detailUrl}\n来自：宜人出行`;
-  navigator.clipboard.writeText(text).then(() => {
-    showSuccessToast('文案已复制，快去分享吧');
-  });
-};
-
 const goToDetail = (id) => {
   router.push(`/detail/${id}`);
 };
@@ -117,7 +99,8 @@ const goToDetail = (id) => {
         <div>暂无信息，快来发布第一条吧</div>
       </div>
       <van-list v-else v-model:loading="loading" :finished="finished" finished-text="没有更多了">
-        <div v-for="item in safeList" :key="item.id" class="ride-card" :class="[item.type, { expired: isExpired(item.date) }]" @click="openShare(item)">
+        <!-- 修改：点击直接进入详情页 -->
+        <div v-for="item in safeList" :key="item.id" class="ride-card" :class="[item.type, { expired: isExpired(item.date) }]" @click="goToDetail(item.id)">
           <div class="type-badge" :class="item.type">{{ item.type === 'driver' ? '【车找人】' : '【人找车】' }}</div>
           <div v-if="isExpired(item.date)" class="expired-seal">已过期</div>
           
@@ -171,31 +154,6 @@ const goToDetail = (id) => {
         </div>
       </van-list>
     </van-pull-refresh>
-
-    <van-popup v-model:show="showShareCard" round position="center" style="width: 90%; padding: 0; background: transparent;">
-      <div class="wechat-share-card" v-if="selectedItem">
-        <div class="card-main" @click="goToDetail(selectedItem.id)">
-          <div class="card-title">
-            <span class="type-tag">【{{ selectedItem.type === 'driver' ? '车找人' : '人找车' }}】</span>
-            {{ selectedItem.origin }} → {{ selectedItem.destination }}
-          </div>
-          <div class="card-details">
-            <div class="detail-line">{{ selectedItem.contact.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2') }}, {{ formatDate(selectedItem.date) }}</div>
-            <div class="detail-line">{{ selectedItem.origin }} ({{ selectedItem.origin }})</div>
-          </div>
-          <div class="card-logo">
-            <div class="logo-box">
-              <div class="logo-text">宜人</div>
-              <div class="logo-sub">出行</div>
-            </div>
-          </div>
-        </div>
-        <div class="card-actions">
-          <van-button round block type="primary" color="#07c160" @click="copyShareText">复制分享文案</van-button>
-          <van-button round block plain @click="showShareCard = false" style="margin-top: 10px;">关闭</van-button>
-        </div>
-      </div>
-    </van-popup>
   </div>
 </template>
 
@@ -272,17 +230,6 @@ const goToDetail = (id) => {
 
 .remark-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .remark-tag { background: #f7f8fa; color: #646566; font-size: 14px; padding: 2px 8px; border-radius: 4px; }
-
-.wechat-share-card { background: #fff; border-radius: 12px; overflow: hidden; }
-.card-main { padding: 20px; position: relative; min-height: 180px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
-.card-title { font-size: 20px; font-weight: bold; line-height: 1.4; color: #333; margin-bottom: 15px; }
-.type-tag { color: #333; }
-.card-details { font-size: 15px; color: #666; line-height: 1.6; }
-.card-logo { position: absolute; right: 20px; bottom: 20px; }
-.logo-box { background: #ff6600; color: #fff; padding: 8px; border-radius: 8px; text-align: center; width: 60px; }
-.logo-text { font-size: 18px; font-weight: bold; border-bottom: 1px solid rgba(255,255,255,0.5); }
-.logo-sub { font-size: 12px; }
-.card-actions { padding: 15px; background: #fff; }
 
 .empty-state { text-align: center; padding: 60px 0; color: #969799; }
 </style>

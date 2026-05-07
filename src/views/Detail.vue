@@ -1,8 +1,8 @@
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { fetchRides } from '../api';
-import { showToast } from 'vant';
+import { showToast, showSuccessToast } from 'vant';
 
 const route = useRoute();
 const router = useRouter();
@@ -38,11 +38,26 @@ const formatDate = (str) => {
 };
 
 const handleCall = (p) => { if(p) window.location.href = `tel:${p}`; };
+
+// 分享逻辑：将联系方式替换为详情页链接
+const copyShareText = () => {
+  if (!item.value) return;
+  const detailUrl = `${window.location.origin}/#/detail/${item.value.id}`;
+  const text = `【${item.value.type === 'driver' ? '车找人' : '人找车'}】${item.value.origin} → ${item.value.destination}\n时间：${formatDate(item.value.date)}\n人数：${item.value.seats}人\n费用：${item.value.price || '面议'}元/人\n备注：${item.value.remark || '无'}\n联系方式：点击查看详情 ${detailUrl}\n来自：宜人出行`;
+  
+  navigator.clipboard.writeText(text).then(() => {
+    showSuccessToast('分享文案已复制，快去发给好友吧');
+  });
+};
 </script>
 
 <template>
   <div class="page-detail">
-    <van-nav-bar title="行程详情" left-arrow @click-left="router.push('/')" />
+    <van-nav-bar title="行程详情" left-arrow @click-left="router.push('/')">
+      <template #right>
+        <van-icon name="share-o" size="20" @click="copyShareText" />
+      </template>
+    </van-nav-bar>
     
     <div v-if="loading" class="loading-box"><van-loading vertical>加载中...</van-loading></div>
     
@@ -65,6 +80,22 @@ const handleCall = (p) => { if(p) window.location.href = `tel:${p}`; };
         <div class="val">{{ item.remark || '无备注' }}</div>
       </div>
 
+      <!-- 微信风格分享引导卡片 -->
+      <div class="share-guide-card" @click="copyShareText">
+        <div class="card-header-mini">
+          <span class="tag">【{{ item.type === 'driver' ? '车找人' : '人找车' }}】</span>
+          <span class="title">{{ item.origin }} → {{ item.destination }}</span>
+        </div>
+        <div class="card-body-mini">
+          <div class="line">{{ formatDate(item.date) }}</div>
+          <div class="line">点击复制分享文案，引导好友查看</div>
+        </div>
+        <div class="card-footer-mini">
+          <div class="logo-mini">宜人出行</div>
+          <van-button size="mini" type="primary" round>一键复制分享</van-button>
+        </div>
+      </div>
+
       <div class="bottom-bar">
         <van-button round block type="primary" icon="phone-o" @click="handleCall(item.contact)">立即拨打电话</van-button>
       </div>
@@ -83,6 +114,14 @@ const handleCall = (p) => { if(p) window.location.href = `tel:${p}`; };
 .remark-box { margin: 20px; padding: 15px; background: #fff; border-radius: 8px; }
 .remark-box .label { font-size: 14px; color: #969799; margin-bottom: 8px; }
 .remark-box .val { font-size: 16px; color: #323233; line-height: 1.6; }
+
+/* 分享引导卡片样式 */
+.share-guide-card { margin: 20px; padding: 15px; background: #f0f9eb; border: 1px dashed #67c23a; border-radius: 12px; cursor: pointer; }
+.card-header-mini { font-weight: bold; font-size: 16px; margin-bottom: 8px; display: flex; gap: 4px; }
+.card-header-mini .tag { color: #333; }
+.card-body-mini { font-size: 14px; color: #666; line-height: 1.5; margin-bottom: 10px; }
+.card-footer-mini { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid rgba(0,0,0,0.05); padding-top: 8px; }
+.logo-mini { font-size: 12px; color: #999; font-weight: bold; }
 
 .bottom-bar { position: fixed; bottom: 20px; left: 20px; right: 20px; }
 </style>
