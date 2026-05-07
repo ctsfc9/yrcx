@@ -18,7 +18,10 @@ const loadDetail = async () => {
       item.value = data.results.find(r => String(r.id) === String(id));
     }
     if (item.value) {
-      initWechatSDK();
+      // 延迟初始化 SDK，确保 DOM 和 window 对象完全就绪
+      setTimeout(() => {
+        initWechatSDK();
+      }, 500);
     } else {
       showToast('未找到该行程');
     }
@@ -32,7 +35,7 @@ const loadDetail = async () => {
 const initWechatSDK = async () => {
   if (!window.wx || !item.value) return;
 
-  // Hash 模式下，签名 URL 必须是 # 之前的完整路径
+  // 微信签名 URL 必须是 # 之前的完整路径
   const currentUrl = window.location.href.split('#')[0];
   try {
     const res = await fetch(`/api/wechat?url=${encodeURIComponent(currentUrl)}`);
@@ -51,14 +54,19 @@ const initWechatSDK = async () => {
       const shareData = {
         title: `【${item.value.type === 'driver' ? '车找人' : '人找车'}】${item.value.origin} → ${item.value.destination}`,
         desc: '一个专注长途顺风拼车的合乘平台，老乡互助，共享出行！',
-        link: window.location.href, // 包含 #/detail/id
+        link: window.location.href, 
         imgUrl: 'https://i.postimg.cc/6pMzm4dr/image.jpg',
         success: function () {
-          console.log('Share data set successfully');
+          console.log('Wechat share data set success');
         }
       };
+      // 同时调用两个接口确保兼容性
       window.wx.updateAppMessageShareData(shareData);
       window.wx.updateTimelineShareData(shareData);
+    });
+
+    window.wx.error((res) => {
+      console.error('Wechat SDK Error:', res);
     });
   } catch (e) {
     console.error('Wechat SDK Init Failed:', e);
@@ -100,8 +108,8 @@ const copyShareText = () => {
   textArea.select();
   try {
     document.execCommand('copy');
-    showSuccessToast('文案已复制，请点击右上角转发');
-    showShareOverlay.value = true; // 复制后弹出引导
+    showSuccessToast('文案已复制');
+    showShareOverlay.value = true; 
   } catch (err) {
     showToast('复制失败');
   }
@@ -167,7 +175,6 @@ const copyShareText = () => {
       </div>
     </div>
 
-    <!-- 微信分享引导遮罩 -->
     <van-overlay :show="showShareOverlay" @click="showShareOverlay = false" z-index="2000">
       <div class="share-guide-wrapper">
         <van-icon name="arrow-up" size="40" class="guide-arrow" />
@@ -198,7 +205,6 @@ const copyShareText = () => {
 
 .bottom-bar { position: fixed; bottom: 20px; left: 20px; right: 20px; z-index: 100; }
 
-/* 引导遮罩样式 */
 .share-guide-wrapper { display: flex; flex-direction: column; align-items: flex-end; padding: 20px; color: #fff; }
 .guide-arrow { margin-right: 20px; animation: bounce 1s infinite; }
 .guide-text { margin-top: 20px; font-size: 20px; font-weight: bold; text-align: right; line-height: 1.5; }

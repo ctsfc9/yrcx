@@ -50,7 +50,6 @@ onMounted(() => {
   loadAMap();
 });
 
-// 彻底对齐：地图加载与定位逻辑
 const loadAMap = () => {
   if (window.AMap) {
     autoLocate();
@@ -71,29 +70,24 @@ const autoLocate = () => {
     const geolocation = new AMap.Geolocation({
       enableHighAccuracy: true,
       timeout: 8000,
-      noIpLocate: 0,
-      noGeoLocation: 0,
       extensions: 'all'
     });
     
     geolocation.getCurrentPosition((status, result) => {
       if (status === 'complete') {
         const addr = result.addressComponent;
-        // 严格对齐格式：市-县-镇-街道
         const city = addr.city || addr.province || '';
         const district = addr.district || '';
         const township = addr.township || '';
         const street = addr.street || '';
         
-        // 过滤掉“省”字头，只保留市级及以下
         const formattedAddr = [city, district, township, street]
           .filter(Boolean)
           .join('')
-          .replace(/.*省/, ''); // 剔除省份
+          .replace(/.*省/, ''); 
           
         postForm.origin = formattedAddr;
       } else {
-        // 兜底：城市搜索
         const citySearch = new AMap.CitySearch();
         citySearch.getLocalCity((s, r) => {
           if (s === 'complete' && r.info === 'OK') {
@@ -213,16 +207,29 @@ const handlePublish = async () => {
       </van-tabs>
 
       <van-cell-group inset class="form-group">
-        <div @click="openMap('origin')">
-          <van-field v-model="postForm.origin" label="起点" placeholder="点击定位或手动输入" readonly required>
-            <template #button>
-              <van-button size="small" type="primary" plain @click.stop="autoLocate">自动定位</van-button>
-            </template>
-          </van-field>
-        </div>
-        <van-field v-model="postForm.destination" label="终点" placeholder="点击选择目的地" readonly @click="openMap('destination')" required />
-        <van-field v-model="postForm.dateDisplay" label="出发时间" placeholder="点击选择时间" readonly @click="showDatePicker = true" required />
-        <van-field :model-value="postForm.seats + '人'" label="人数/空位" placeholder="点击选择人数" readonly @click="showSeatsPicker = true" required />
+        <!-- 修复：使用 van-cell 包装，确保全域点击触发 -->
+        <van-cell title="起点" is-link @click="openMap('origin')" required>
+          <template #value>
+            <span :class="{ 'placeholder-text': !postForm.origin }">{{ postForm.origin || '点击定位或手动输入' }}</span>
+          </template>
+          <template #right-icon>
+            <van-button size="mini" type="primary" plain @click.stop="autoLocate">定位</van-button>
+          </template>
+        </van-cell>
+
+        <van-cell title="终点" is-link @click="openMap('destination')" required>
+          <template #value>
+            <span :class="{ 'placeholder-text': !postForm.destination }">{{ postForm.destination || '点击选择目的地' }}</span>
+          </template>
+        </van-cell>
+
+        <van-cell title="出发时间" is-link @click="showDatePicker = true" required>
+          <template #value>{{ postForm.dateDisplay }}</template>
+        </van-cell>
+
+        <van-cell title="人数/空位" is-link @click="showSeatsPicker = true" required>
+          <template #value>{{ postForm.seats }}人</template>
+        </van-cell>
         
         <van-field label="车型" v-if="postForm.type === 'driver'">
           <template #input>
@@ -277,6 +284,7 @@ const handlePublish = async () => {
 .page-post { padding-bottom: 100px; }
 .post-card { padding: 15px; }
 .form-group { margin-bottom: 20px; }
+.placeholder-text { color: #ccc; }
 .remark-section { margin-top: 25px; padding: 0 15px; }
 .remark-section .label { font-size: 18px; font-weight: bold; color: #323233; margin-bottom: 15px; }
 .tags-group { display: flex; flex-wrap: wrap; gap: 10px; }
