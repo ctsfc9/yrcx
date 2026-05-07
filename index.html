@@ -6,12 +6,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, viewport-fit=cover" />
     <title>宜人出行 - 长途顺风合乘平台</title>
     <meta name="description" content="宜人出行，为您提供便捷、安全、实惠的长途拼车顺风车服务。车找人、人找车，一键发布，轻松出行。" />
+    
+    <!-- 1. 微信 SDK 必须最先加载 -->
+    <script src="https://res.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
+    
+    <!-- 2. 高德地图安全配置必须在地图脚本之前 -->
     <script type="text/javascript">
       window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' };
     </script>
-    <!-- 引入微信 JS-SDK -->
-    <script src="https://res.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
-    <!-- 微信分享卡片优化 -->
+    
+    <!-- 3. 微信分享卡片 Meta 优化 -->
     <meta property="og:title" content="宜人出行 - 顺风车拼车平台" />
     <meta property="og:description" content="点击查看最新拼车信息，长途顺风，安全便捷。" />
     <meta property="og:image" content="https://i.postimg.cc/6pMzm4dr/image.jpg" />

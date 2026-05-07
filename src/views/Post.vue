@@ -50,26 +50,33 @@ onMounted(() => {
   loadAMap();
 });
 
+// 彻底重构：确保地图脚本和插件按序加载
 const loadAMap = () => {
   if (window.AMap) {
     autoLocate();
     return;
   }
-  window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' };
   const script = document.createElement('script');
+  // 显式指定插件，避免动态加载失败
   script.src = `https://webapi.amap.com/maps?v=2.0&key=${systemStore.sysConfig.amap_key}&plugin=AMap.AutoComplete,AMap.PlaceSearch,AMap.Geolocation,AMap.CitySearch`;
+  script.async = true;
   script.onload = () => {
-    autoLocate();
+    // 脚本加载后延迟执行定位，确保插件初始化完成
+    setTimeout(() => {
+      autoLocate();
+    }, 300);
   };
-  document.body.appendChild(script);
+  document.head.appendChild(script);
 };
 
 const autoLocate = () => {
   if (!window.AMap) return;
+  
+  // 强制使用 AMap.plugin 确保插件已就绪
   AMap.plugin(['AMap.Geolocation', 'AMap.CitySearch'], function() {
     const geolocation = new AMap.Geolocation({
       enableHighAccuracy: true,
-      timeout: 8000,
+      timeout: 10000,
       extensions: 'all'
     });
     
@@ -88,6 +95,7 @@ const autoLocate = () => {
           
         postForm.origin = formattedAddr;
       } else {
+        // 兜底：城市搜索
         const citySearch = new AMap.CitySearch();
         citySearch.getLocalCity((s, r) => {
           if (s === 'complete' && r.info === 'OK') {
@@ -100,6 +108,11 @@ const autoLocate = () => {
 };
 
 const openMap = (field) => {
+  if (!window.AMap) {
+    showToast('地图加载中，请稍后');
+    loadAMap();
+    return;
+  }
   currentMapField.value = field;
   showMapSelector.value = true;
   mapSearchKeyword.value = '';
@@ -112,6 +125,7 @@ watch(mapSearchKeyword, (val) => {
       const auto = new AMap.AutoComplete({ city: '全国' });
       auto.search(val, (status, result) => {
         if (status === 'complete' && result.tips) {
+          // 过滤掉没有经纬度的结果，确保点击有效
           mapSearchResults.value = result.tips.filter(t => t.location);
         }
       });
@@ -207,8 +221,8 @@ const handlePublish = async () => {
       </van-tabs>
 
       <van-cell-group inset class="form-group">
-        <!-- 修复：使用 van-cell 包装，确保全域点击触发 -->
-        <van-cell title="起点" is-link @click="openMap('origin')" required>
+        <!-- 强制全域点击：使用 van-cell 配合自定义样式 -->
+        <van-cell title="起点" is-link @click="openMap('origin')" required class="clickable-cell">
           <template #value>
             <span :class="{ 'placeholder-text': !postForm.origin }">{{ postForm.origin || '点击定位或手动输入' }}</span>
           </template>
@@ -217,7 +231,7 @@ const handlePublish = async () => {
           </template>
         </van-cell>
 
-        <van-cell title="终点" is-link @click="openMap('destination')" required>
+        <van-cell title="终点" is-link @click="openMap('destination')" required class="clickable-cell">
           <template #value>
             <span :class="{ 'placeholder-text': !postForm.destination }">{{ postForm.destination || '点击选择目的地' }}</span>
           </template>
@@ -284,6 +298,7 @@ const handlePublish = async () => {
 .page-post { padding-bottom: 100px; }
 .post-card { padding: 15px; }
 .form-group { margin-bottom: 20px; }
+.clickable-cell { cursor: pointer; }
 .placeholder-text { color: #ccc; }
 .remark-section { margin-top: 25px; padding: 0 15px; }
 .remark-section .label { font-size: 18px; font-weight: bold; color: #323233; margin-bottom: 15px; }

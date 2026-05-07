@@ -18,10 +18,10 @@ const loadDetail = async () => {
       item.value = data.results.find(r => String(r.id) === String(id));
     }
     if (item.value) {
-      // 延迟初始化 SDK，确保 DOM 和 window 对象完全就绪
+      // 延迟初始化，确保微信 SDK 已加载
       setTimeout(() => {
         initWechatSDK();
-      }, 500);
+      }, 800);
     } else {
       showToast('未找到该行程');
     }
@@ -35,7 +35,7 @@ const loadDetail = async () => {
 const initWechatSDK = async () => {
   if (!window.wx || !item.value) return;
 
-  // 微信签名 URL 必须是 # 之前的完整路径
+  // 关键：微信签名 URL 必须是 # 之前的完整路径，且必须与当前浏览器地址栏一致
   const currentUrl = window.location.href.split('#')[0];
   try {
     const res = await fetch(`/api/wechat?url=${encodeURIComponent(currentUrl)}`);
@@ -51,22 +51,21 @@ const initWechatSDK = async () => {
     });
 
     window.wx.ready(() => {
+      // 详情页完整链接 (Hash 模式)
+      const shareLink = `${window.location.origin}/#/detail/${item.value.id}`;
+      
       const shareData = {
         title: `【${item.value.type === 'driver' ? '车找人' : '人找车'}】${item.value.origin} → ${item.value.destination}`,
         desc: '一个专注长途顺风拼车的合乘平台，老乡互助，共享出行！',
-        link: window.location.href, 
+        link: shareLink, 
         imgUrl: 'https://i.postimg.cc/6pMzm4dr/image.jpg',
         success: function () {
-          console.log('Wechat share data set success');
+          console.log('Wechat share config success');
         }
       };
-      // 同时调用两个接口确保兼容性
+      
       window.wx.updateAppMessageShareData(shareData);
       window.wx.updateTimelineShareData(shareData);
-    });
-
-    window.wx.error((res) => {
-      console.error('Wechat SDK Error:', res);
     });
   } catch (e) {
     console.error('Wechat SDK Init Failed:', e);
