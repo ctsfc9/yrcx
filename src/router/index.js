@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router';
+import { createRouter, createWebHashHistory } from 'vue-router';
 
 const routes = [
   {
@@ -30,7 +30,8 @@ const routes = [
 ];
 
 const router = createRouter({
-  history: createWebHistory(),
+  // 使用 Hash 模式确保在微信和静态托管中跳转精准
+  history: createWebHashHistory(),
   routes,
 });
 

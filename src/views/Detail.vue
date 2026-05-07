@@ -8,6 +8,7 @@ const route = useRoute();
 const router = useRouter();
 const item = ref(null);
 const loading = ref(true);
+const showShareOverlay = ref(false);
 
 const loadDetail = async () => {
   const id = route.params.id;
@@ -17,7 +18,7 @@ const loadDetail = async () => {
       item.value = data.results.find(r => String(r.id) === String(id));
     }
     if (item.value) {
-      initWechatSDK(); // 加载完数据后初始化分享
+      initWechatSDK();
     } else {
       showToast('未找到该行程');
     }
@@ -28,10 +29,10 @@ const loadDetail = async () => {
   }
 };
 
-// 微信 JS-SDK 初始化与分享配置
 const initWechatSDK = async () => {
   if (!window.wx || !item.value) return;
 
+  // Hash 模式下，签名 URL 必须是 # 之前的完整路径
   const currentUrl = window.location.href.split('#')[0];
   try {
     const res = await fetch(`/api/wechat?url=${encodeURIComponent(currentUrl)}`);
@@ -50,10 +51,10 @@ const initWechatSDK = async () => {
       const shareData = {
         title: `【${item.value.type === 'driver' ? '车找人' : '人找车'}】${item.value.origin} → ${item.value.destination}`,
         desc: '一个专注长途顺风拼车的合乘平台，老乡互助，共享出行！',
-        link: window.location.href,
+        link: window.location.href, // 包含 #/detail/id
         imgUrl: 'https://i.postimg.cc/6pMzm4dr/image.jpg',
         success: function () {
-          // 设置成功
+          console.log('Share data set successfully');
         }
       };
       window.wx.updateAppMessageShareData(shareData);
@@ -99,9 +100,10 @@ const copyShareText = () => {
   textArea.select();
   try {
     document.execCommand('copy');
-    showSuccessToast('完整分享文案已复制');
+    showSuccessToast('文案已复制，请点击右上角转发');
+    showShareOverlay.value = true; // 复制后弹出引导
   } catch (err) {
-    showToast('复制失败，请手动长按选择');
+    showToast('复制失败');
   }
   document.body.removeChild(textArea);
 };
@@ -153,9 +155,9 @@ const copyShareText = () => {
           icon="share-o"
           @click="copyShareText"
         >
-          一键复制完整分享文案
+          一键复制并转发卡片
         </van-button>
-        <p class="share-tip">复制后发到微信群，引导好友点击链接查看联系方式</p>
+        <p class="share-tip">复制文案后，点击右上角“...”转发给朋友即可显示卡片</p>
       </div>
 
       <div class="bottom-bar">
@@ -164,6 +166,14 @@ const copyShareText = () => {
         </van-button>
       </div>
     </div>
+
+    <!-- 微信分享引导遮罩 -->
+    <van-overlay :show="showShareOverlay" @click="showShareOverlay = false" z-index="2000">
+      <div class="share-guide-wrapper">
+        <van-icon name="arrow-up" size="40" class="guide-arrow" />
+        <div class="guide-text">文案已复制！<br/>点击右上角“...”转发给朋友<br/>即可显示精美卡片</div>
+      </div>
+    </van-overlay>
   </div>
 </template>
 
@@ -187,4 +197,14 @@ const copyShareText = () => {
 .share-tip { text-align: center; font-size: 13px; color: #969799; margin-top: 12px; }
 
 .bottom-bar { position: fixed; bottom: 20px; left: 20px; right: 20px; z-index: 100; }
+
+/* 引导遮罩样式 */
+.share-guide-wrapper { display: flex; flex-direction: column; align-items: flex-end; padding: 20px; color: #fff; }
+.guide-arrow { margin-right: 20px; animation: bounce 1s infinite; }
+.guide-text { margin-top: 20px; font-size: 20px; font-weight: bold; text-align: right; line-height: 1.5; }
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
 </style>

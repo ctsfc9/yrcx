@@ -50,7 +50,7 @@ onMounted(() => {
   loadAMap();
 });
 
-// 终极对齐：地图加载与定位逻辑
+// 彻底对齐：地图加载与定位逻辑
 const loadAMap = () => {
   if (window.AMap) {
     autoLocate();
@@ -60,7 +60,6 @@ const loadAMap = () => {
   const script = document.createElement('script');
   script.src = `https://webapi.amap.com/maps?v=2.0&key=${systemStore.sysConfig.amap_key}&plugin=AMap.AutoComplete,AMap.PlaceSearch,AMap.Geolocation,AMap.CitySearch`;
   script.onload = () => {
-    // 脚本加载完立即触发定位
     autoLocate();
   };
   document.body.appendChild(script);
@@ -69,15 +68,6 @@ const loadAMap = () => {
 const autoLocate = () => {
   if (!window.AMap) return;
   AMap.plugin(['AMap.Geolocation', 'AMap.CitySearch'], function() {
-    // 1. 城市搜索作为兜底
-    const citySearch = new AMap.CitySearch();
-    citySearch.getLocalCity((status, result) => {
-      if (status === 'complete' && result.info === 'OK') {
-        if (!postForm.origin) postForm.origin = result.city;
-      }
-    });
-    
-    // 2. 浏览器精确定位
     const geolocation = new AMap.Geolocation({
       enableHighAccuracy: true,
       timeout: 8000,
@@ -85,12 +75,31 @@ const autoLocate = () => {
       noGeoLocation: 0,
       extensions: 'all'
     });
+    
     geolocation.getCurrentPosition((status, result) => {
       if (status === 'complete') {
         const addr = result.addressComponent;
-        // 拼接详细地址：区 + 街道/镇 + 门牌号
-        const detailAddr = (addr.district || '') + (addr.township || '') + (addr.street || '') + (addr.streetNumber || '');
-        if (detailAddr) postForm.origin = detailAddr;
+        // 严格对齐格式：市-县-镇-街道
+        const city = addr.city || addr.province || '';
+        const district = addr.district || '';
+        const township = addr.township || '';
+        const street = addr.street || '';
+        
+        // 过滤掉“省”字头，只保留市级及以下
+        const formattedAddr = [city, district, township, street]
+          .filter(Boolean)
+          .join('')
+          .replace(/.*省/, ''); // 剔除省份
+          
+        postForm.origin = formattedAddr;
+      } else {
+        // 兜底：城市搜索
+        const citySearch = new AMap.CitySearch();
+        citySearch.getLocalCity((s, r) => {
+          if (s === 'complete' && r.info === 'OK') {
+            postForm.origin = r.city;
+          }
+        });
       }
     });
   });
@@ -204,7 +213,6 @@ const handlePublish = async () => {
       </van-tabs>
 
       <van-cell-group inset class="form-group">
-        <!-- 终极对齐：点击 Field 任何位置触发地图 -->
         <div @click="openMap('origin')">
           <van-field v-model="postForm.origin" label="起点" placeholder="点击定位或手动输入" readonly required>
             <template #button>
