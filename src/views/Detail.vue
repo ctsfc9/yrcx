@@ -21,7 +21,7 @@ const loadDetail = async () => {
       // 延迟初始化，确保微信 SDK 已加载
       setTimeout(() => {
         initWechatSDK();
-      }, 800);
+      }, 1000);
     } else {
       showToast('未找到该行程');
     }
@@ -35,7 +35,7 @@ const loadDetail = async () => {
 const initWechatSDK = async () => {
   if (!window.wx || !item.value) return;
 
-  // 关键：微信签名 URL 必须是 # 之前的完整路径，且必须与当前浏览器地址栏一致
+  // 微信签名 URL 必须是 # 之前的完整路径
   const currentUrl = window.location.href.split('#')[0];
   try {
     const res = await fetch(`/api/wechat?url=${encodeURIComponent(currentUrl)}`);
@@ -52,7 +52,7 @@ const initWechatSDK = async () => {
 
     window.wx.ready(() => {
       // 详情页完整链接 (Hash 模式)
-      const shareLink = `${window.location.origin}/#/detail/${item.value.id}`;
+      const shareLink = `https://yrcx.ctsfc.top/#/detail/${item.value.id}`;
       
       const shareData = {
         title: `【${item.value.type === 'driver' ? '车找人' : '人找车'}】${item.value.origin} → ${item.value.destination}`,
@@ -89,7 +89,7 @@ const handleCall = (p) => { if(p) window.location.href = `tel:${p}`; };
 
 const copyShareText = () => {
   if (!item.value) return;
-  const detailUrl = `${window.location.origin}/#/detail/${item.value.id}`;
+  const detailUrl = `https://yrcx.ctsfc.top/#/detail/${item.value.id}`;
   const typeLabel = item.value.type === 'driver' ? '车找人' : '人找车';
   const text = `【${typeLabel}】${item.value.origin} → ${item.value.destination}
 出发时间：${formatDate(item.value.date)}

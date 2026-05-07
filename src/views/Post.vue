@@ -50,21 +50,28 @@ onMounted(() => {
   loadAMap();
 });
 
-// 彻底重构：确保地图脚本和插件按序加载
+// 终极修复：确保地图脚本和插件按序加载，并处理安全配置
 const loadAMap = () => {
-  if (window.AMap) {
+  if (window.AMap && window.AMap.Geolocation) {
     autoLocate();
     return;
   }
+  
+  // 确保安全配置已设置
+  window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' };
+
   const script = document.createElement('script');
-  // 显式指定插件，避免动态加载失败
+  // 显式指定插件，并确保 key 正确
   script.src = `https://webapi.amap.com/maps?v=2.0&key=${systemStore.sysConfig.amap_key}&plugin=AMap.AutoComplete,AMap.PlaceSearch,AMap.Geolocation,AMap.CitySearch`;
   script.async = true;
   script.onload = () => {
     // 脚本加载后延迟执行定位，确保插件初始化完成
     setTimeout(() => {
       autoLocate();
-    }, 300);
+    }, 500);
+  };
+  script.onerror = () => {
+    showToast('地图脚本加载失败，请检查网络');
   };
   document.head.appendChild(script);
 };
@@ -77,7 +84,9 @@ const autoLocate = () => {
     const geolocation = new AMap.Geolocation({
       enableHighAccuracy: true,
       timeout: 10000,
-      extensions: 'all'
+      extensions: 'all',
+      noIpLocate: 0, // 允许 IP 定位作为兜底
+      noGeoLocation: 0
     });
     
     geolocation.getCurrentPosition((status, result) => {
@@ -88,6 +97,7 @@ const autoLocate = () => {
         const township = addr.township || '';
         const street = addr.street || '';
         
+        // 严格对齐格式：市-县-镇-街道
         const formattedAddr = [city, district, township, street]
           .filter(Boolean)
           .join('')
@@ -221,7 +231,7 @@ const handlePublish = async () => {
       </van-tabs>
 
       <van-cell-group inset class="form-group">
-        <!-- 强制全域点击：使用 van-cell 配合自定义样式 -->
+        <!-- 终极修复：确保点击整行都能触发 openMap -->
         <van-cell title="起点" is-link @click="openMap('origin')" required class="clickable-cell">
           <template #value>
             <span :class="{ 'placeholder-text': !postForm.origin }">{{ postForm.origin || '点击定位或手动输入' }}</span>
