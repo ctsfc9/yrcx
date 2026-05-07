@@ -47,65 +47,54 @@ const initCurrentTime = () => {
 
 onMounted(() => {
   initCurrentTime();
-  loadAMap();
+  // 静态引入后，直接尝试定位
+  checkAndLocate();
 });
 
-// 终极修复：确保地图脚本和插件按序加载，并处理安全配置
-const loadAMap = () => {
+const checkAndLocate = () => {
   if (window.AMap && window.AMap.Geolocation) {
     autoLocate();
-    return;
-  }
-  
-  // 确保安全配置已设置
-  window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' };
-
-  const script = document.createElement('script');
-  // 显式指定插件，并确保 key 正确
-  script.src = `https://webapi.amap.com/maps?v=2.0&key=${systemStore.sysConfig.amap_key}&plugin=AMap.AutoComplete,AMap.PlaceSearch,AMap.Geolocation,AMap.CitySearch`;
-  script.async = true;
-  script.onload = () => {
-    // 脚本加载后延迟执行定位，确保插件初始化完成
-    setTimeout(() => {
-      autoLocate();
+  } else {
+    // 如果还没加载完，轮询检查
+    let retryCount = 0;
+    const timer = setInterval(() => {
+      retryCount++;
+      if (window.AMap && window.AMap.Geolocation) {
+        clearInterval(timer);
+        autoLocate();
+      }
+      if (retryCount > 20) clearInterval(timer); // 最多等10秒
     }, 500);
-  };
-  script.onerror = () => {
-    showToast('地图脚本加载失败，请检查网络');
-  };
-  document.head.appendChild(script);
+  }
 };
 
 const autoLocate = () => {
-  if (!window.AMap) return;
+  if (!window.AMap || !window.AMap.Geolocation) return;
   
-  // 强制使用 AMap.plugin 确保插件已就绪
-  AMap.plugin(['AMap.Geolocation', 'AMap.CitySearch'], function() {
-    const geolocation = new AMap.Geolocation({
-      enableHighAccuracy: true,
-      timeout: 10000,
-      extensions: 'all',
-      noIpLocate: 0, // 允许 IP 定位作为兜底
-      noGeoLocation: 0
-    });
-    
-    geolocation.getCurrentPosition((status, result) => {
-      if (status === 'complete') {
-        const addr = result.addressComponent;
-        const city = addr.city || addr.province || '';
-        const district = addr.district || '';
-        const township = addr.township || '';
-        const street = addr.street || '';
+  const geolocation = new AMap.Geolocation({
+    enableHighAccuracy: true,
+    timeout: 10000,
+    extensions: 'all'
+  });
+  
+  geolocation.getCurrentPosition((status, result) => {
+    if (status === 'complete') {
+      const addr = result.addressComponent;
+      const city = addr.city || addr.province || '';
+      const district = addr.district || '';
+      const township = addr.township || '';
+      const street = addr.street || '';
+      
+      // 严格对齐格式：市-县-镇-街道
+      const formattedAddr = [city, district, township, street]
+        .filter(Boolean)
+        .join('')
+        .replace(/.*省/, ''); 
         
-        // 严格对齐格式：市-县-镇-街道
-        const formattedAddr = [city, district, township, street]
-          .filter(Boolean)
-          .join('')
-          .replace(/.*省/, ''); 
-          
-        postForm.origin = formattedAddr;
-      } else {
-        // 兜底：城市搜索
+      postForm.origin = formattedAddr;
+    } else {
+      // 兜底：城市搜索
+      if (window.AMap.CitySearch) {
         const citySearch = new AMap.CitySearch();
         citySearch.getLocalCity((s, r) => {
           if (s === 'complete' && r.info === 'OK') {
@@ -113,14 +102,13 @@ const autoLocate = () => {
           }
         });
       }
-    });
+    }
   });
 };
 
 const openMap = (field) => {
   if (!window.AMap) {
-    showToast('地图加载中，请稍后');
-    loadAMap();
+    showToast('地图加载中...');
     return;
   }
   currentMapField.value = field;
@@ -130,15 +118,12 @@ const openMap = (field) => {
 };
 
 watch(mapSearchKeyword, (val) => {
-  if (val && window.AMap) {
-    AMap.plugin('AMap.AutoComplete', () => {
-      const auto = new AMap.AutoComplete({ city: '全国' });
-      auto.search(val, (status, result) => {
-        if (status === 'complete' && result.tips) {
-          // 过滤掉没有经纬度的结果，确保点击有效
-          mapSearchResults.value = result.tips.filter(t => t.location);
-        }
-      });
+  if (val && window.AMap && window.AMap.AutoComplete) {
+    const auto = new AMap.AutoComplete({ city: '全国' });
+    auto.search(val, (status, result) => {
+      if (status === 'complete' && result.tips) {
+        mapSearchResults.value = result.tips.filter(t => t.location);
+      }
     });
   }
 });
@@ -231,7 +216,6 @@ const handlePublish = async () => {
       </van-tabs>
 
       <van-cell-group inset class="form-group">
-        <!-- 终极修复：确保点击整行都能触发 openMap -->
         <van-cell title="起点" is-link @click="openMap('origin')" required class="clickable-cell">
           <template #value>
             <span :class="{ 'placeholder-text': !postForm.origin }">{{ postForm.origin || '点击定位或手动输入' }}</span>

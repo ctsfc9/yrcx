@@ -18,10 +18,8 @@ const loadDetail = async () => {
       item.value = data.results.find(r => String(r.id) === String(id));
     }
     if (item.value) {
-      // 延迟初始化，确保微信 SDK 已加载
-      setTimeout(() => {
-        initWechatSDK();
-      }, 1000);
+      // 静态引入后，直接尝试初始化 SDK
+      initWechatSDK();
     } else {
       showToast('未找到该行程');
     }
@@ -47,13 +45,16 @@ const initWechatSDK = async () => {
       timestamp: config.timestamp,
       nonceStr: config.nonceStr,
       signature: config.signature,
-      jsApiList: ['updateAppMessageShareData', 'updateTimelineShareData']
+      jsApiList: [
+        'updateAppMessageShareData', 
+        'updateTimelineShareData',
+        'onMenuShareAppMessage', // 保底：旧版接口
+        'onMenuShareTimeline'    // 保底：旧版接口
+      ]
     });
 
     window.wx.ready(() => {
-      // 详情页完整链接 (Hash 模式)
       const shareLink = `https://yrcx.ctsfc.top/#/detail/${item.value.id}`;
-      
       const shareData = {
         title: `【${item.value.type === 'driver' ? '车找人' : '人找车'}】${item.value.origin} → ${item.value.destination}`,
         desc: '一个专注长途顺风拼车的合乘平台，老乡互助，共享出行！',
@@ -64,8 +65,13 @@ const initWechatSDK = async () => {
         }
       };
       
+      // 1. 新版接口
       window.wx.updateAppMessageShareData(shareData);
       window.wx.updateTimelineShareData(shareData);
+      
+      // 2. 旧版接口保底
+      window.wx.onMenuShareAppMessage(shareData);
+      window.wx.onMenuShareTimeline(shareData);
     });
   } catch (e) {
     console.error('Wechat SDK Init Failed:', e);
