@@ -31,28 +31,13 @@ const switchTab = (name) => {
 
     <van-tabbar v-if="!route.meta.hideTabbar" :model-value="route.name" @change="switchTab" placeholder>
       <van-tabbar-item name="Home" icon="home-o">首页</van-tabbar-item>
-      <!-- 强化：发布按钮 -->
-      <van-tabbar-item name="Post" class="post-tab-item">
-        <template #icon>
-          <div class="big-post-btn">
-            <van-icon name="plus" />
-          </div>
-        </template>
-        发布
-      </van-tabbar-item>
+      <van-tabbar-item name="Post" icon="plus">发布</van-tabbar-item>
       <van-tabbar-item name="MyRides" icon="user-o">我的</van-tabbar-item>
     </van-tabbar>
   </div>
 </template>
 
 <style>
-:root {
-  --van-font-size-sm: 14px;
-  --van-font-size-md: 16px;
-  --van-font-size-lg: 18px;
-  --van-primary-color: #07c160;
-}
-
 body {
   margin: 0;
   padding: 0;
@@ -61,7 +46,6 @@ body {
     Segoe UI, Arial, Roboto, 'PingFang SC', 'miui', 'Hiragino Sans GB', 'Microsoft Yahei',
     sans-serif;
   -webkit-font-smoothing: antialiased;
-  font-size: 16px;
 }
 
 .app-container {
@@ -80,30 +64,5 @@ body {
 
 * {
   -webkit-tap-highlight-color: transparent;
-}
-
-.van-nav-bar__title { font-size: 18px !important; font-weight: bold !important; }
-.van-cell__title { font-size: 16px !important; }
-.van-field__label { font-size: 16px !important; }
-.van-button { font-size: 16px !important; }
-
-/* 强化发布按钮样式 */
-.big-post-btn {
-  width: 54px;
-  height: 54px;
-  background: linear-gradient(135deg, #07c160 0%, #059a4c 100%);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  font-size: 28px;
-  box-shadow: 0 4px 12px rgba(7, 193, 96, 0.4);
-  margin-top: -25px;
-  border: 3px solid #fff;
-}
-
-.post-tab-item .van-tabbar-item__text {
-  margin-top: 4px;
 }
 </style>

@@ -50,24 +50,25 @@ onMounted(() => {
   loadAMap();
 });
 
+// 核心：地图加载与定位逻辑
 const loadAMap = () => {
   if (window.AMap) {
-    autoLocateOrigin();
+    autoLocate();
     return;
   }
-  // 注入安全密钥
   window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' };
   const script = document.createElement('script');
   script.src = `https://webapi.amap.com/maps?v=2.0&key=${systemStore.sysConfig.amap_key}&plugin=AMap.AutoComplete,AMap.PlaceSearch,AMap.Geolocation,AMap.CitySearch`;
   script.onload = () => {
-    autoLocateOrigin();
+    autoLocate();
   };
   document.body.appendChild(script);
 };
 
-const autoLocateOrigin = () => {
+const autoLocate = () => {
   if (!window.AMap) return;
   AMap.plugin(['AMap.Geolocation', 'AMap.CitySearch'], function() {
+    // 1. 优先通过城市搜索获取大致位置
     const citySearch = new AMap.CitySearch();
     citySearch.getLocalCity((status, result) => {
       if (status === 'complete' && result.info === 'OK') {
@@ -75,10 +76,12 @@ const autoLocateOrigin = () => {
       }
     });
     
+    // 2. 尝试精确定位
     const geolocation = new AMap.Geolocation({
       enableHighAccuracy: true,
       timeout: 5000,
-      buttonPosition: 'RB'
+      noIpLocate: 0,
+      noGeoLocation: 0
     });
     geolocation.getCurrentPosition((status, result) => {
       if (status === 'complete') {
@@ -197,10 +200,10 @@ const handlePublish = async () => {
       </van-tabs>
 
       <van-cell-group inset class="form-group">
-        <!-- 修复：点击输入框拉起地图 -->
+        <!-- 修复：点击整个 Field 触发地图 -->
         <van-field v-model="postForm.origin" label="起点" placeholder="点击定位或手动输入" readonly @click="openMap('origin')" required>
           <template #button>
-            <van-button size="small" type="primary" plain @click.stop="autoLocateOrigin">自动定位</van-button>
+            <van-button size="small" type="primary" plain @click.stop="autoLocate">自动定位</van-button>
           </template>
         </van-field>
         <van-field v-model="postForm.destination" label="终点" placeholder="点击选择目的地" readonly @click="openMap('destination')" required />
