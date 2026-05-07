@@ -16,7 +16,11 @@ const loadDetail = async () => {
     if (data.results) {
       item.value = data.results.find(r => String(r.id) === String(id));
     }
-    if (!item.value) showToast('未找到该行程');
+    if (item.value) {
+      initWechatSDK(); // 加载完数据后初始化分享
+    } else {
+      showToast('未找到该行程');
+    }
   } catch (e) {
     showToast('加载失败');
   } finally {
@@ -24,10 +28,44 @@ const loadDetail = async () => {
   }
 };
 
+// 微信 JS-SDK 初始化与分享配置
+const initWechatSDK = async () => {
+  if (!window.wx || !item.value) return;
+
+  const currentUrl = window.location.href.split('#')[0];
+  try {
+    const res = await fetch(`/api/wechat?url=${encodeURIComponent(currentUrl)}`);
+    const config = await res.json();
+
+    window.wx.config({
+      debug: false,
+      appId: config.appId,
+      timestamp: config.timestamp,
+      nonceStr: config.nonceStr,
+      signature: config.signature,
+      jsApiList: ['updateAppMessageShareData', 'updateTimelineShareData']
+    });
+
+    window.wx.ready(() => {
+      const shareData = {
+        title: `【${item.value.type === 'driver' ? '车找人' : '人找车'}】${item.value.origin} → ${item.value.destination}`,
+        desc: '一个专注长途顺风拼车的合乘平台，老乡互助，共享出行！',
+        link: window.location.href,
+        imgUrl: 'https://i.postimg.cc/6pMzm4dr/image.jpg',
+        success: function () {
+          // 设置成功
+        }
+      };
+      window.wx.updateAppMessageShareData(shareData);
+      window.wx.updateTimelineShareData(shareData);
+    });
+  } catch (e) {
+    console.error('Wechat SDK Init Failed:', e);
+  }
+};
+
 onMounted(() => {
   loadDetail();
-  // 预留：微信 JS-SDK 初始化位置
-  // initWechatSDK();
 });
 
 const formatDate = (str) => {
@@ -41,12 +79,9 @@ const formatDate = (str) => {
 
 const handleCall = (p) => { if(p) window.location.href = `tel:${p}`; };
 
-// 修复：完整的分享文案逻辑
 const copyShareText = () => {
   if (!item.value) return;
   const detailUrl = `${window.location.origin}/#/detail/${item.value.id}`;
-  
-  // 构建完整文案
   const typeLabel = item.value.type === 'driver' ? '车找人' : '人找车';
   const text = `【${typeLabel}】${item.value.origin} → ${item.value.destination}
 出发时间：${formatDate(item.value.date)}
@@ -58,7 +93,6 @@ const copyShareText = () => {
 👉 ${detailUrl}
 (来自：宜人出行-长途顺风合乘平台)`;
   
-  // 兼容性复制逻辑
   const textArea = document.createElement("textarea");
   textArea.value = text;
   document.body.appendChild(textArea);
@@ -98,7 +132,6 @@ const copyShareText = () => {
         <div class="val">{{ item.remark || '无备注' }}</div>
       </div>
 
-      <!-- 优化：极其醒目的分享引导区域 -->
       <div class="share-action-area">
         <div class="share-card-preview">
           <div class="p-header">
@@ -146,7 +179,6 @@ const copyShareText = () => {
 .remark-box .label { font-size: 14px; color: #969799; margin-bottom: 8px; }
 .remark-box .val { font-size: 16px; color: #323233; line-height: 1.6; }
 
-/* 醒目的分享区域 */
 .share-action-area { margin: 25px 20px; padding: 20px; background: #fff; border-radius: 16px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
 .share-card-preview { padding: 15px; background: #f7f8fa; border-radius: 12px; margin-bottom: 20px; border: 1px solid #ebedf0; }
 .p-header { font-weight: bold; font-size: 18px; margin-bottom: 10px; color: #333; }
