@@ -38,6 +38,12 @@ const switchTab = (name) => {
 </template>
 
 <style>
+:root {
+  --van-font-size-sm: 14px;
+  --van-font-size-md: 16px;
+  --van-font-size-lg: 18px;
+}
+
 body {
   margin: 0;
   padding: 0;
@@ -46,6 +52,7 @@ body {
     Segoe UI, Arial, Roboto, 'PingFang SC', 'miui', 'Hiragino Sans GB', 'Microsoft Yahei',
     sans-serif;
   -webkit-font-smoothing: antialiased;
+  font-size: 16px; /* 全局字体调大 */
 }
 
 .app-container {
@@ -65,4 +72,10 @@ body {
 * {
   -webkit-tap-highlight-color: transparent;
 }
+
+/* 覆盖 Vant 的一些默认字体大小 */
+.van-nav-bar__title { font-size: 18px !important; }
+.van-cell__title { font-size: 16px !important; }
+.van-field__label { font-size: 16px !important; }
+.van-button { font-size: 16px !important; }
 </style>

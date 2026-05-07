@@ -1,9 +1,9 @@
 <script setup>
-import { reactive, ref, computed, onMounted } from 'vue';
+import { reactive, ref, computed, onMounted, watch } from 'vue';
 import { useUserStore } from '../store/user';
 import { useSystemStore } from '../store/system';
 import { postRide } from '../api';
-import { showSuccessToast, showFailToast, showLoadingToast } from 'vant';
+import { showSuccessToast, showFailToast, showLoadingToast, showDialog, showToast } from 'vant';
 import { useRouter } from 'vue-router';
 
 const router = useRouter();
@@ -25,27 +25,86 @@ const postForm = reactive({
 
 const submitLoading = ref(false);
 const showDatePicker = ref(false);
+const showSeatsPicker = ref(false);
+const showMapSelector = ref(false);
 const selectedDateValues = ref([]);
+const mapSearchKeyword = ref('');
+const mapSearchResults = ref([]);
+const currentMapField = ref(''); // 'origin' or 'destination'
 
-// 初始化时间为当前时间
+// 人数选择列 (1-6人)
+const seatColumns = Array.from({ length: 6 }, (_, i) => ({ text: `${i + 1}人`, value: i + 1 }));
+
+// 初始化时间
 const initCurrentTime = () => {
   const now = new Date();
   const y = now.getFullYear();
   const m = now.getMonth() + 1;
   const d = now.getDate();
   const h = now.getHours();
-  
-  // 设置选择器的初始选中值
   selectedDateValues.value = [y, m, d, h];
-  
-  // 设置表单显示的默认值
   postForm.dateDisplay = `${y}年${m}月${d}日 ${h}点`;
   postForm.date = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}T${String(h).padStart(2, '0')}:00:00`;
 };
 
 onMounted(() => {
   initCurrentTime();
+  loadAMap();
 });
+
+// 加载高德地图脚本
+const loadAMap = () => {
+  if (window.AMap) return;
+  window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' };
+  const script = document.createElement('script');
+  script.src = `https://webapi.amap.com/maps?v=2.0&key=${systemStore.sysConfig.amap_key}&plugin=AMap.AutoComplete,AMap.PlaceSearch,AMap.Geolocation`;
+  document.body.appendChild(script);
+};
+
+// 自动定位起点
+const autoLocateOrigin = () => {
+  if (!window.AMap) return;
+  showLoadingToast({ message: '定位中...', forbidClick: true });
+  AMap.plugin('AMap.Geolocation', function() {
+    const geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 10000 });
+    geolocation.getCurrentPosition((status, result) => {
+      if (status === 'complete') {
+        postForm.origin = result.addressComponent.district + result.addressComponent.township + (result.addressComponent.street || '');
+        showSuccessToast('定位成功');
+      } else {
+        showFailToast('定位失败，请手动选择');
+      }
+    });
+  });
+};
+
+// 打开地图选择器
+const openMap = (field) => {
+  currentMapField.value = field;
+  showMapSelector.value = true;
+  mapSearchKeyword.value = '';
+  mapSearchResults.value = [];
+};
+
+// 搜索地点
+watch(mapSearchKeyword, (val) => {
+  if (val && window.AMap) {
+    AMap.plugin('AMap.AutoComplete', () => {
+      const auto = new AMap.AutoComplete({ city: '全国' });
+      auto.search(val, (status, result) => {
+        if (status === 'complete' && result.tips) {
+          mapSearchResults.value = result.tips.filter(t => t.location);
+        }
+      });
+    });
+  }
+});
+
+const selectMapResult = (item) => {
+  if (currentMapField.value === 'origin') postForm.origin = item.name;
+  else postForm.destination = item.name;
+  showMapSelector.value = false;
+};
 
 const currentRemarkOptions = computed(() => {
   const str = postForm.type === 'driver' ? systemStore.sysConfig.tags_driver : systemStore.sysConfig.tags_passenger;
@@ -71,26 +130,41 @@ const onConfirmDate = ({ selectedOptions }) => {
   showDatePicker.value = false;
 };
 
+const onConfirmSeats = ({ selectedOptions }) => {
+  postForm.seats = selectedOptions[0].value;
+  showSeatsPicker.value = false;
+};
+
 const toggleRemark = (t) => {
   const i = postForm.remark.indexOf(t);
   if (i > -1) postForm.remark.splice(i, 1);
   else postForm.remark.push(t);
 };
 
-const onSubmit = async () => {
-  if (!postForm.origin || !postForm.destination) {
-    showFailToast('请完善路线');
-    return;
-  }
+const onPreSubmit = () => {
+  // 校验
+  if (!postForm.origin || !postForm.destination) return showToast('请完善路线');
+  if (!postForm.contact || postForm.contact.length !== 11) return showToast('请输入11位手机号');
   
+  const fee = systemStore.sysConfig.publish_fee;
+  const topFee = systemStore.sysConfig.top_fee;
+  
+  showDialog({
+    title: '发布确认',
+    message: `本次发布费用：${fee}元\n如需置顶需额外支付：${topFee}元\n是否确认发布？`,
+    showCancelButton: true,
+  }).then(() => {
+    handlePublish();
+  }).catch(() => {});
+};
+
+const handlePublish = async () => {
   submitLoading.value = true;
   showLoadingToast('发布中...');
-  
   try {
     const data = {
       ...postForm,
       user_id: userStore.userProfile.id,
-      contact: userStore.userProfile.phone || postForm.contact,
       remark: postForm.remark.join('，') || '无备注'
     };
     await postRide(data);
@@ -109,57 +183,88 @@ const onSubmit = async () => {
     <van-nav-bar title="发布行程" />
     
     <div class="post-card">
-      <van-tabs v-model:active="postForm.type" type="card" style="margin-bottom: 15px;">
+      <van-tabs v-model:active="postForm.type" type="card" style="margin-bottom: 20px;">
         <van-tab title="车找人" name="driver" />
         <van-tab title="人找车" name="passenger" />
       </van-tabs>
 
-      <van-cell-group inset>
-        <van-field v-model="postForm.origin" label="起点" placeholder="请输入起点" required />
-        <van-field v-model="postForm.destination" label="终点" placeholder="请输入终点" required />
-        <van-field v-model="postForm.dateDisplay" label="时间" placeholder="点击选择时间" readonly @click="showDatePicker = true" required />
-        <van-field label="座位">
+      <van-cell-group inset class="form-group">
+        <van-field v-model="postForm.origin" label="起点" placeholder="点击定位或手动输入" readonly @click="openMap('origin')" required>
+          <template #button>
+            <van-button size="small" type="primary" plain @click.stop="autoLocateOrigin">自动定位</van-button>
+          </template>
+        </van-field>
+        <van-field v-model="postForm.destination" label="终点" placeholder="点击选择目的地" readonly @click="openMap('destination')" required />
+        <van-field v-model="postForm.dateDisplay" label="出发时间" placeholder="点击选择时间" readonly @click="showDatePicker = true" required />
+        <van-field :model-value="postForm.seats + '人'" label="人数/空位" placeholder="点击选择人数" readonly @click="showSeatsPicker = true" required />
+        
+        <van-field label="车型" v-if="postForm.type === 'driver'">
           <template #input>
-            <van-radio-group v-model="postForm.seats" direction="horizontal">
-              <van-radio v-for="n in 4" :key="n" :name="n">{{ n }}座</van-radio>
+            <van-radio-group v-model="postForm.car_model" direction="horizontal">
+              <van-radio name="油车">油车</van-radio>
+              <van-radio name="电车">电车</van-radio>
+              <van-radio name="油电混合">混合</van-radio>
             </van-radio-group>
           </template>
         </van-field>
-        <van-field v-model="postForm.price" label="费用" type="digit" placeholder="元 (不填为面议)" />
-        <van-field v-model="postForm.contact" label="联系电话" type="tel" placeholder="请输入联系电话" />
+
+        <van-field v-model="postForm.price" label="费用" type="digit" placeholder="元/人 (不填为面议)" />
+        <van-field v-model="postForm.contact" label="联系电话" type="tel" maxlength="11" placeholder="请输入11位手机号" required />
       </van-cell-group>
 
       <div class="remark-section">
-        <div class="label">快捷备注</div>
+        <div class="label">快捷备注 (仅限勾选)</div>
         <div class="tags-group">
           <div v-for="t in currentRemarkOptions" :key="t" class="tag-item" :class="{active: postForm.remark.includes(t)}" @click="toggleRemark(t)">
             {{ t }}
           </div>
         </div>
+        <div class="remark-preview" v-if="postForm.remark.length">已选：{{ remarkDisplayText }}</div>
       </div>
     </div>
 
     <div class="bottom-action">
-      <van-button round block type="primary" :loading="submitLoading" @click="onSubmit">立即发布</van-button>
+      <van-button round block type="primary" size="large" :loading="submitLoading" @click="onPreSubmit">立即发布</van-button>
     </div>
 
+    <!-- 时间选择器 -->
     <van-popup v-model:show="showDatePicker" position="bottom">
-      <van-picker 
-        :columns="dateColumns" 
-        v-model="selectedDateValues"
-        @confirm="onConfirmDate" 
-        @cancel="showDatePicker = false" 
-      />
+      <van-picker :columns="dateColumns" v-model="selectedDateValues" @confirm="onConfirmDate" @cancel="showDatePicker = false" />
+    </van-popup>
+
+    <!-- 人数选择器 -->
+    <van-popup v-model:show="showSeatsPicker" position="bottom">
+      <van-picker :columns="seatColumns" @confirm="onConfirmSeats" @cancel="showSeatsPicker = false" />
+    </van-popup>
+
+    <!-- 地图选择器弹窗 -->
+    <van-popup v-model:show="showMapSelector" position="bottom" style="height: 80%">
+      <div class="map-selector">
+        <van-search v-model="mapSearchKeyword" placeholder="输入城市或具体位置" show-action @cancel="showMapSelector = false" />
+        <div class="search-results">
+          <van-cell v-for="item in mapSearchResults" :key="item.id" :title="item.name" :label="item.district + item.address" @click="selectMapResult(item)" />
+          <div v-if="!mapSearchResults.length && mapSearchKeyword" class="no-result">未找到相关位置</div>
+        </div>
+      </div>
     </van-popup>
   </div>
 </template>
 
 <style scoped>
+.page-post { padding-bottom: 100px; }
 .post-card { padding: 15px; }
-.remark-section { margin-top: 20px; padding: 0 15px; }
-.remark-section .label { font-size: 14px; color: #646566; margin-bottom: 10px; }
-.tags-group { display: flex; flex-wrap: wrap; gap: 8px; }
-.tag-item { padding: 4px 12px; background: #f7f8fa; border-radius: 4px; font-size: 12px; color: #666; border: 1px solid #ebedf0; }
-.tag-item.active { background: #eef5fe; color: #1989fa; border-color: #1989fa; }
-.bottom-action { padding: 20px; position: fixed; bottom: 50px; left: 0; right: 0; background: #fff; }
+.form-group { margin-bottom: 20px; }
+
+.remark-section { margin-top: 25px; padding: 0 15px; }
+.remark-section .label { font-size: 18px; font-weight: bold; color: #323233; margin-bottom: 15px; }
+.tags-group { display: flex; flex-wrap: wrap; gap: 10px; }
+.tag-item { padding: 6px 15px; background: #f7f8fa; border-radius: 8px; font-size: 16px; color: #646566; border: 1px solid #ebedf0; }
+.tag-item.active { background: #eef5fe; color: #1989fa; border-color: #1989fa; font-weight: bold; }
+.remark-preview { margin-top: 12px; font-size: 14px; color: #969799; font-style: italic; }
+
+.bottom-action { padding: 20px; position: fixed; bottom: 50px; left: 0; right: 0; background: #fff; box-shadow: 0 -2px 10px rgba(0,0,0,0.05); z-index: 100; }
+
+.map-selector { display: flex; flex-direction: column; height: 100%; }
+.search-results { flex: 1; overflow-y: auto; }
+.no-result { text-align: center; padding: 40px; color: #969799; }
 </style>

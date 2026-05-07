@@ -13,44 +13,24 @@ const filterType = ref('all');
 
 const bannersList = computed(() => (systemStore.sysConfig.banners || '').split(',').filter(Boolean));
 
-// 排序逻辑：置顶 -> 最近时间出发 -> 过期信息
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
-  
   const now = new Date();
-  
   return [...list.value].sort((a, b) => {
-    // 1. 置顶优先级最高
     const topA = a.is_top ? 1 : 0;
     const topB = b.is_top ? 1 : 0;
     if (topA !== topB) return topB - topA;
-    
     const dateA = new Date(a.date);
     const dateB = new Date(b.date);
     const isExpiredA = dateA < now;
     const isExpiredB = dateB < now;
-    
-    // 2. 过期状态优先级
-    if (isExpiredA !== isExpiredB) {
-      return isExpiredA ? 1 : -1; // 未过期的排在前面
-    }
-    
-    // 3. 时间排序
-    if (!isExpiredA) {
-      // 未过期的：按出发时间正序（最近出发在前）
-      return dateA - dateB;
-    } else {
-      // 已过期的：按出发时间倒序（最近过期在前）
-      return dateB - dateA;
-    }
+    if (isExpiredA !== isExpiredB) return isExpiredA ? 1 : -1;
+    return !isExpiredA ? dateA - dateB : dateB - dateA;
   });
 });
 
 const onLoad = async () => {
-  if (refreshing.value) {
-    list.value = [];
-    refreshing.value = false;
-  }
+  if (refreshing.value) { list.value = []; refreshing.value = false; }
   loading.value = true;
   try {
     const data = await fetchRides(filterType.value);
@@ -63,32 +43,22 @@ const onLoad = async () => {
   }
 };
 
-const onRefresh = () => {
-  refreshing.value = true;
-  onLoad();
-};
+const onRefresh = () => { refreshing.value = true; onLoad(); };
+const setFilter = (t) => { filterType.value = t; onRefresh(); };
 
-const setFilter = (t) => {
-  filterType.value = t;
-  onRefresh();
-};
-
-onMounted(() => {
-  onLoad();
-});
+onMounted(() => { onLoad(); });
 
 const formatDate = (str) => {
   if (!str) return '时间待定';
   const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2})[:](\d{1,2}))?/);
   if (match) {
-    return `${match[1]}年${parseInt(match[2])}月${parseInt(match[3])}日 ${match[4] ? parseInt(match[4]) : 0}点`;
+    return `${match[1]}-${String(match[2]).padStart(2,'0')}-${String(match[3]).padStart(2,'0')} ${String(match[4]||0).padStart(2,'0')}:00`;
   }
   return str;
 };
 
-const isExpired = (dateStr) => {
-  return new Date(dateStr) < new Date();
-};
+const isExpired = (dateStr) => new Date(dateStr) < new Date();
+const handleCall = (p) => { if(p) window.location.href = `tel:${p}`; };
 </script>
 
 <template>
@@ -117,22 +87,56 @@ const isExpired = (dateStr) => {
       </div>
       <van-list v-else v-model:loading="loading" :finished="finished" finished-text="没有更多了">
         <div v-for="item in safeList" :key="item.id" class="ride-card" :class="{ expired: isExpired(item.date) }">
+          <!-- 过期印章效果 -->
+          <div v-if="isExpired(item.date)" class="expired-seal">已过期</div>
+          
           <div class="card-header">
-            <div class="tags">
-              <span class="tag" :class="item.type">{{ item.type === 'driver' ? '车找人' : '人找车' }}</span>
-              <span v-if="item.is_top" class="tag top">置顶</span>
-              <span v-if="isExpired(item.date)" class="tag expired-tag">已过期</span>
+            <div class="user-info">
+              <van-image round width="40" height="40" src="https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg" />
+              <div class="name-box">
+                <span class="nickname">用户{{ item.user_id.slice(-4) }}</span>
+                <van-icon name="contact" color="#ff69b4" />
+              </div>
             </div>
-            <span class="time">{{ formatDate(item.date) }}</span>
+            <div class="call-btn" @click="handleCall(item.contact)">
+              <van-icon name="phone-o" size="24" color="#07c160" />
+            </div>
           </div>
-          <div class="card-body">
-            <div class="route">
-              <div class="point">起点：{{ item.origin }}</div>
-              <div class="point">终点：{{ item.destination }}</div>
+
+          <div class="card-content">
+            <div class="time-row">
+              <van-icon name="clock-o" />
+              <span class="time-text">{{ formatDate(item.date) }}</span>
+              <span class="distance">距您--km</span>
             </div>
-            <div class="info">
-              <span>座位：{{ item.seats }}</span>
-              <span class="price">价格：{{ item.price }}</span>
+
+            <div class="route-box">
+              <div class="route-item">
+                <div class="dot green"></div>
+                <div class="addr">
+                  <div class="main-addr">{{ item.origin }}</div>
+                  <div class="sub-addr">详细地址加载中...</div>
+                </div>
+                <div class="price-box">
+                  <span class="price-num">{{ item.price || '面议' }}</span>
+                  <span class="unit">元/人</span>
+                </div>
+              </div>
+              <div class="route-item">
+                <div class="dot red"></div>
+                <div class="addr">
+                  <div class="main-addr">{{ item.destination }}</div>
+                  <div class="sub-addr">目的地详细地址...</div>
+                </div>
+                <div class="seats-box">
+                  <span class="seats-text">余 {{ item.seats }} 座</span>
+                  <van-icon name="logistics" size="24" :color="item.car_model.includes('电') ? '#07c160' : '#1989fa'" />
+                </div>
+              </div>
+            </div>
+            
+            <div class="remark-tags">
+              <span v-for="tag in (item.remark || '').split('，')" :key="tag" class="remark-tag">{{ tag }}</span>
             </div>
           </div>
         </div>
@@ -142,26 +146,73 @@ const isExpired = (dateStr) => {
 </template>
 
 <style scoped>
-.home-banner { height: 180px; margin: 10px; border-radius: 8px; overflow: hidden; }
+.page-home { padding-bottom: 20px; }
+.home-banner { height: 160px; margin: 10px; border-radius: 12px; overflow: hidden; }
 .banner-img { width: 100%; height: 100%; object-fit: cover; }
 .nav-grid { display: flex; padding: 10px; gap: 10px; }
-.nav-btn { flex: 1; padding: 15px; border-radius: 8px; text-align: center; color: #fff; font-weight: bold; }
-.btn-blue { background: #1989fa; }
-.btn-green { background: #07c160; }
-.nav-btn.active { opacity: 0.8; box-shadow: inset 0 0 10px rgba(0,0,0,0.2); }
-.empty-state { text-align: center; padding: 40px; color: #999; }
-.ride-card { background: #fff; margin: 10px; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); position: relative; }
-.ride-card.expired { opacity: 0.6; filter: grayscale(0.5); }
-.card-header { display: flex; justify-content: space-between; margin-bottom: 10px; align-items: center; }
-.tags { display: flex; gap: 4px; }
-.tag { padding: 2px 6px; border-radius: 4px; font-size: 10px; color: #fff; }
-.tag.driver { background: #1989fa; }
-.tag.passenger { background: #07c160; }
-.tag.top { background: #ff976a; }
-.tag.expired-tag { background: #969799; }
-.time { color: #666; font-size: 12px; }
-.route { margin-bottom: 10px; }
-.point { margin: 4px 0; font-size: 16px; font-weight: 500; }
-.info { display: flex; justify-content: space-between; color: #888; font-size: 14px; }
-.price { color: #ee0a24; font-weight: bold; }
+.nav-btn { flex: 1; padding: 12px; border-radius: 12px; text-align: center; color: #fff; font-weight: bold; font-size: 18px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.btn-blue { background: linear-gradient(135deg, #66a6ff 0%, #1989fa 100%); }
+.btn-green { background: linear-gradient(135deg, #84fab0 0%, #07c160 100%); }
+
+.ride-card { background: #fff; margin: 12px; padding: 15px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); position: relative; overflow: hidden; }
+.ride-card.expired { opacity: 0.7; filter: grayscale(0.3); }
+
+/* 过期印章样式 */
+.expired-seal {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-15deg);
+  width: 120px;
+  height: 120px;
+  border: 4px solid #ee0a24;
+  border-radius: 50%;
+  color: #ee0a24;
+  font-size: 24px;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  opacity: 0.8;
+  pointer-events: none;
+}
+.expired-seal::after {
+  content: '';
+  position: absolute;
+  width: 110px;
+  height: 110px;
+  border: 2px dashed #ee0a24;
+  border-radius: 50%;
+}
+
+.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.user-info { display: flex; align-items: center; gap: 10px; }
+.name-box { display: flex; align-items: center; gap: 4px; }
+.nickname { font-size: 18px; font-weight: 600; color: #323233; }
+
+.time-row { display: flex; align-items: center; gap: 6px; color: #646566; font-size: 16px; margin-bottom: 15px; }
+.distance { margin-left: auto; color: #969799; font-size: 14px; }
+
+.route-box { position: relative; padding-left: 5px; }
+.route-item { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 15px; position: relative; }
+.dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; flex-shrink: 0; }
+.dot.green { background: #07c160; }
+.dot.red { background: #ee0a24; }
+
+.addr { flex: 1; }
+.main-addr { font-size: 18px; font-weight: bold; color: #323233; margin-bottom: 2px; }
+.sub-addr { font-size: 14px; color: #969799; }
+
+.price-box { text-align: right; }
+.price-num { font-size: 22px; font-weight: bold; color: #323233; }
+.unit { font-size: 14px; color: #646566; margin-left: 2px; }
+
+.seats-box { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.seats-text { font-size: 16px; color: #323233; font-weight: 500; }
+
+.remark-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.remark-tag { background: #f7f8fa; color: #646566; font-size: 14px; padding: 2px 8px; border-radius: 4px; }
+
+.empty-state { text-align: center; padding: 60px 0; color: #969799; }
 </style>
