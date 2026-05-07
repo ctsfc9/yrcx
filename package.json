@@ -9,14 +9,15 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "vue": "^3.3.4",
     "vant": "^4.6.0",
+    "vue": "^3.3.4",
+    "vue-router": "^4.6.4",
     "weixin-js-sdk": "^1.6.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^4.2.3",
-    "vite": "^4.4.5",
+    "terser": "^5.19.2",
     "unplugin-vue-components": "^0.25.1",
-    "terser": "^5.19.2"
+    "vite": "^4.4.5"
   }
 }
