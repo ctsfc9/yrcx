@@ -30,12 +30,10 @@ const showMapSelector = ref(false);
 const selectedDateValues = ref([]);
 const mapSearchKeyword = ref('');
 const mapSearchResults = ref([]);
-const currentMapField = ref(''); // 'origin' or 'destination'
+const currentMapField = ref(''); 
 
-// 人数选择列 (1-6人)
 const seatColumns = Array.from({ length: 6 }, (_, i) => ({ text: `${i + 1}人`, value: i + 1 }));
 
-// 初始化时间
 const initCurrentTime = () => {
   const now = new Date();
   const y = now.getFullYear();
@@ -52,33 +50,45 @@ onMounted(() => {
   loadAMap();
 });
 
-// 加载高德地图脚本
 const loadAMap = () => {
-  if (window.AMap) return;
+  if (window.AMap) {
+    autoLocateOrigin();
+    return;
+  }
+  // 注入安全密钥
   window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' };
   const script = document.createElement('script');
-  script.src = `https://webapi.amap.com/maps?v=2.0&key=${systemStore.sysConfig.amap_key}&plugin=AMap.AutoComplete,AMap.PlaceSearch,AMap.Geolocation`;
+  script.src = `https://webapi.amap.com/maps?v=2.0&key=${systemStore.sysConfig.amap_key}&plugin=AMap.AutoComplete,AMap.PlaceSearch,AMap.Geolocation,AMap.CitySearch`;
+  script.onload = () => {
+    autoLocateOrigin();
+  };
   document.body.appendChild(script);
 };
 
-// 自动定位起点
 const autoLocateOrigin = () => {
   if (!window.AMap) return;
-  showLoadingToast({ message: '定位中...', forbidClick: true });
-  AMap.plugin('AMap.Geolocation', function() {
-    const geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 10000 });
+  AMap.plugin(['AMap.Geolocation', 'AMap.CitySearch'], function() {
+    const citySearch = new AMap.CitySearch();
+    citySearch.getLocalCity((status, result) => {
+      if (status === 'complete' && result.info === 'OK') {
+        if (!postForm.origin) postForm.origin = result.city;
+      }
+    });
+    
+    const geolocation = new AMap.Geolocation({
+      enableHighAccuracy: true,
+      timeout: 5000,
+      buttonPosition: 'RB'
+    });
     geolocation.getCurrentPosition((status, result) => {
       if (status === 'complete') {
-        postForm.origin = result.addressComponent.district + result.addressComponent.township + (result.addressComponent.street || '');
-        showSuccessToast('定位成功');
-      } else {
-        showFailToast('定位失败，请手动选择');
+        const addr = result.addressComponent;
+        postForm.origin = addr.district + addr.township + (addr.street || '');
       }
     });
   });
 };
 
-// 打开地图选择器
 const openMap = (field) => {
   currentMapField.value = field;
   showMapSelector.value = true;
@@ -86,7 +96,6 @@ const openMap = (field) => {
   mapSearchResults.value = [];
 };
 
-// 搜索地点
 watch(mapSearchKeyword, (val) => {
   if (val && window.AMap) {
     AMap.plugin('AMap.AutoComplete', () => {
@@ -142,7 +151,6 @@ const toggleRemark = (t) => {
 };
 
 const onPreSubmit = () => {
-  // 校验
   if (!postForm.origin || !postForm.destination) return showToast('请完善路线');
   if (!postForm.contact || postForm.contact.length !== 11) return showToast('请输入11位手机号');
   
@@ -189,6 +197,7 @@ const handlePublish = async () => {
       </van-tabs>
 
       <van-cell-group inset class="form-group">
+        <!-- 修复：点击输入框拉起地图 -->
         <van-field v-model="postForm.origin" label="起点" placeholder="点击定位或手动输入" readonly @click="openMap('origin')" required>
           <template #button>
             <van-button size="small" type="primary" plain @click.stop="autoLocateOrigin">自动定位</van-button>
@@ -227,17 +236,14 @@ const handlePublish = async () => {
       <van-button round block type="primary" size="large" :loading="submitLoading" @click="onPreSubmit">立即发布</van-button>
     </div>
 
-    <!-- 时间选择器 -->
     <van-popup v-model:show="showDatePicker" position="bottom">
       <van-picker :columns="dateColumns" v-model="selectedDateValues" @confirm="onConfirmDate" @cancel="showDatePicker = false" />
     </van-popup>
 
-    <!-- 人数选择器 -->
     <van-popup v-model:show="showSeatsPicker" position="bottom">
       <van-picker :columns="seatColumns" @confirm="onConfirmSeats" @cancel="showSeatsPicker = false" />
     </van-popup>
 
-    <!-- 地图选择器弹窗 -->
     <van-popup v-model:show="showMapSelector" position="bottom" style="height: 80%">
       <div class="map-selector">
         <van-search v-model="mapSearchKeyword" placeholder="输入城市或具体位置" show-action @cancel="showMapSelector = false" />
@@ -254,16 +260,13 @@ const handlePublish = async () => {
 .page-post { padding-bottom: 100px; }
 .post-card { padding: 15px; }
 .form-group { margin-bottom: 20px; }
-
 .remark-section { margin-top: 25px; padding: 0 15px; }
 .remark-section .label { font-size: 18px; font-weight: bold; color: #323233; margin-bottom: 15px; }
 .tags-group { display: flex; flex-wrap: wrap; gap: 10px; }
 .tag-item { padding: 6px 15px; background: #f7f8fa; border-radius: 8px; font-size: 16px; color: #646566; border: 1px solid #ebedf0; }
 .tag-item.active { background: #eef5fe; color: #1989fa; border-color: #1989fa; font-weight: bold; }
 .remark-preview { margin-top: 12px; font-size: 14px; color: #969799; font-style: italic; }
-
 .bottom-action { padding: 20px; position: fixed; bottom: 50px; left: 0; right: 0; background: #fff; box-shadow: 0 -2px 10px rgba(0,0,0,0.05); z-index: 100; }
-
 .map-selector { display: flex; flex-direction: column; height: 100%; }
 .search-results { flex: 1; overflow-y: auto; }
 .no-result { text-align: center; padding: 40px; color: #969799; }

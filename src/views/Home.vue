@@ -11,6 +11,10 @@ const refreshing = ref(false);
 const finished = ref(false);
 const filterType = ref('all');
 
+// 分享卡片状态
+const showShareCard = ref(false);
+const selectedItem = ref(null);
+
 const bannersList = computed(() => (systemStore.sysConfig.banners || '').split(',').filter(Boolean));
 
 const safeList = computed(() => {
@@ -59,6 +63,20 @@ const formatDate = (str) => {
 
 const isExpired = (dateStr) => new Date(dateStr) < new Date();
 const handleCall = (p) => { if(p) window.location.href = `tel:${p}`; };
+
+// 车型颜色逻辑
+const getCarModelStyle = (model) => {
+  if (!model) return {};
+  if (model.includes('电')) return { color: '#07c160', fontWeight: 'bold' };
+  if (model.includes('混合')) return { color: '#ff976a', fontWeight: 'bold' };
+  return { color: '#1989fa', fontWeight: 'bold' };
+};
+
+// 打开分享卡片
+const openShare = (item) => {
+  selectedItem.value = item;
+  showShareCard.value = true;
+};
 </script>
 
 <template>
@@ -86,8 +104,7 @@ const handleCall = (p) => { if(p) window.location.href = `tel:${p}`; };
         <div>暂无信息，快来发布第一条吧</div>
       </div>
       <van-list v-else v-model:loading="loading" :finished="finished" finished-text="没有更多了">
-        <div v-for="item in safeList" :key="item.id" class="ride-card" :class="{ expired: isExpired(item.date) }">
-          <!-- 过期印章效果 -->
+        <div v-for="item in safeList" :key="item.id" class="ride-card" :class="{ expired: isExpired(item.date) }" @click="openShare(item)">
           <div v-if="isExpired(item.date)" class="expired-seal">已过期</div>
           
           <div class="card-header">
@@ -98,7 +115,7 @@ const handleCall = (p) => { if(p) window.location.href = `tel:${p}`; };
                 <van-icon name="contact" color="#ff69b4" />
               </div>
             </div>
-            <div class="call-btn" @click="handleCall(item.contact)">
+            <div class="call-btn" @click.stop="handleCall(item.contact)">
               <van-icon name="phone-o" size="24" color="#07c160" />
             </div>
           </div>
@@ -130,7 +147,8 @@ const handleCall = (p) => { if(p) window.location.href = `tel:${p}`; };
                 </div>
                 <div class="seats-box">
                   <span class="seats-text">余 {{ item.seats }} 座</span>
-                  <van-icon name="logistics" size="24" :color="item.car_model.includes('电') ? '#07c160' : '#1989fa'" />
+                  <!-- 修复：车型颜色区分 -->
+                  <span class="car-model-text" :style="getCarModelStyle(item.car_model)">{{ item.car_model }}</span>
                 </div>
               </div>
             </div>
@@ -142,6 +160,58 @@ const handleCall = (p) => { if(p) window.location.href = `tel:${p}`; };
         </div>
       </van-list>
     </van-pull-refresh>
+
+    <!-- 分享卡片弹窗 -->
+    <van-popup v-model:show="showShareCard" round position="center" style="width: 85%; padding: 0; overflow: hidden;">
+      <div class="share-card" v-if="selectedItem">
+        <div class="share-header" :class="selectedItem.type">
+          <div class="share-type">{{ selectedItem.type === 'driver' ? '车找人' : '人找车' }}</div>
+          <div class="share-title">宜人出行 · 拼车详情</div>
+        </div>
+        <div class="share-body">
+          <div class="share-route">
+            <div class="share-point">
+              <div class="dot green"></div>
+              <div class="text">{{ selectedItem.origin }}</div>
+            </div>
+            <div class="share-arrow"><van-icon name="arrow-down" /></div>
+            <div class="share-point">
+              <div class="dot red"></div>
+              <div class="text">{{ selectedItem.destination }}</div>
+            </div>
+          </div>
+          <div class="share-info-grid">
+            <div class="info-item">
+              <div class="label">出发时间</div>
+              <div class="val">{{ formatDate(selectedItem.date) }}</div>
+            </div>
+            <div class="info-item">
+              <div class="label">人数/空位</div>
+              <div class="val">{{ selectedItem.seats }}人</div>
+            </div>
+            <div class="info-item">
+              <div class="label">费用</div>
+              <div class="val price">{{ selectedItem.price || '面议' }}元/人</div>
+            </div>
+            <div class="info-item">
+              <div class="label">车型</div>
+              <div class="val" :style="getCarModelStyle(selectedItem.car_model)">{{ selectedItem.car_model }}</div>
+            </div>
+          </div>
+          <div class="share-remark" v-if="selectedItem.remark">
+            <div class="label">备注信息</div>
+            <div class="val">{{ selectedItem.remark }}</div>
+          </div>
+          <div class="share-footer">
+            <div class="qr-placeholder">长按识别小程序查看详情</div>
+            <div class="platform-name">宜人出行 · 长途顺风合乘平台</div>
+          </div>
+        </div>
+        <div class="share-action">
+          <van-button block type="primary" @click="showShareCard = false">关闭预览</van-button>
+        </div>
+      </div>
+    </van-popup>
   </div>
 </template>
 
@@ -157,7 +227,6 @@ const handleCall = (p) => { if(p) window.location.href = `tel:${p}`; };
 .ride-card { background: #fff; margin: 12px; padding: 15px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); position: relative; overflow: hidden; }
 .ride-card.expired { opacity: 0.7; filter: grayscale(0.3); }
 
-/* 过期印章样式 */
 .expired-seal {
   position: absolute;
   top: 50%;
@@ -210,9 +279,39 @@ const handleCall = (p) => { if(p) window.location.href = `tel:${p}`; };
 
 .seats-box { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .seats-text { font-size: 16px; color: #323233; font-weight: 500; }
+.car-model-text { font-size: 14px; }
 
 .remark-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .remark-tag { background: #f7f8fa; color: #646566; font-size: 14px; padding: 2px 8px; border-radius: 4px; }
+
+/* 分享卡片样式 */
+.share-card { background: #fff; }
+.share-header { padding: 20px; color: #fff; text-align: center; }
+.share-header.driver { background: linear-gradient(135deg, #66a6ff 0%, #1989fa 100%); }
+.share-header.passenger { background: linear-gradient(135deg, #84fab0 0%, #07c160 100%); }
+.share-type { font-size: 24px; font-weight: bold; margin-bottom: 5px; }
+.share-title { font-size: 14px; opacity: 0.9; }
+
+.share-body { padding: 20px; }
+.share-route { margin-bottom: 25px; }
+.share-point { display: flex; align-items: center; gap: 10px; }
+.share-point .text { font-size: 20px; font-weight: bold; color: #323233; }
+.share-arrow { padding: 5px 0 5px 25px; color: #969799; }
+
+.share-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 25px; }
+.info-item .label { font-size: 14px; color: #969799; margin-bottom: 5px; }
+.info-item .val { font-size: 16px; color: #323233; font-weight: 500; }
+.info-item .val.price { color: #ee0a24; }
+
+.share-remark { background: #f7f8fa; padding: 12px; border-radius: 8px; margin-bottom: 25px; }
+.share-remark .label { font-size: 14px; color: #969799; margin-bottom: 5px; }
+.share-remark .val { font-size: 15px; color: #646566; line-height: 1.5; }
+
+.share-footer { text-align: center; border-top: 1px dashed #ebedf0; padding-top: 20px; }
+.qr-placeholder { font-size: 14px; color: #969799; margin-bottom: 8px; }
+.platform-name { font-size: 12px; color: #c8c9cc; }
+
+.share-action { padding: 15px; background: #f7f8fa; }
 
 .empty-state { text-align: center; padding: 60px 0; color: #969799; }
 </style>
