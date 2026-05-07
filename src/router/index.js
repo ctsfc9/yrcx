@@ -21,6 +21,12 @@ const routes = [
     name: 'Admin',
     component: () => import('../views/Admin.vue'),
   },
+  {
+    path: '/detail/:id',
+    name: 'Detail',
+    component: () => import('../views/Detail.vue'),
+    meta: { hideTabbar: true }
+  }
 ];
 
 const router = createRouter({

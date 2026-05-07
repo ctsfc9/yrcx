@@ -3,7 +3,9 @@ import { ref, computed, onMounted } from 'vue';
 import { useSystemStore } from '../store/system';
 import { fetchRides } from '../api';
 import { showToast, showSuccessToast } from 'vant';
+import { useRouter } from 'vue-router';
 
+const router = useRouter();
 const systemStore = useSystemStore();
 const list = ref([]);
 const loading = ref(false);
@@ -11,7 +13,6 @@ const refreshing = ref(false);
 const finished = ref(false);
 const filterType = ref('all');
 
-// 分享卡片状态
 const showShareCard = ref(false);
 const selectedItem = ref(null);
 
@@ -78,10 +79,16 @@ const openShare = (item) => {
 
 const copyShareText = () => {
   const item = selectedItem.value;
-  const text = `【${item.type === 'driver' ? '车找人' : '人找车'}】${item.origin} → ${item.destination}\n时间：${formatDate(item.date)}\n人数：${item.seats}人\n费用：${item.price || '面议'}元/人\n备注：${item.remark || '无'}\n来自：宜人出行`;
+  // 动态生成详情页链接
+  const detailUrl = `${window.location.origin}/#/detail/${item.id}`;
+  const text = `【${item.type === 'driver' ? '车找人' : '人找车'}】${item.origin} → ${item.destination}\n时间：${formatDate(item.date)}\n人数：${item.seats}人\n费用：${item.price || '面议'}元/人\n详情：${detailUrl}\n来自：宜人出行`;
   navigator.clipboard.writeText(text).then(() => {
     showSuccessToast('文案已复制，快去分享吧');
   });
+};
+
+const goToDetail = (id) => {
+  router.push(`/detail/${id}`);
 };
 </script>
 
@@ -111,10 +118,7 @@ const copyShareText = () => {
       </div>
       <van-list v-else v-model:loading="loading" :finished="finished" finished-text="没有更多了">
         <div v-for="item in safeList" :key="item.id" class="ride-card" :class="[item.type, { expired: isExpired(item.date) }]" @click="openShare(item)">
-          <!-- 强化：类型标签 -->
           <div class="type-badge" :class="item.type">{{ item.type === 'driver' ? '【车找人】' : '【人找车】' }}</div>
-          
-          <!-- 强化：过期印章 -->
           <div v-if="isExpired(item.date)" class="expired-seal">已过期</div>
           
           <div class="card-header">
@@ -168,10 +172,9 @@ const copyShareText = () => {
       </van-list>
     </van-pull-refresh>
 
-    <!-- 微信风格分享卡片 -->
     <van-popup v-model:show="showShareCard" round position="center" style="width: 90%; padding: 0; background: transparent;">
       <div class="wechat-share-card" v-if="selectedItem">
-        <div class="card-main">
+        <div class="card-main" @click="goToDetail(selectedItem.id)">
           <div class="card-title">
             <span class="type-tag">【{{ selectedItem.type === 'driver' ? '车找人' : '人找车' }}】</span>
             {{ selectedItem.origin }} → {{ selectedItem.destination }}
@@ -221,7 +224,7 @@ const copyShareText = () => {
   transform: translate(-50%, -50%) rotate(-15deg);
   width: 130px;
   height: 130px;
-  border: 6px solid #ff0000; /* 颜色更鲜艳 */
+  border: 6px solid #ff0000;
   border-radius: 50%;
   color: #ff0000;
   font-size: 28px;
@@ -270,9 +273,8 @@ const copyShareText = () => {
 .remark-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .remark-tag { background: #f7f8fa; color: #646566; font-size: 14px; padding: 2px 8px; border-radius: 4px; }
 
-/* 微信分享卡片样式 */
 .wechat-share-card { background: #fff; border-radius: 12px; overflow: hidden; }
-.card-main { padding: 20px; position: relative; min-height: 180px; border-bottom: 1px solid #f0f0f0; }
+.card-main { padding: 20px; position: relative; min-height: 180px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
 .card-title { font-size: 20px; font-weight: bold; line-height: 1.4; color: #333; margin-bottom: 15px; }
 .type-tag { color: #333; }
 .card-details { font-size: 15px; color: #666; line-height: 1.6; }

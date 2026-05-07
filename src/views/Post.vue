@@ -50,7 +50,7 @@ onMounted(() => {
   loadAMap();
 });
 
-// 核心：地图加载与定位逻辑
+// 终极对齐：地图加载与定位逻辑
 const loadAMap = () => {
   if (window.AMap) {
     autoLocate();
@@ -60,6 +60,7 @@ const loadAMap = () => {
   const script = document.createElement('script');
   script.src = `https://webapi.amap.com/maps?v=2.0&key=${systemStore.sysConfig.amap_key}&plugin=AMap.AutoComplete,AMap.PlaceSearch,AMap.Geolocation,AMap.CitySearch`;
   script.onload = () => {
+    // 脚本加载完立即触发定位
     autoLocate();
   };
   document.body.appendChild(script);
@@ -68,7 +69,7 @@ const loadAMap = () => {
 const autoLocate = () => {
   if (!window.AMap) return;
   AMap.plugin(['AMap.Geolocation', 'AMap.CitySearch'], function() {
-    // 1. 优先通过城市搜索获取大致位置
+    // 1. 城市搜索作为兜底
     const citySearch = new AMap.CitySearch();
     citySearch.getLocalCity((status, result) => {
       if (status === 'complete' && result.info === 'OK') {
@@ -76,17 +77,20 @@ const autoLocate = () => {
       }
     });
     
-    // 2. 尝试精确定位
+    // 2. 浏览器精确定位
     const geolocation = new AMap.Geolocation({
       enableHighAccuracy: true,
-      timeout: 5000,
+      timeout: 8000,
       noIpLocate: 0,
-      noGeoLocation: 0
+      noGeoLocation: 0,
+      extensions: 'all'
     });
     geolocation.getCurrentPosition((status, result) => {
       if (status === 'complete') {
         const addr = result.addressComponent;
-        postForm.origin = addr.district + addr.township + (addr.street || '');
+        // 拼接详细地址：区 + 街道/镇 + 门牌号
+        const detailAddr = (addr.district || '') + (addr.township || '') + (addr.street || '') + (addr.streetNumber || '');
+        if (detailAddr) postForm.origin = detailAddr;
       }
     });
   });
@@ -200,12 +204,14 @@ const handlePublish = async () => {
       </van-tabs>
 
       <van-cell-group inset class="form-group">
-        <!-- 修复：点击整个 Field 触发地图 -->
-        <van-field v-model="postForm.origin" label="起点" placeholder="点击定位或手动输入" readonly @click="openMap('origin')" required>
-          <template #button>
-            <van-button size="small" type="primary" plain @click.stop="autoLocate">自动定位</van-button>
-          </template>
-        </van-field>
+        <!-- 终极对齐：点击 Field 任何位置触发地图 -->
+        <div @click="openMap('origin')">
+          <van-field v-model="postForm.origin" label="起点" placeholder="点击定位或手动输入" readonly required>
+            <template #button>
+              <van-button size="small" type="primary" plain @click.stop="autoLocate">自动定位</van-button>
+            </template>
+          </van-field>
+        </div>
         <van-field v-model="postForm.destination" label="终点" placeholder="点击选择目的地" readonly @click="openMap('destination')" required />
         <van-field v-model="postForm.dateDisplay" label="出发时间" placeholder="点击选择时间" readonly @click="showDatePicker = true" required />
         <van-field :model-value="postForm.seats + '人'" label="人数/空位" placeholder="点击选择人数" readonly @click="showSeatsPicker = true" required />
