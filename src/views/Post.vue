@@ -47,10 +47,12 @@ const initCurrentTime = () => {
 
 onMounted(() => {
   initCurrentTime();
-  // 延迟触发定位，确保 AMap 插件就绪
-  setTimeout(() => {
-    autoLocate();
-  }, 1000);
+  // 确保 AMap 已就绪后触发定位
+  if (window.AMap) {
+    setTimeout(() => {
+      autoLocate();
+    }, 800);
+  }
 });
 
 const autoLocate = () => {
@@ -81,7 +83,6 @@ const autoLocate = () => {
         
       postForm.origin = formattedAddr;
     } else {
-      // 兜底：城市搜索
       if (window.AMap.CitySearch) {
         const citySearch = new AMap.CitySearch();
         citySearch.getLocalCity((s, r) => {
@@ -195,7 +196,7 @@ const handlePublish = async () => {
 
 <template>
   <div class="page-post">
-    <van-nav-bar title="发布行程" />
+    <van-nav-bar title="发布行程" left-arrow @click-left="router.back()" />
     
     <div class="post-card">
       <van-tabs v-model:active="postForm.type" type="card" style="margin-bottom: 20px;">
@@ -204,7 +205,6 @@ const handlePublish = async () => {
       </van-tabs>
 
       <van-cell-group inset class="form-group">
-        <!-- 使用 van-cell 包装，确保点击整行触发 -->
         <van-cell title="起点" is-link @click="openMap('origin')" required class="clickable-cell">
           <template #value>
             <span :class="{ 'placeholder-text': !postForm.origin }">{{ postForm.origin || '点击定位或手动输入' }}</span>

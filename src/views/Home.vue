@@ -54,7 +54,7 @@ const formatDate = (str) => {
   if (!str) return '时间待定';
   const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2})[:](\d{1,2}))?/);
   if (match) {
-    return `${match[1]}-${String(match[2]).padStart(2,'0')}-${String(match[3]).padStart(2,'0')} ${String(match[4]||0).padStart(2,'0')}:00`;
+    return `${match[2]}-${match[3]} ${String(match[4]||0).padStart(2,'0')}:00`;
   }
   return str;
 };
@@ -99,58 +99,43 @@ const goToDetail = (id) => {
         <div>暂无信息，快来发布第一条吧</div>
       </div>
       <van-list v-else v-model:loading="loading" :finished="finished" finished-text="没有更多了">
-        <!-- 修改：点击直接进入详情页 -->
         <div v-for="item in safeList" :key="item.id" class="ride-card" :class="[item.type, { expired: isExpired(item.date) }]" @click="goToDetail(item.id)">
-          <div class="type-badge" :class="item.type">{{ item.type === 'driver' ? '【车找人】' : '【人找车】' }}</div>
-          <div v-if="isExpired(item.date)" class="expired-seal">已过期</div>
-          
-          <div class="card-header">
-            <div class="user-info">
-              <van-image round width="40" height="40" src="https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg" />
-              <div class="name-box">
-                <span class="nickname">用户{{ item.user_id.slice(-4) }}</span>
-                <van-icon name="contact" color="#ff69b4" />
-              </div>
-            </div>
+          <!-- 第一行：类型标签 + 时间 + 电话按钮 -->
+          <div class="card-row row-1">
+            <div class="type-badge" :class="item.type">{{ item.type === 'driver' ? '【车找人】' : '【人找车】' }}</div>
+            <div class="time-text"><van-icon name="clock-o" /> {{ formatDate(item.date) }}</div>
             <div class="call-btn" @click.stop="handleCall(item.contact)">
-              <van-icon name="phone-o" size="24" color="#07c160" />
+              <van-icon name="phone-o" size="20" color="#07c160" />
             </div>
           </div>
 
-          <div class="card-content">
-            <div class="time-row">
-              <van-icon name="clock-o" />
-              <span class="time-text">{{ formatDate(item.date) }}</span>
-              <span class="distance">距您--km</span>
-            </div>
-
-            <div class="route-box">
-              <div class="route-item">
-                <div class="dot green"></div>
-                <div class="addr">
-                  <div class="main-addr">{{ item.origin }}</div>
-                </div>
-                <div class="price-box">
-                  <span class="price-num">{{ item.price || '面议' }}</span>
-                  <span class="unit">元/人</span>
-                </div>
-              </div>
-              <div class="route-item">
-                <div class="dot red"></div>
-                <div class="addr">
-                  <div class="main-addr">{{ item.destination }}</div>
-                </div>
-                <div class="seats-box">
-                  <span class="seats-text">余 {{ item.seats }} 座</span>
-                  <span class="car-model-text" :style="getCarModelStyle(item.car_model)">{{ item.car_model }}</span>
-                </div>
-              </div>
-            </div>
-            
-            <div class="remark-tags">
-              <span v-for="tag in (item.remark || '').split('，')" :key="tag" class="remark-tag">{{ tag }}</span>
+          <!-- 第二行：起点 + 价格 -->
+          <div class="card-row row-2">
+            <div class="dot green"></div>
+            <div class="main-addr">{{ item.origin }}</div>
+            <div class="price-box">
+              <span class="price-num">{{ item.price || '面议' }}</span>
+              <span class="unit">元/人</span>
             </div>
           </div>
+
+          <!-- 第三行：终点 + 余座 -->
+          <div class="card-row row-3">
+            <div class="dot red"></div>
+            <div class="main-addr">{{ item.destination }}</div>
+            <div class="seats-box">余 {{ item.seats }} 座</div>
+          </div>
+
+          <!-- 第四行：车型 + 置顶/过期状态 -->
+          <div class="card-row row-4">
+            <div class="car-model-text" :style="getCarModelStyle(item.car_model)" v-if="item.type === 'driver'">{{ item.car_model }}</div>
+            <div class="spacer"></div>
+            <div class="top-tag" v-if="item.is_top">置顶</div>
+            <div class="expired-text" v-if="isExpired(item.date)">已过期</div>
+          </div>
+
+          <!-- 过期印章 (绝对定位) -->
+          <div v-if="isExpired(item.date)" class="expired-seal">已过期</div>
         </div>
       </van-list>
     </van-pull-refresh>
@@ -158,78 +143,68 @@ const goToDetail = (id) => {
 </template>
 
 <style scoped>
-.page-home { padding-bottom: 20px; }
-.home-banner { height: 160px; margin: 10px; border-radius: 12px; overflow: hidden; }
+.page-home { padding-bottom: 20px; background: #f7f8fa; min-height: 100vh; }
+.home-banner { height: 140px; margin: 10px; border-radius: 12px; overflow: hidden; }
 .banner-img { width: 100%; height: 100%; object-fit: cover; }
 .nav-grid { display: flex; padding: 10px; gap: 10px; }
-.nav-btn { flex: 1; padding: 12px; border-radius: 12px; text-align: center; color: #fff; font-weight: bold; font-size: 18px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.nav-btn { flex: 1; padding: 10px; border-radius: 10px; text-align: center; color: #fff; font-weight: bold; font-size: 16px; display: flex; align-items: center; justify-content: center; gap: 6px; }
 .btn-blue { background: linear-gradient(135deg, #66a6ff 0%, #1989fa 100%); }
 .btn-green { background: linear-gradient(135deg, #84fab0 0%, #07c160 100%); }
 
-.ride-card { background: #fff; margin: 12px; padding: 15px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); position: relative; overflow: hidden; border-left: 5px solid transparent; }
+.ride-card { background: #fff; margin: 8px 12px; padding: 12px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); position: relative; overflow: hidden; border-left: 4px solid transparent; }
 .ride-card.driver { border-left-color: #1989fa; }
 .ride-card.passenger { border-left-color: #07c160; }
-.ride-card.expired { opacity: 0.7; filter: grayscale(0.3); }
+.ride-card.expired { opacity: 0.8; }
 
-.type-badge { font-size: 18px; font-weight: bold; margin-bottom: 10px; }
+.card-row { display: flex; align-items: center; margin-bottom: 8px; }
+.card-row:last-child { margin-bottom: 0; }
+
+.type-badge { font-size: 15px; font-weight: bold; }
 .type-badge.driver { color: #1989fa; }
 .type-badge.passenger { color: #07c160; }
+.time-text { flex: 1; margin-left: 8px; font-size: 14px; color: #646566; }
+.call-btn { padding: 4px; }
+
+.dot { width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; flex-shrink: 0; }
+.dot.green { background: #07c160; }
+.dot.red { background: #ee0a24; }
+.main-addr { font-size: 16px; font-weight: bold; color: #323233; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.price-box { color: #ee0a24; font-weight: bold; font-size: 16px; }
+.unit { font-size: 12px; font-weight: normal; margin-left: 2px; }
+.seats-box { font-size: 14px; color: #646566; font-weight: 500; }
+
+.row-4 { font-size: 12px; }
+.spacer { flex: 1; }
+.top-tag { background: #ff976a; color: #fff; padding: 1px 4px; border-radius: 2px; margin-right: 5px; }
+.expired-text { color: #969799; }
 
 .expired-seal {
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%) rotate(-15deg);
-  width: 130px;
-  height: 130px;
-  border: 6px solid #ff0000;
+  width: 100px;
+  height: 100px;
+  border: 4px solid #ff0000;
   border-radius: 50%;
   color: #ff0000;
-  font-size: 28px;
+  font-size: 20px;
   font-weight: 900;
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 10;
-  opacity: 0.9;
+  opacity: 0.6;
   pointer-events: none;
 }
 .expired-seal::after {
   content: '';
   position: absolute;
-  width: 115px;
-  height: 115px;
-  border: 3px dashed #ff0000;
+  width: 88px;
+  height: 88px;
+  border: 2px dashed #ff0000;
   border-radius: 50%;
 }
-
-.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.user-info { display: flex; align-items: center; gap: 10px; }
-.name-box { display: flex; align-items: center; gap: 4px; }
-.nickname { font-size: 18px; font-weight: 600; color: #323233; }
-
-.time-row { display: flex; align-items: center; gap: 6px; color: #646566; font-size: 16px; margin-bottom: 15px; }
-.distance { margin-left: auto; color: #969799; font-size: 14px; }
-
-.route-box { position: relative; padding-left: 5px; }
-.route-item { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 15px; position: relative; }
-.dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; flex-shrink: 0; }
-.dot.green { background: #07c160; }
-.dot.red { background: #ee0a24; }
-
-.addr { flex: 1; }
-.main-addr { font-size: 18px; font-weight: bold; color: #323233; }
-
-.price-box { text-align: right; }
-.price-num { font-size: 22px; font-weight: bold; color: #323233; }
-.unit { font-size: 14px; color: #646566; margin-left: 2px; }
-
-.seats-box { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
-.seats-text { font-size: 16px; color: #323233; font-weight: 500; }
-.car-model-text { font-size: 14px; }
-
-.remark-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-.remark-tag { background: #f7f8fa; color: #646566; font-size: 14px; padding: 2px 8px; border-radius: 4px; }
 
 .empty-state { text-align: center; padding: 60px 0; color: #969799; }
 </style>

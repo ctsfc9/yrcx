@@ -15,7 +15,11 @@ onMounted(() => {
 });
 
 const switchTab = (name) => {
-  router.replace({ name });
+  if (name === 'Post') {
+    router.push({ name }); // 发布页使用 push，支持返回
+  } else {
+    router.replace({ name }); // 首页和我的使用 replace，避免循环
+  }
 };
 </script>
 
@@ -29,16 +33,15 @@ const switchTab = (name) => {
       </transition>
     </router-view>
 
-    <van-tabbar v-if="!route.meta.hideTabbar" :model-value="route.name" @change="switchTab" placeholder>
+    <van-tabbar v-if="!route.meta.hideTabbar" :model-value="route.name" @change="switchTab" placeholder border>
       <van-tabbar-item name="Home" icon="home-o">首页</van-tabbar-item>
-      <!-- 优化：发布按钮文字位置 -->
       <van-tabbar-item name="Post" class="post-tab-item">
         <template #icon>
           <div class="big-post-btn">
             <van-icon name="plus" />
+            <span class="post-btn-text">发布</span>
           </div>
         </template>
-        <span class="post-text">发布</span>
       </van-tabbar-item>
       <van-tabbar-item name="MyRides" icon="user-o">我的</van-tabbar-item>
     </van-tabbar>
@@ -66,6 +69,9 @@ body {
 
 .app-container {
   min-height: 100vh;
+  max-width: 600px;
+  margin: 0 auto;
+  background: #fff;
 }
 
 .fade-enter-active,
@@ -89,25 +95,39 @@ body {
 
 /* 强化发布按钮样式 */
 .big-post-btn {
-  width: 56px;
-  height: 56px;
-  background: linear-gradient(135deg, #07c160 0%, #059a4c 100%);
+  width: 64px;
+  height: 64px;
+  background: linear-gradient(135deg, #84fab0 0%, #07c160 100%);
   border-radius: 50%;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   color: #fff;
-  font-size: 30px;
   box-shadow: 0 4px 12px rgba(7, 193, 96, 0.4);
-  margin-top: -28px;
+  margin-top: -30px;
   border: 3px solid #fff;
   transition: transform 0.2s;
+  z-index: 100;
 }
 .big-post-btn:active { transform: scale(0.9); }
 
-.post-tab-item .post-text {
-  margin-top: 6px; /* 提上来一点 */
+.big-post-btn .van-icon {
+  font-size: 26px;
+  margin-bottom: -2px;
+}
+
+.post-btn-text {
+  font-size: 12px;
   font-weight: bold;
-  color: #07c160;
+  margin-top: -2px;
+}
+
+.post-tab-item .van-tabbar-item__text {
+  display: none; /* 隐藏原有的文字，使用自定义按钮内的文字 */
+}
+
+.van-tabbar {
+  height: 55px !important;
 }
 </style>

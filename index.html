@@ -3,26 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" href="/favicon.ico" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" />
     <title>宜人出行 - 长途顺风合乘平台</title>
-    <meta name="description" content="宜人出行，为您提供便捷、安全、实惠的长途拼车顺风车服务。车找人、人找车，一键发布，轻松出行。" />
+    <meta name="description" content="一个专注长途顺风拼车的合乘平台，老乡互助，共享出行！" />
     
-    <!-- 1. 微信 SDK 静态引入 -->
+    <!-- 微信 JS-SDK 静态引入 -->
     <script src="https://res.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
-    
-    <!-- 2. 高德地图安全配置 (使用原始密钥) -->
+
+    <!-- 高德地图安全配置 - 必须在脚本加载前 -->
     <script type="text/javascript">
-      window._AMapSecurityConfig = { securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08' };
+      window._AMapSecurityConfig = {
+        securityJsCode: 'f6c5bf3568831b3f4b5f3ae35d9bfa08', // 保持原有的安全密钥，或根据新Key更新
+      };
     </script>
     
-    <!-- 3. 高德地图 JS API 静态引入 (使用原始 Key) -->
-    <script type="text/javascript" src="https://webapi.amap.com/maps?v=2.0&key=a4f6e1e5da68bc9fe5f984d69a3f6b2e&plugin=AMap.CitySearch,AMap.Geolocation,AMap.AutoComplete,AMap.PlaceSearch,AMap.Geocoder"></script>
-
-    <!-- 4. 微信分享卡片 Meta 优化 -->
-    <meta property="og:title" content="宜人出行 - 顺风车拼车平台" />
-    <meta property="og:description" content="点击查看最新拼车信息，长途顺风，安全便捷。" />
-    <meta property="og:image" content="https://i.postimg.cc/6pMzm4dr/image.jpg" />
-    <meta property="og:url" content="https://yrcx.ctsfc.top" />
+    <!-- 高德地图 JS API 静态引入 - 使用用户提供的新 Key -->
+    <script type="text/javascript" src="https://webapi.amap.com/maps?v=2.0&key=23c060e4abeb7e129dde630d342b575f&plugin=AMap.Geolocation,AMap.CitySearch,AMap.AutoComplete,AMap.PlaceSearch"></script>
   </head>
   <body>
     <div id="app"></div>
