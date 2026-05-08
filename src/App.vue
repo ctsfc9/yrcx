@@ -1,24 +1,45 @@
 <script setup>
-import { onMounted } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useUserStore } from './store/user';
 import { useSystemStore } from './store/system';
 import { useRouter, useRoute } from 'vue-router';
+import { showToast } from 'vant';
 
 const userStore = useUserStore();
 const systemStore = useSystemStore();
 const router = useRouter();
 const route = useRoute();
 
+const lastBackTime = ref(0);
+
 onMounted(() => {
   userStore.initUser();
   systemStore.fetchConfig();
+  
+  // 监听手势返回/物理返回键
+  window.addEventListener('popstate', (e) => {
+    if (route.path === '/') {
+      const now = Date.now();
+      if (now - lastBackTime.value < 2000) {
+        // 连续两次返回，允许退出（这里其实无法阻止浏览器退出，但可以给提示）
+      } else {
+        lastBackTime.value = now;
+        showToast('再按一次退出网站');
+        // 重新推入历史记录，阻止本次退出
+        history.pushState(null, null, document.URL);
+      }
+    }
+  }, false);
+  
+  // 初始推入一个状态，用于拦截第一次返回
+  history.pushState(null, null, document.URL);
 });
 
 const switchTab = (name) => {
   if (name === 'Post') {
-    router.push({ name }); // 发布页使用 push，支持返回
+    router.push({ name });
   } else {
-    router.replace({ name }); // 首页和我的使用 replace，避免循环
+    router.replace({ name });
   }
 };
 </script>
@@ -93,7 +114,6 @@ body {
 .van-field__label { font-size: 16px !important; }
 .van-button { font-size: 16px !important; }
 
-/* 强化发布按钮样式 */
 .big-post-btn {
   width: 64px;
   height: 64px;
@@ -124,7 +144,7 @@ body {
 }
 
 .post-tab-item .van-tabbar-item__text {
-  display: none; /* 隐藏原有的文字，使用自定义按钮内的文字 */
+  display: none;
 }
 
 .van-tabbar {

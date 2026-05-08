@@ -1,5 +1,5 @@
 <script setup>
-import { reactive, ref, computed, onMounted, watch } from 'vue';
+import { reactive, ref, computed, onMounted, watch, onUnmounted } from 'vue';
 import { useUserStore } from '../store/user';
 import { useSystemStore } from '../store/system';
 import { postRide } from '../api';
@@ -45,21 +45,26 @@ const initCurrentTime = () => {
   postForm.date = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}T${String(h).padStart(2, '0')}:00:00`;
 };
 
+// 终极地图加载检查
+const checkAMap = (callback, retry = 0) => {
+  if (window.AMap && window.AMap.Geolocation) {
+    callback();
+  } else if (retry < 10) {
+    setTimeout(() => checkAMap(callback, retry + 1), 500);
+  } else {
+    showToast('地图插件加载超时，请刷新页面');
+  }
+};
+
 onMounted(() => {
   initCurrentTime();
-  // 确保 AMap 已就绪后触发定位
-  if (window.AMap) {
-    setTimeout(() => {
-      autoLocate();
-    }, 800);
-  }
+  checkAMap(() => {
+    autoLocate();
+  });
 });
 
 const autoLocate = () => {
-  if (!window.AMap || !window.AMap.Geolocation) {
-    console.error('AMap Geolocation not ready');
-    return;
-  }
+  if (!window.AMap || !window.AMap.Geolocation) return;
   
   const geolocation = new AMap.Geolocation({
     enableHighAccuracy: true,
@@ -75,7 +80,6 @@ const autoLocate = () => {
       const township = addr.township || '';
       const street = addr.street || '';
       
-      // 严格对齐格式：市-县-镇-街道
       const formattedAddr = [city, district, township, street]
         .filter(Boolean)
         .join('')
@@ -96,10 +100,6 @@ const autoLocate = () => {
 };
 
 const openMap = (field) => {
-  if (!window.AMap) {
-    showToast('地图加载中...');
-    return;
-  }
   currentMapField.value = field;
   showMapSelector.value = true;
   mapSearchKeyword.value = '';
@@ -265,12 +265,14 @@ const handlePublish = async () => {
       <van-picker :columns="seatColumns" @confirm="onConfirmSeats" @cancel="showSeatsPicker = false" />
     </van-popup>
 
-    <van-popup v-model:show="showMapSelector" position="bottom" style="height: 80%">
+    <!-- 地图选择弹窗优化 -->
+    <van-popup v-model:show="showMapSelector" position="bottom" style="height: 85%; border-radius: 16px 16px 0 0;">
       <div class="map-selector">
-        <van-search v-model="mapSearchKeyword" placeholder="输入城市或具体位置" show-action @cancel="showMapSelector = false" />
+        <van-search v-model="mapSearchKeyword" placeholder="输入城市或具体位置" show-action @cancel="showMapSelector = false" autofocus />
         <div class="search-results">
-          <van-cell v-for="item in mapSearchResults" :key="item.id" :title="item.name" :label="item.district + item.address" @click="selectMapResult(item)" />
+          <van-cell v-for="item in mapSearchResults" :key="item.id" :title="item.name" :label="item.district + item.address" @click="selectMapResult(item)" icon="location-o" />
           <div v-if="!mapSearchResults.length && mapSearchKeyword" class="no-result">未找到相关位置</div>
+          <div v-if="!mapSearchKeyword" class="map-tip">请输入关键词搜索位置</div>
         </div>
       </div>
     </van-popup>
@@ -278,19 +280,19 @@ const handlePublish = async () => {
 </template>
 
 <style scoped>
-.page-post { padding-bottom: 100px; }
+.page-post { padding-bottom: 100px; background: #f7f8fa; min-height: 100vh; }
 .post-card { padding: 15px; }
-.form-group { margin-bottom: 20px; }
+.form-group { margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
 .clickable-cell { cursor: pointer; }
 .placeholder-text { color: #ccc; }
 .remark-section { margin-top: 25px; padding: 0 15px; }
 .remark-section .label { font-size: 18px; font-weight: bold; color: #323233; margin-bottom: 15px; }
 .tags-group { display: flex; flex-wrap: wrap; gap: 10px; }
-.tag-item { padding: 6px 15px; background: #f7f8fa; border-radius: 8px; font-size: 16px; color: #646566; border: 1px solid #ebedf0; }
+.tag-item { padding: 6px 15px; background: #fff; border-radius: 8px; font-size: 16px; color: #646566; border: 1px solid #ebedf0; }
 .tag-item.active { background: #eef5fe; color: #1989fa; border-color: #1989fa; font-weight: bold; }
 .remark-preview { margin-top: 12px; font-size: 14px; color: #969799; font-style: italic; }
 .bottom-action { padding: 20px; position: fixed; bottom: 50px; left: 0; right: 0; background: #fff; box-shadow: 0 -2px 10px rgba(0,0,0,0.05); z-index: 100; }
-.map-selector { display: flex; flex-direction: column; height: 100%; }
-.search-results { flex: 1; overflow-y: auto; }
-.no-result { text-align: center; padding: 40px; color: #969799; }
+.map-selector { display: flex; flex-direction: column; height: 100%; background: #fff; }
+.search-results { flex: 1; overflow-y: auto; padding-bottom: 20px; }
+.no-result, .map-tip { text-align: center; padding: 60px; color: #969799; font-size: 14px; }
 </style>
