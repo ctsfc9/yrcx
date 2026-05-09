@@ -18,7 +18,11 @@ const bannersList = computed(() => (systemStore.sysConfig.banners || '').split('
 const safeList = computed(() => {
   if (!list.value || !Array.isArray(list.value)) return [];
   const now = new Date();
-  return [...list.value].sort((a, b) => {
+  const blacklist = (systemStore.sysConfig.blacklist || '').split(',').filter(Boolean);
+  
+  return list.value
+    .filter(item => !blacklist.includes(item.user_id))
+    .sort((a, b) => {
     const topA = a.is_top ? 1 : 0;
     const topB = b.is_top ? 1 : 0;
     if (topA !== topB) return topB - topA;
@@ -64,9 +68,9 @@ const handleCall = (p) => { if(p) window.location.href = `tel:${p}`; };
 
 const getCarModelStyle = (model) => {
   if (!model) return {};
-  if (model.includes('电')) return { color: '#07c160', fontWeight: 'bold' };
-  if (model.includes('混合')) return { color: '#ff976a', fontWeight: 'bold' };
-  return { color: '#1989fa', fontWeight: 'bold' };
+  if (model.includes('电')) return { color: '#07c160', fontWeight: 'bold' }; // 绿色
+  if (model.includes('混合')) return { color: '#ff976a', fontWeight: 'bold' }; // 黄色/橙色
+  return { color: '#ee0a24', fontWeight: 'bold' }; // 油车-红色
 };
 
 const goToDetail = (id) => {
@@ -161,7 +165,7 @@ const goToDetail = (id) => {
 
 .type-badge { font-size: 15px; font-weight: bold; }
 .type-badge.driver { color: #1989fa; }
-.type-badge.passenger { color: #07c160; }
+.type-badge.passenger { color: #ee0a24; }
 .time-text { flex: 1; margin-left: 8px; font-size: 14px; color: #646566; }
 .call-btn { padding: 4px; }
 

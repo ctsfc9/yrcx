@@ -13,7 +13,8 @@ export const useSystemStore = defineStore('system', {
       amap_key: 'a4f6e1e5da68bc9fe5f984d69a3f6b2e',
       publish_fee: 0,      // 发布费用
       top_fee: 0,          // 置顶费用
-      about_us: ''
+      about_us: '',
+      blacklist: ''        // 黑名单用户ID，逗号分隔
     }
   }),
   actions: {

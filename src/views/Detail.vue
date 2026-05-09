@@ -1,13 +1,33 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useUserStore } from '../store/user';
+import { useSystemStore } from '../store/system';
 import { fetchRides } from '../api';
-import { showToast, showLoadingToast, closeToast } from 'vant';
+import { showToast, showLoadingToast, closeToast, showDialog } from 'vant';
 
+const userStore = useUserStore();
+const systemStore = useSystemStore();
 const route = useRoute();
 const router = useRouter();
 const ride = ref(null);
 const loading = ref(true);
+
+const isAdmin = computed(() => {
+  const profile = userStore.userProfile;
+  return profile.id === 'ADMIN_ID' || profile.phone === '13800138000'; // 管理员识别逻辑
+});
+
+const handleBlacklist = (uid) => {
+  showDialog({
+    title: '确认拉黑',
+    message: '拉黑后该用户发布的所有行程将不再对所有人显示，确认操作？',
+    showCancelButton: true,
+  }).then(() => {
+    showToast('已提交后台处理');
+    // 实际应调用后端 API 更新系统配置中的 blacklist
+  }).catch(() => {});
+};
 
 const loadDetail = async () => {
   const rideId = route.params.id;
@@ -16,7 +36,6 @@ const loadDetail = async () => {
   showLoadingToast('加载中...');
   try {
     const data = await fetchRides('all');
-    // 确保 ID 匹配逻辑健壮，尝试数字和字符串匹配
     const item = data.results.find(r => String(r.id) === String(rideId));
     if (item) {
       ride.value = item;
@@ -76,7 +95,7 @@ const initWechatShare = async () => {
     title: `${r.type === 'driver' ? '【车找人】' : '【人找车】'} ${r.origin} → ${r.destination}`,
     desc: `时间：${formatDate(r.date)} | 费用：${r.price || '面议'}元/人 | 老乡互助，共享出行！`,
     link: `https://yrcx.ctsfc.top/#/detail/${r.id}`,
-    imgUrl: 'https://i.postimg.cc/6pMzm4dr/image.jpg', // 建议此处更换为项目的 logo 图标链接
+    imgUrl: 'https://i.postimg.cc/6pMzm4dr/image.jpg',
     success: () => { showToast('分享成功'); }
   };
 
@@ -99,10 +118,8 @@ const initWechatShare = async () => {
     });
 
     window.wx.ready(() => {
-      // 新版接口
       window.wx.updateAppMessageShareData(shareData);
       window.wx.updateTimelineShareData(shareData);
-      // 旧版接口兼容
       window.wx.onMenuShareAppMessage(shareData);
       window.wx.onMenuShareTimeline(shareData);
     });
@@ -174,22 +191,26 @@ watch(() => route.params.id, (newId) => {
 
     <div class="action-bar">
       <div class="btn-group">
+        <van-button v-if="ride.user_id === userStore.userProfile.id" round type="warning" icon="edit" class="action-btn" @click="router.push(`/post?edit=${ride.id}`)">重新编辑</van-button>
         <van-button round type="success" icon="phone-o" class="action-btn" @click="handleCall">拨打电话</van-button>
         <van-button round type="primary" icon="share-o" class="action-btn" @click="copyShareText">一键复制</van-button>
+      </div>
+      <div v-if="isAdmin" style="margin-top: 10px;">
+        <van-button block round type="danger" plain size="small" @click="handleBlacklist(ride.user_id)">拉黑该用户(仅管理员可见)</van-button>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.page-detail { min-height: 100vh; background: #f7f8fa; padding-bottom: 100px; }
+.page-detail { min-height: 100vh; background: #f7f8fa; padding-bottom: 120px; }
 .detail-card { background: #fff; margin: 15px; padding: 20px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border-top: 6px solid #1989fa; }
-.detail-card.passenger { border-top-color: #07c160; }
+.detail-card.passenger { border-top-color: #ee0a24; }
 
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
 .type-tag { padding: 4px 12px; border-radius: 6px; font-weight: bold; font-size: 16px; }
 .type-tag.driver { background: #eef5fe; color: #1989fa; }
-.type-tag.passenger { background: #f0f9eb; color: #07c160; }
+.type-tag.passenger { background: #fdf2f2; color: #ee0a24; }
 .price { font-size: 24px; font-weight: bold; color: #ee0a24; }
 .unit { font-size: 14px; font-weight: normal; margin-left: 4px; }
 

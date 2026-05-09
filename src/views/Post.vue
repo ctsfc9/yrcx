@@ -2,7 +2,7 @@
 import { reactive, ref, computed, onMounted, watch, onUnmounted } from 'vue';
 import { useUserStore } from '../store/user';
 import { useSystemStore } from '../store/system';
-import { postRide } from '../api';
+import { postRide, fetchRides, deleteRide } from '../api';
 import { showSuccessToast, showFailToast, showLoadingToast, showDialog, showToast } from 'vant';
 import { useRouter } from 'vue-router';
 
@@ -31,6 +31,7 @@ const selectedDateValues = ref([]);
 const mapSearchKeyword = ref('');
 const mapSearchResults = ref([]);
 const currentMapField = ref(''); 
+const editId = ref(route.query.edit || '');
 
 const seatColumns = Array.from({ length: 6 }, (_, i) => ({ text: `${i + 1}人`, value: i + 1 }));
 
@@ -56,11 +57,39 @@ const checkAMap = (callback, retry = 0) => {
   }
 };
 
-onMounted(() => {
-  initCurrentTime();
-  checkAMap(() => {
-    autoLocate();
-  });
+onMounted(async () => {
+  if (editId.value) {
+    showLoadingToast('正在加载原行程...');
+    try {
+      const data = await fetchRides('all');
+      const item = data.results.find(r => String(r.id) === String(editId.value));
+      if (item) {
+        Object.assign(postForm, {
+          type: item.type,
+          origin: item.origin,
+          destination: item.destination,
+          seats: item.seats,
+          price: item.price,
+          contact: item.contact,
+          car_model: item.car_model || '油车',
+          remark: (item.remark || '').split('，').filter(Boolean)
+        });
+        // 恢复时间显示
+        const d = new Date(item.date);
+        postForm.dateDisplay = `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日 ${d.getHours()}点`;
+        postForm.date = item.date;
+      }
+    } catch (e) {
+      showToast('加载失败');
+    } finally {
+      closeToast();
+    }
+  } else {
+    initCurrentTime();
+    checkAMap(() => {
+      autoLocate();
+    });
+  }
 });
 
 const autoLocate = () => {
@@ -195,7 +224,17 @@ const handlePublish = async () => {
       remark: postForm.remark.join('，') || '无备注'
     };
     await postRide(data);
-    showSuccessToast('发布成功');
+    
+    // 如果是编辑模式，发布成功后删除旧行程
+    if (editId.value) {
+      try {
+        await deleteRide(editId.value, userStore.userProfile.id);
+      } catch (e) {
+        console.error('Delete old ride failed:', e);
+      }
+    }
+    
+    showSuccessToast(editId.value ? '修改成功' : '发布成功');
     router.push('/');
   } catch (e) {
     showFailToast('发布失败');
