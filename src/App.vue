@@ -18,10 +18,13 @@ onMounted(() => {
   
   // 监听手势返回/物理返回键
   window.addEventListener('popstate', (e) => {
+    // 只有在首页且没有弹出层时才拦截
     if (route.path === '/') {
       const now = Date.now();
       if (now - lastBackTime.value < 2000) {
-        // 连续两次返回，允许退出（这里其实无法阻止浏览器退出，但可以给提示）
+        // 连续两次返回，不再拦截，允许浏览器默认行为（退出或关闭）
+        // 注意：现代浏览器出于安全考虑，脚本无法直接关闭非脚本打开的窗口
+        // 但对于 PWA 或某些内置浏览器环境有效
       } else {
         lastBackTime.value = now;
         showToast('再按一次退出网站');
@@ -32,7 +35,9 @@ onMounted(() => {
   }, false);
   
   // 初始推入一个状态，用于拦截第一次返回
-  history.pushState(null, null, document.URL);
+  if (window.history.state !== 'fixed') {
+    history.pushState('fixed', null, document.URL);
+  }
 });
 
 const switchTab = (name) => {

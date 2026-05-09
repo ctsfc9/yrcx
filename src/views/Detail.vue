@@ -73,7 +73,7 @@ const initWechatShare = async () => {
     title: `${r.type === 'driver' ? '【车找人】' : '【人找车】'} ${r.origin} → ${r.destination}`,
     desc: `时间：${formatDate(r.date)} | 费用：${r.price || '面议'}元/人 | 老乡互助，共享出行！`,
     link: `https://yrcx.ctsfc.top/#/detail/${r.id}`,
-    imgUrl: 'https://i.postimg.cc/6pMzm4dr/image.jpg',
+    imgUrl: 'https://i.postimg.cc/6pMzm4dr/image.jpg', // 建议此处更换为项目的 logo 图标链接
     success: () => { showToast('分享成功'); }
   };
 
@@ -155,12 +155,14 @@ onMounted(loadDetail);
     <div class="share-guide">
       <div class="guide-title">详情查看</div>
       <div class="share-url">https://yrcx.ctsfc.top/#/detail/{{ ride.id }}</div>
-      <div class="guide-tip">复制链接或点击下方按钮分享给朋友</div>
+      <div class="guide-tip">点击下方按钮复制信息或直接点击右上角分享</div>
     </div>
 
     <div class="action-bar">
-      <van-button round type="success" icon="phone-o" class="action-btn left" @click="handleCall">拨打电话</van-button>
-      <van-button round type="primary" icon="share-o" class="action-btn right" @click="copyShareText">一键复制分享</van-button>
+      <div class="btn-group">
+        <van-button round type="success" icon="phone-o" class="action-btn" @click="handleCall">拨打电话</van-button>
+        <van-button round type="primary" icon="share-o" class="action-btn" @click="copyShareText">一键复制</van-button>
+      </div>
     </div>
   </div>
 </template>
@@ -198,6 +200,7 @@ onMounted(loadDetail);
 .share-url { font-size: 12px; color: #969799; word-break: break-all; margin-bottom: 8px; }
 .guide-tip { font-size: 12px; color: #c8c9cc; }
 
-.action-bar { position: fixed; bottom: 20px; left: 15px; right: 15px; display: flex; gap: 12px; z-index: 100; }
+.action-bar { position: fixed; bottom: 20px; left: 15px; right: 15px; z-index: 100; }
+.btn-group { display: flex; gap: 12px; width: 100%; }
 .action-btn { flex: 1; height: 50px; font-size: 16px; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
 </style>

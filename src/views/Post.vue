@@ -87,14 +87,15 @@ const autoLocate = () => {
         
       postForm.origin = formattedAddr;
     } else {
-      if (window.AMap.CitySearch) {
-        const citySearch = new AMap.CitySearch();
-        citySearch.getLocalCity((s, r) => {
-          if (s === 'complete' && r.info === 'OK') {
-            postForm.origin = r.city;
-          }
-        });
-      }
+      // 降级使用城市定位
+      const citySearch = new AMap.CitySearch();
+      citySearch.getLocalCity((s, r) => {
+        if (s === 'complete' && r.info === 'OK') {
+          postForm.origin = r.city;
+        } else {
+          showToast('自动定位失败，请手动输入');
+        }
+      });
     }
   });
 };
@@ -266,11 +267,11 @@ const handlePublish = async () => {
     </van-popup>
 
     <!-- 地图选择弹窗优化 -->
-    <van-popup v-model:show="showMapSelector" position="bottom" style="height: 85%; border-radius: 16px 16px 0 0;">
+    <van-popup v-model:show="showMapSelector" position="bottom" style="height: 85%; border-radius: 16px 16px 0 0;" teleport="body">
       <div class="map-selector">
         <van-search v-model="mapSearchKeyword" placeholder="输入城市或具体位置" show-action @cancel="showMapSelector = false" autofocus />
         <div class="search-results">
-          <van-cell v-for="item in mapSearchResults" :key="item.id" :title="item.name" :label="item.district + item.address" @click="selectMapResult(item)" icon="location-o" />
+          <van-cell v-for="item in mapSearchResults" :key="item.id" :title="item.name" :label="item.district + (item.address || '')" @click="selectMapResult(item)" icon="location-o" />
           <div v-if="!mapSearchResults.length && mapSearchKeyword" class="no-result">未找到相关位置</div>
           <div v-if="!mapSearchKeyword" class="map-tip">请输入关键词搜索位置</div>
         </div>
