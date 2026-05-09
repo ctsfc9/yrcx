@@ -51,9 +51,10 @@ const initAdminData = () => {
 const loadAllRides = async () => {
   try {
     const token = localStorage.getItem('admin_token');
-    const res = await fetch(`/api/admin?action=get_rides&token=${token}`);
+    // 使用 rides 接口并带上 admin=true 标志，获取包含黑名单在内的所有数据
+    const res = await fetch(`/api/rides?type=all&admin=true&token=${token}`);
     const data = await res.json();
-    if (data.list) ridesList.value = data.list;
+    if (data.results) ridesList.value = data.results;
   } catch (e) {
     showFailToast('加载行程失败');
   }
@@ -164,6 +165,14 @@ onMounted(() => {
             <van-field v-model="systemStore.sysConfig.platform_name" label="平台名称" />
             <van-field v-model="systemStore.sysConfig.notice_text" label="公告内容" type="textarea" rows="2" />
             <van-field v-model="systemStore.sysConfig.amap_key" label="地图 Key" />
+          </van-cell-group>
+          <van-cell-group inset title="费用配置" style="margin-top: 15px;">
+            <van-field v-model="systemStore.sysConfig.publish_fee" label="发布费用" type="number" placeholder="0">
+              <template #extra>元</template>
+            </van-field>
+            <van-field v-model="systemStore.sysConfig.top_fee" label="置顶费用" type="number" placeholder="0">
+              <template #extra>元</template>
+            </van-field>
           </van-cell-group>
           <van-cell-group inset title="标签配置" style="margin-top: 15px;">
             <van-field v-model="systemStore.sysConfig.tags_driver" label="车主标签" placeholder="逗号分隔" />

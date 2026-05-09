@@ -6,15 +6,19 @@ export async function onRequest(context) {
   if (request.method === "GET") {
     try {
       const type = url.searchParams.get("type");
-      
-      // ORDER BY date ASC: 按出发时间 正序排列 (最近出发的在最前面)
-      // WHERE date >= datetime('now', '-1 day'): 可选，过滤掉太久以前的(比如昨天之前的)，保持列表新鲜
-      // 这里暂时只改排序，不强制过滤，以免时区问题导致刚发的不显示
+      const isAdmin = url.searchParams.get("admin") === 'true';
       
       let query = "SELECT * FROM rides WHERE user_id NOT IN (SELECT user_id FROM blacklist) ORDER BY date ASC LIMIT 50";
+      if (isAdmin) {
+        query = "SELECT * FROM rides ORDER BY date DESC LIMIT 100";
+      }
       
       if (type && type !== 'all') {
-        query = `SELECT * FROM rides WHERE type = '${type}' AND user_id NOT IN (SELECT user_id FROM blacklist) ORDER BY date ASC LIMIT 50`;
+        if (isAdmin) {
+          query = `SELECT * FROM rides WHERE type = '${type}' ORDER BY date DESC LIMIT 100`;
+        } else {
+          query = `SELECT * FROM rides WHERE type = '${type}' AND user_id NOT IN (SELECT user_id FROM blacklist) ORDER BY date ASC LIMIT 50`;
+        }
       }
       
       const { results } = await env.DB.prepare(query).all();
