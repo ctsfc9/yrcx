@@ -291,7 +291,7 @@ const handlePublish = async () => {
             <van-radio-group v-model="postForm.car_model" direction="horizontal">
               <van-radio name="油车"><span :style="getCarModelStyle('油车')">油车</span></van-radio>
               <van-radio name="电车"><span :style="getCarModelStyle('电车')">电车</span></van-radio>
-              <van-radio name="油电混动"><span :style="getCarModelStyle('混动')">混动</span></van-radio>
+              <van-radio name="油电混动"><span :style="getCarModelStyle('混动')">油电混动</span></van-radio>
             </van-radio-group>
           </template>
         </van-field>
