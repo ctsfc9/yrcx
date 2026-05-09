@@ -164,6 +164,13 @@ const selectMapResult = (item) => {
   showMapSelector.value = false;
 };
 
+const getCarModelStyle = (model) => {
+  if (!model) return {};
+  if (model.includes('电')) return { color: '#07c160', fontWeight: 'bold' }; // 绿色
+  if (model.includes('混合') || model.includes('黄色')) return { color: '#edc30e', fontWeight: 'bold' }; // 黄色
+  return { color: '#ee0a24', fontWeight: 'bold' }; // 油车-红色
+};
+
 const currentRemarkOptions = computed(() => {
   const str = postForm.type === 'driver' ? systemStore.sysConfig.tags_driver : systemStore.sysConfig.tags_passenger;
   return (str || '').split(',').filter(Boolean);
@@ -282,9 +289,9 @@ const handlePublish = async () => {
         <van-field label="车型" v-if="postForm.type === 'driver'">
           <template #input>
             <van-radio-group v-model="postForm.car_model" direction="horizontal">
-              <van-radio name="油车">油车</van-radio>
-              <van-radio name="电车">电车</van-radio>
-              <van-radio name="油电混合">混合</van-radio>
+              <van-radio name="油车"><span :style="getCarModelStyle('油车')">油车</span></van-radio>
+              <van-radio name="电车"><span :style="getCarModelStyle('电车')">电车</span></van-radio>
+              <van-radio name="油电混合"><span :style="getCarModelStyle('混合')">混合</span></van-radio>
             </van-radio-group>
           </template>
         </van-field>

@@ -11,10 +11,10 @@ export async function onRequest(context) {
       // WHERE date >= datetime('now', '-1 day'): 可选，过滤掉太久以前的(比如昨天之前的)，保持列表新鲜
       // 这里暂时只改排序，不强制过滤，以免时区问题导致刚发的不显示
       
-      let query = "SELECT * FROM rides ORDER BY date ASC LIMIT 50";
+      let query = "SELECT * FROM rides WHERE user_id NOT IN (SELECT user_id FROM blacklist) ORDER BY date ASC LIMIT 50";
       
       if (type && type !== 'all') {
-        query = `SELECT * FROM rides WHERE type = '${type}' ORDER BY date ASC LIMIT 50`;
+        query = `SELECT * FROM rides WHERE type = '${type}' AND user_id NOT IN (SELECT user_id FROM blacklist) ORDER BY date ASC LIMIT 50`;
       }
       
       const { results } = await env.DB.prepare(query).all();
@@ -48,7 +48,15 @@ export async function onRequest(context) {
   // 3. 删除 (DELETE) - 保持不变
   if (request.method === "DELETE") {
     const id = url.searchParams.get("id");
-    await env.DB.prepare("DELETE FROM rides WHERE id = ?").bind(id).run();
+    const userId = url.searchParams.get("user_id");
+    
+    if (userId) {
+      // 仅限发布者本人删除
+      await env.DB.prepare("DELETE FROM rides WHERE id = ? AND user_id = ?").bind(id, userId).run();
+    } else {
+      // 管理员删除 (没有传 user_id)
+      await env.DB.prepare("DELETE FROM rides WHERE id = ?").bind(id).run();
+    }
     return Response.json({ success: true });
   }
 

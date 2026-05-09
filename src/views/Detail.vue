@@ -61,6 +61,13 @@ const formatDate = (str) => {
   return str;
 };
 
+const getCarModelStyle = (model) => {
+  if (!model) return {};
+  if (model.includes('电')) return { color: '#07c160', fontWeight: 'bold' }; // 绿色
+  if (model.includes('混合') || model.includes('黄色')) return { color: '#edc30e', fontWeight: 'bold' }; // 黄色
+  return { color: '#ee0a24', fontWeight: 'bold' }; // 油车-红色
+};
+
 const handleCall = () => {
   if (ride.value?.contact) {
     window.location.href = `tel:${ride.value.contact}`;
@@ -173,7 +180,7 @@ watch(() => route.params.id, (newId) => {
         </div>
         <div class="info-item" v-if="ride.type === 'driver'">
           <van-icon name="logistics" />
-          <div class="val">{{ ride.car_model }}</div>
+          <div class="val" :style="getCarModelStyle(ride.car_model)">{{ ride.car_model }}</div>
         </div>
       </div>
 

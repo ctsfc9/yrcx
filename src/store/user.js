@@ -41,14 +41,14 @@ export const useUserStore = defineStore('user', {
       }
     },
     async loginViaWechat() {
-      const appId = 'YOUR_WECHAT_APPID'; // 需要在后台配置
+      const appId = 'wx90223bd25485040a'; 
       const redirectUri = encodeURIComponent(window.location.origin + window.location.pathname);
       const scope = 'snsapi_userinfo';
       window.location.href = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=${scope}&state=STATE#wechat_redirect`;
     },
     async handleAuthCallback(code) {
       try {
-        const res = await fetch(`/api/wechat/userinfo?code=${code}`);
+        const res = await fetch(`/api/wechat?action=userinfo&code=${code}`);
         const data = await res.json();
         if (data.openid) {
           this.userProfile.id = data.openid;

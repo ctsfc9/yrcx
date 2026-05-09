@@ -10,13 +10,26 @@ const adminLoginData = reactive({ username: '', password: '' });
 const adminActiveMenu = ref('basic');
 const list = ref([]);
 
-const handleAdminLogin = () => {
-  if (adminLoginData.username === 'admin' && adminLoginData.password === '123456') {
-    isLogined.value = true;
-    localStorage.setItem('admin_token', 'mock');
-    loadAllRides();
-  } else {
-    showFailToast('账号或密码错误');
+const handleAdminLogin = async () => {
+  try {
+    const res = await fetch(`/api/admin?action=login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: adminLoginData.username,
+        password: adminLoginData.password
+      })
+    });
+    const data = await res.json();
+    if (data.success) {
+      isLogined.value = true;
+      localStorage.setItem('admin_token', data.token);
+      loadAllRides();
+    } else {
+      showFailToast(data.error || '登录失败');
+    }
+  } catch (e) {
+    showFailToast('网络错误');
   }
 };
 
@@ -41,10 +54,24 @@ const handleDelete = async (id) => {
 
 const saveConfig = async () => {
   showLoadingToast('保存中...');
-  // 这里实际应该调用 API 保存到数据库，目前先模拟成功
-  setTimeout(() => {
-    showSuccessToast('配置已保存');
-  }, 800);
+  try {
+    const res = await fetch(`/api/admin?action=save_config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        auth_token: localStorage.getItem('admin_token'),
+        config: systemStore.sysConfig
+      })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showSuccessToast('配置已保存');
+    } else {
+      showFailToast(data.error || '保存失败');
+    }
+  } catch (e) {
+    showFailToast('网络错误');
+  }
 };
 
 onMounted(() => {
