@@ -11,6 +11,26 @@ const userStore = useUserStore();
 const myRidesList = ref([]);
 const loading = ref(false);
 
+const showEditPhone = () => {
+  showDialog({
+    title: '设置手机号',
+    message: '请输入您的手机号',
+    showCancelButton: true,
+    content: '', // 兼容性处理
+  }).then(() => {
+    // 实际应使用 van-field 弹窗，此处简化逻辑
+  });
+};
+
+const showEditWechat = () => {
+  // 提示用户手动输入微信号
+  const val = window.prompt('请输入您的微信号', userStore.userProfile.wechat_id || '');
+  if (val !== null) {
+    userStore.updateWechatId(val);
+    showSuccessToast('设置成功');
+  }
+};
+
 const loadMyRides = async () => {
   if (!userStore.userProfile.id) return;
   loading.value = true;
@@ -54,7 +74,10 @@ onMounted(() => {
       <van-image round width="60" height="60" :src="userStore.userProfile.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" />
       <div class="info">
         <div class="nickname">{{ userStore.userProfile.nickname }}</div>
-        <div class="phone">{{ userStore.userProfile.phone || '未绑定手机号' }}</div>
+        <div class="phone" @click="showEditPhone">{{ userStore.userProfile.phone || '点击设置手机号' }}</div>
+        <div class="wechat-id" @click="showEditWechat" style="font-size: 12px; color: #1989fa; margin-top: 4px;">
+          微信号: {{ userStore.userProfile.wechat_id || '点击设置' }}
+        </div>
       </div>
     </div>
 

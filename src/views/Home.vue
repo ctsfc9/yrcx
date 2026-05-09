@@ -69,7 +69,7 @@ const handleCall = (p) => { if(p) window.location.href = `tel:${p}`; };
 const getCarModelStyle = (model) => {
   if (!model) return {};
   if (model.includes('电')) return { color: '#07c160', fontWeight: 'bold' }; // 绿色
-  if (model.includes('混合') || model.includes('黄色')) return { color: '#edc30e', fontWeight: 'bold' }; // 黄色
+  if (model.includes('混动') || model.includes('黄色')) return { color: '#edc30e', fontWeight: 'bold' }; // 黄色
   return { color: '#ee0a24', fontWeight: 'bold' }; // 油车-红色
 };
 

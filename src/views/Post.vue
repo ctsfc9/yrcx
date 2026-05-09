@@ -167,7 +167,7 @@ const selectMapResult = (item) => {
 const getCarModelStyle = (model) => {
   if (!model) return {};
   if (model.includes('电')) return { color: '#07c160', fontWeight: 'bold' }; // 绿色
-  if (model.includes('混合') || model.includes('黄色')) return { color: '#edc30e', fontWeight: 'bold' }; // 黄色
+  if (model.includes('混动') || model.includes('黄色')) return { color: '#edc30e', fontWeight: 'bold' }; // 黄色
   return { color: '#ee0a24', fontWeight: 'bold' }; // 油车-红色
 };
 
@@ -291,7 +291,7 @@ const handlePublish = async () => {
             <van-radio-group v-model="postForm.car_model" direction="horizontal">
               <van-radio name="油车"><span :style="getCarModelStyle('油车')">油车</span></van-radio>
               <van-radio name="电车"><span :style="getCarModelStyle('电车')">电车</span></van-radio>
-              <van-radio name="油电混合"><span :style="getCarModelStyle('混合')">混合</span></van-radio>
+              <van-radio name="油电混动"><span :style="getCarModelStyle('混动')">混动</span></van-radio>
             </van-radio-group>
           </template>
         </van-field>

@@ -4,10 +4,10 @@ export const useUserStore = defineStore('user', {
   state: () => ({
     userProfile: {
       id: '',
-      nickname: '未登录',
+      nickname: '游客',
       avatar: '',
       phone: '',
-      balance: '0.00',
+      wechat_id: '',
       isLogin: false
     }
   }),
@@ -30,10 +30,6 @@ export const useUserStore = defineStore('user', {
       if (code) {
         this.handleAuthCallback(code);
       } else if (!this.userProfile.id) {
-        // 如果没有用户信息且没有 code，则尝试静默授权或提示登录
-        // 此处为示例，实际应根据项目域名配置微信授权
-        // this.loginViaWechat(); 
-        
         // 兜底生成一个 ID
         this.userProfile.id = 'u_' + Date.now();
         this.userProfile.isLogin = true;
@@ -54,6 +50,7 @@ export const useUserStore = defineStore('user', {
           this.userProfile.id = data.openid;
           this.userProfile.nickname = data.nickname;
           this.userProfile.avatar = data.headimgurl;
+          // 微信网页授权无法直接获取微信号，记录 openid 作为标识
           this.userProfile.isLogin = true;
           localStorage.setItem('user_info', JSON.stringify(this.userProfile));
           // 清除 URL 中的 code
@@ -65,6 +62,10 @@ export const useUserStore = defineStore('user', {
     },
     updatePhone(phone) {
       this.userProfile.phone = phone;
+      localStorage.setItem('user_info', JSON.stringify(this.userProfile));
+    },
+    updateWechatId(wechatId) {
+      this.userProfile.wechat_id = wechatId;
       localStorage.setItem('user_info', JSON.stringify(this.userProfile));
     }
   }
