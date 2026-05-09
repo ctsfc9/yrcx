@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { fetchRides } from '../api';
 import { showToast, showLoadingToast, closeToast } from 'vant';
@@ -9,12 +9,14 @@ const router = useRouter();
 const ride = ref(null);
 const loading = ref(true);
 
-const rideId = route.params.id;
-
 const loadDetail = async () => {
+  const rideId = route.params.id;
+  if (!rideId) return;
+  
   showLoadingToast('加载中...');
   try {
     const data = await fetchRides('all');
+    // 确保 ID 匹配逻辑健壮，尝试数字和字符串匹配
     const item = data.results.find(r => String(r.id) === String(rideId));
     if (item) {
       ride.value = item;
@@ -23,6 +25,7 @@ const loadDetail = async () => {
       showToast('未找到该行程');
     }
   } catch (e) {
+    console.error('Load detail error:', e);
     showToast('加载失败');
   } finally {
     loading.value = false;
@@ -87,13 +90,21 @@ const initWechatShare = async () => {
       timestamp: config.timestamp,
       nonceStr: config.nonceStr,
       signature: config.signature,
-      jsApiList: ['updateAppMessageShareData', 'updateTimelineShareData', 'onMenuShareAppMessage']
+      jsApiList: [
+        'updateAppMessageShareData', 
+        'updateTimelineShareData', 
+        'onMenuShareAppMessage', 
+        'onMenuShareTimeline'
+      ]
     });
 
     window.wx.ready(() => {
+      // 新版接口
       window.wx.updateAppMessageShareData(shareData);
       window.wx.updateTimelineShareData(shareData);
+      // 旧版接口兼容
       window.wx.onMenuShareAppMessage(shareData);
+      window.wx.onMenuShareTimeline(shareData);
     });
   } catch (e) {
     console.error('Wechat SDK init failed', e);
@@ -101,6 +112,9 @@ const initWechatShare = async () => {
 };
 
 onMounted(loadDetail);
+watch(() => route.params.id, (newId) => {
+  if (newId) loadDetail();
+});
 </script>
 
 <template>

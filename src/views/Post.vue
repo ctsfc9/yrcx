@@ -64,39 +64,43 @@ onMounted(() => {
 });
 
 const autoLocate = () => {
-  if (!window.AMap || !window.AMap.Geolocation) return;
+  if (!window.AMap) return;
   
-  const geolocation = new AMap.Geolocation({
-    enableHighAccuracy: true,
-    timeout: 10000,
-    extensions: 'all'
-  });
-  
-  geolocation.getCurrentPosition((status, result) => {
-    if (status === 'complete') {
-      const addr = result.addressComponent;
-      const city = addr.city || addr.province || '';
-      const district = addr.district || '';
-      const township = addr.township || '';
-      const street = addr.street || '';
-      
-      const formattedAddr = [city, district, township, street]
-        .filter(Boolean)
-        .join('')
-        .replace(/.*省/, ''); 
+  window.AMap.plugin('AMap.Geolocation', function() {
+    const geolocation = new window.AMap.Geolocation({
+      enableHighAccuracy: true,
+      timeout: 10000,
+      extensions: 'all'
+    });
+    
+    geolocation.getCurrentPosition((status, result) => {
+      if (status === 'complete') {
+        const addr = result.addressComponent;
+        const city = addr.city || addr.province || '';
+        const district = addr.district || '';
+        const township = addr.township || '';
+        const street = addr.street || '';
         
-      postForm.origin = formattedAddr;
-    } else {
-      // 降级使用城市定位
-      const citySearch = new AMap.CitySearch();
-      citySearch.getLocalCity((s, r) => {
-        if (s === 'complete' && r.info === 'OK') {
-          postForm.origin = r.city;
-        } else {
-          showToast('自动定位失败，请手动输入');
-        }
-      });
-    }
+        const formattedAddr = [city, district, township, street]
+          .filter(Boolean)
+          .join('')
+          .replace(/.*省/, ''); 
+          
+        postForm.origin = formattedAddr;
+      } else {
+        // 降级使用城市定位
+        window.AMap.plugin('AMap.CitySearch', function() {
+          const citySearch = new window.AMap.CitySearch();
+          citySearch.getLocalCity((s, r) => {
+            if (s === 'complete' && r.info === 'OK') {
+              postForm.origin = r.city;
+            } else {
+              showToast('自动定位失败，请手动输入');
+            }
+          });
+        });
+      }
+    });
   });
 };
 
@@ -108,13 +112,19 @@ const openMap = (field) => {
 };
 
 watch(mapSearchKeyword, (val) => {
-  if (val && window.AMap && window.AMap.AutoComplete) {
-    const auto = new AMap.AutoComplete({ city: '全国' });
-    auto.search(val, (status, result) => {
-      if (status === 'complete' && result.tips) {
-        mapSearchResults.value = result.tips.filter(t => t.location);
-      }
+  if (val && window.AMap) {
+    window.AMap.plugin('AMap.AutoComplete', function() {
+      const auto = new window.AMap.AutoComplete({ city: '全国' });
+      auto.search(val, (status, result) => {
+        if (status === 'complete' && result.tips) {
+          mapSearchResults.value = result.tips.filter(t => t.location);
+        } else {
+          mapSearchResults.value = [];
+        }
+      });
     });
+  } else {
+    mapSearchResults.value = [];
   }
 });
 
