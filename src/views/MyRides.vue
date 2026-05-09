@@ -1,7 +1,10 @@
 <script setup>
 import { ref, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
 import { useUserStore } from '../store/user';
 import { fetchRides, deleteRide } from '../api';
+
+const router = useRouter();
 import { showSuccessToast, showFailToast, showDialog } from 'vant';
 
 const userStore = useUserStore();
@@ -48,7 +51,7 @@ onMounted(() => {
     <van-nav-bar title="我的行程" />
     
     <div class="user-info-card">
-      <van-image round width="60" height="60" src="https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg" />
+      <van-image round width="60" height="60" :src="userStore.userProfile.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" />
       <div class="info">
         <div class="nickname">{{ userStore.userProfile.nickname }}</div>
         <div class="phone">{{ userStore.userProfile.phone || '未绑定手机号' }}</div>
@@ -66,6 +69,7 @@ onMounted(() => {
       <div class="route">{{ item.origin }} → {{ item.destination }}</div>
       <div class="time">{{ item.date }}</div>
       <div class="actions">
+        <van-button size="small" type="primary" plain @click="router.push(`/post?edit=${item.id}`)" style="margin-right: 10px;">编辑</van-button>
         <van-button size="small" type="danger" plain @click="handleDelete(item.id)">删除</van-button>
       </div>
     </div>

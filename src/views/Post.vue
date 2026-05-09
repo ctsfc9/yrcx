@@ -4,9 +4,10 @@ import { useUserStore } from '../store/user';
 import { useSystemStore } from '../store/system';
 import { postRide, fetchRides, deleteRide } from '../api';
 import { showSuccessToast, showFailToast, showLoadingToast, showDialog, showToast } from 'vant';
-import { useRouter } from 'vue-router';
+import { useRouter, useRoute } from 'vue-router';
 
 const router = useRouter();
+const route = useRoute();
 const userStore = useUserStore();
 const systemStore = useSystemStore();
 
