@@ -8,7 +8,6 @@ const router = useRouter();
 const route = useRoute();
 const store = useAppStore();
 
-// 获取当前时间用于默认赋值
 const getNowDate = () => {
   const now = new Date();
   const y = now.getFullYear();
@@ -76,34 +75,32 @@ onMounted(() => {
         postForm.old_id = store.editPayload.id;
         store.setEditPayload(null); 
     } else {
-        loadAMapScript();
+        // 直接调用，因为脚本已经在 index.html 中加载了，速度起飞！
+        setTimeout(autoLocate, 500);
     }
 });
 
-const loadAMapScript = () => { 
-    if(window.AMap) { autoLocate(); return; }
-    const s = document.createElement('script'); 
-    s.src = `https://webapi.amap.com/maps?v=2.0&key=${store.sysConfig.amap_key}&plugin=AMap.CitySearch,AMap.Geolocation,AMap.Geocoder`; 
-    s.onload = autoLocate;
-    document.body.appendChild(s); 
-};
-
-// 1. 修复定位：使用 AMap.plugin 确保组件加载，防止静默失败
 const autoLocate = () => { 
-    if(!window.AMap) { setTimeout(autoLocate, 800); return; }
-    showLoadingToast({ message: '获取位置中...', duration: 0 });
+    if(!window.AMap) {
+        // 终极兜底：如果被广告拦截器拦截了高德，默认填成都
+        postForm.origin = '成都';
+        return; 
+    }
     
-    // 强制按需加载插件
+    showLoadingToast({ message: '获取位置中...', duration: 2000 });
+    
     window.AMap.plugin(['AMap.CitySearch', 'AMap.Geolocation'], function() {
-        // 第一层：IP 定位城市
         var citySearch = new window.AMap.CitySearch();
         citySearch.getLocalCity(function(status, result) {
+            // 第一层：IP 定位城市
             if (status === 'complete' && result.info === 'OK') {
                 postForm.origin = result.city.replace(/[省市]/g, ''); 
+            } else {
+                postForm.origin = '成都'; // IP 定位失败兜底
             }
             
             // 第二层：GPS 精确定位区县
-            var geolocation = new window.AMap.Geolocation({ enableHighAccuracy: true, timeout: 3500 });
+            var geolocation = new window.AMap.Geolocation({ enableHighAccuracy: true, timeout: 3000 });
             geolocation.getCurrentPosition(function(status2, result2) {
                 closeToast();
                 if (status2 === 'complete' && result2.addressComponent) {
@@ -114,10 +111,6 @@ const autoLocate = () => {
                     } else if (ac.city) {
                         postForm.origin = ac.city.replace(/[省市]/g, '');
                     }
-                } else if (!postForm.origin) {
-                    // 终极兜底：如果啥都没拿到，不让它空着
-                    postForm.origin = '定位失败';
-                    showToast('自动定位失败，请手动点击修改');
                 }
             });
         });
@@ -131,7 +124,7 @@ const initMapInstance = () => {
     const center = userLocation.value || [116.397428, 39.90923];
     mapInstance = new window.AMap.Map('picker-map-container', { zoom: 14, center: center }); 
     
-    if (!userLocation.value && postForm.origin && postForm.origin !== '定位失败') {
+    if (!userLocation.value && postForm.origin) {
         mapInstance.setCity(postForm.origin);
     }
     
@@ -152,46 +145,57 @@ const confirmMapSelection = (val) => {
 };
 
 const onPreSubmit = () => { 
-    if(!postForm.origin || postForm.origin === '定位失败' || !postForm.destination) { showFailToast('请正确填写起点和终点'); return; } 
+    if(!postForm.origin || !postForm.destination) { showFailToast('请正确填写起点和终点'); return; } 
     if(!postForm.contact) { showFailToast('请填写联系电话'); return; }
-    if(!store.userProfile?.phone) { showAuth.value = true; authStep.value = 1; return; } 
+    
+    // 强制前端校验：如果 store 里的 phone 是空的，直接弹窗，不请求后端
+    if(!store.userProfile?.phone) { 
+        showAuth.value = true; 
+        authStep.value = 2; // 直接跳到填手机号那一步
+        return; 
+    } 
     handleRealPublish(); 
 };
 
 const submitAuth = async () => {
     if(!registerForm.phone || !registerForm.nickname) { showFailToast('需填完整'); return; }
+    // 模拟将绑定的手机号写入后端或全局状态
     const payload = { ...store.userProfile, phone: registerForm.phone, nickname: registerForm.nickname, avatar: 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg' };
-    const res = await fetch('/api/login', { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, // 修复：必须声明 JSON
-        body: JSON.stringify(payload) 
-    });
-    if(res.ok) {
-        const data = await res.json();
-        payload.id = data.userId;
-        store.saveUser(payload);
-        showAuth.value = false;
-        postForm.contact = registerForm.phone;
-        showSuccessToast('授权成功');
-        handleRealPublish();
+    
+    try {
+        const res = await fetch('/api/login', { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload) 
+        });
+        if(res.ok) {
+            const data = await res.json();
+            payload.id = data.userId || store.userProfile.id;
+            store.saveUser(payload); // 更新本地缓存
+            showAuth.value = false;
+            postForm.contact = registerForm.phone;
+            showSuccessToast('绑定成功');
+            handleRealPublish(); // 绑定成功后，自动继续刚才的发布动作
+        } else {
+            showFailToast('绑定失败');
+        }
+    } catch (e) {
+        showFailToast('网络错误');
     }
 };
 
-// 2. 修复发布报错：加入 Headers 并强化错误弹窗机制
 const handleRealPublish = async () => { 
     submitLoading.value = true; 
     const dateVal = postForm.date || new Date().toISOString(); 
     const remarkStr = Array.isArray(postForm.remark) ? postForm.remark.join('，') : postForm.remark; 
     
     const currentUserId = store.userProfile?.id || '';
-    
     const newRide = { ...postForm, user_id: currentUserId, date: dateVal, remark: remarkStr }; 
     if (!newRide.price) newRide.price = '面议';
 
     try { 
         const res = await fetch('/api/rides', { 
             method: 'POST', 
-            // 致命修复：之前漏了这行，导致后端无法识别数据！
             headers: { 'Content-Type': 'application/json' }, 
             body: JSON.stringify(newRide) 
         }); 
@@ -204,18 +208,17 @@ const handleRealPublish = async () => {
             showSuccessToast('发布成功'); 
             router.replace('/'); 
         } else {
-            // 如果失败，强制弹出一个无法被轻易忽略的大弹窗！
-            showDialog({
-                title: '发布失败 ❌',
-                message: `后端拒绝了请求：\n状态码: ${res.status}\n报错详情: ${result.error || result.message || '未知数据错误'}`,
-            });
-            console.error('发布失败完整报文:', result);
+            // ⭐️ 核心修复：如果是 403 未绑定手机号，直接弹窗让用户绑定！
+            if (res.status === 403 || result.error?.includes('手机')) {
+                showToast('需要绑定手机号');
+                showAuth.value = true;
+                authStep.value = 2; // 直接拉起表单
+            } else {
+                showDialog({ title: '发布失败 ❌', message: `状态码: ${res.status}\n报错: ${result.error || '未知'}` });
+            }
         }
     } catch(e) {
-        showDialog({
-            title: '网络报错',
-            message: `请求没有发出去，错误信息：\n${e.message}`
-        });
+        showDialog({ title: '网络报错', message: `请求失败：\n${e.message}` });
     } finally { 
         submitLoading.value = false; 
     } 
@@ -305,7 +308,7 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
     </van-popup>
     
     <van-popup v-model:show="showAuth" position="bottom" style="height:65%;padding:20px;" :close-on-click-overlay="false">
-        <h3 style="text-align:center">宜人出行 身份认证</h3>
+        <h3 style="text-align:center">绑定手机号</h3>
         <div v-if="authStep === 1" style="text-align:center; margin-top: 20px;">
             <p style="color:#666; font-size:14px; margin-bottom:20px;">【安全提醒】请长按保存或识别下方二维码，关注公众号接收行程提醒。</p>
             <div style="background:#f5f5f5; padding: 10px; display:inline-block; border-radius: 8px;">
@@ -315,11 +318,11 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
             <van-button block plain type="default" style="margin-top:10px;" @click="showAuth=false">暂不发布</van-button>
         </div>
         <div v-else style="margin-top: 20px;">
-            <p style="color:#666; font-size:14px; margin-bottom:20px; text-align:center;">【第二步】授权基本信息</p>
+            <p style="color:#666; font-size:14px; margin-bottom:20px; text-align:center;">发布行程需要绑定您的真实信息</p>
             <van-field v-model="registerForm.nickname" label="真实姓名" placeholder="填写真实姓名" border />
             <van-field v-model="registerForm.phone" label="手机号码" type="tel" placeholder="填写联系手机号" border />
-            <van-button block type="primary" @click="submitAuth" style="margin-top:30px;">确认授权并发布</van-button>
-            <van-button block plain type="default" style="margin-top:10px;" @click="authStep=1">返回上一步</van-button>
+            <van-button block type="primary" @click="submitAuth" style="margin-top:30px;">确认绑定并发布</van-button>
+            <van-button block plain type="default" style="margin-top:10px;" @click="showAuth=false">取消</van-button>
         </div>
     </van-popup>
   </div>
