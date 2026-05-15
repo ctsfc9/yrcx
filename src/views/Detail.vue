@@ -1,248 +1,80 @@
 <script setup>
-import { ref, onMounted, computed, watch } from 'vue';
+import { ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { useUserStore } from '../store/user';
-import { useSystemStore } from '../store/system';
-import { fetchRides } from '../api';
-import { showToast, showLoadingToast, closeToast, showDialog } from 'vant';
+import { showLoadingToast, closeToast, showSuccessToast, showFailToast } from 'vant';
+import wx from 'weixin-js-sdk';
+import { useAppStore } from '../store';
 
-const userStore = useUserStore();
-const systemStore = useSystemStore();
 const route = useRoute();
 const router = useRouter();
+const store = useAppStore();
 const ride = ref(null);
-const loading = ref(true);
 
-const isAdmin = computed(() => {
-  const profile = userStore.userProfile;
-  return profile.id === 'ADMIN_ID' || profile.phone === '13800138000'; // 管理员识别逻辑
+onMounted(async () => {
+    showLoadingToast({ message: '加载中...', duration: 0 });
+    const id = route.params.id; // 天然获取直达 ID
+    
+    // 1. 获取详情数据
+    try {
+        const res = await fetch(`/api/rides?id=${id}`);
+        const data = await res.json();
+        ride.value = data.ride;
+        closeToast();
+        
+        // 2. 初始化微信分享卡片
+        if (navigator.userAgent.toLowerCase().includes('micromessenger')) {
+            initWechatShare();
+        }
+    } catch (e) { closeToast(); showFailToast('行程不存在'); router.replace('/'); }
 });
-
-const handleBlacklist = (uid) => {
-  showDialog({
-    title: '确认拉黑',
-    message: '拉黑后该用户发布的所有行程将不再对所有人显示，确认操作？',
-    showCancelButton: true,
-  }).then(() => {
-    showToast('已提交后台处理');
-    // 实际应调用后端 API 更新系统配置中的 blacklist
-  }).catch(() => {});
-};
-
-const loadDetail = async () => {
-  const rideId = route.params.id;
-  if (!rideId) return;
-  
-  showLoadingToast('加载中...');
-  try {
-    const data = await fetchRides('all');
-    const item = data.results.find(r => String(r.id) === String(rideId));
-    if (item) {
-      ride.value = item;
-      initWechatShare();
-    } else {
-      showToast('未找到该行程');
-    }
-  } catch (e) {
-    console.error('Load detail error:', e);
-    showToast('加载失败');
-  } finally {
-    loading.value = false;
-    closeToast();
-  }
-};
-
-const formatDate = (str) => {
-  if (!str) return '';
-  const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2})[:](\d{1,2}))?/);
-  if (match) {
-    return `${match[1]}年${match[2]}月${match[3]}日 ${String(match[4]||0).padStart(2,'0')}:00`;
-  }
-  return str;
-};
-
-const getCarModelStyle = (model) => {
-  if (!model) return {};
-  if (model.includes('电')) return { color: '#07c160', fontWeight: 'bold' }; // 绿色
-  if (model.includes('混动') || model.includes('黄色')) return { color: '#edc30e', fontWeight: 'bold' }; // 黄色
-  return { color: '#ee0a24', fontWeight: 'bold' }; // 油车-红色
-};
-
-const handleCall = () => {
-  if (ride.value?.contact) {
-    window.location.href = `tel:${ride.value.contact}`;
-  }
-};
-
-const copyShareText = () => {
-  const r = ride.value;
-  const typeText = r.type === 'driver' ? '【车找人】' : '【人找车】';
-  const shareUrl = `https://yrcx.ctsfc.top/#/detail/${r.id}`;
-  const text = `${typeText} ${r.origin} → ${r.destination}\n时间：${formatDate(r.date)}\n人数：${r.seats}人\n费用：${r.price || '面议'}元/人\n备注：${r.remark || '无'}\n查看详情/联系方式：${shareUrl}`;
-  
-  const input = document.createElement('textarea');
-  input.value = text;
-  document.body.appendChild(input);
-  input.select();
-  document.execCommand('copy');
-  document.body.removeChild(input);
-  
-  showToast({
-    message: '复制成功，请发送到微信群',
-    icon: 'success',
-    duration: 2000
-  });
-};
 
 const initWechatShare = async () => {
-  if (!window.wx || !ride.value) return;
-  
-  const r = ride.value;
-  const shareData = {
-    title: `${r.type === 'driver' ? '【车找人】' : '【人找车】'} ${r.origin} → ${r.destination}`,
-    desc: `时间：${formatDate(r.date)} | 费用：${r.price || '面议'}元/人 | 老乡互助，共享出行！`,
-    link: `https://yrcx.ctsfc.top/#/detail/${r.id}`,
-    imgUrl: 'https://i.postimg.cc/6pMzm4dr/image.jpg',
-    success: () => { showToast('分享成功'); }
-  };
+    try {
+        // 请求后端获取 JS-SDK 签名
+        const url = encodeURIComponent(location.href.split('#')[0]);
+        const res = await fetch(`/api/wechat/sign?url=${url}`);
+        const config = await res.json();
+        
+        wx.config({
+            debug: false,
+            appId: config.appId,
+            timestamp: config.timestamp,
+            nonceStr: config.nonceStr,
+            signature: config.signature,
+            jsApiList: ['updateAppMessageShareData', 'updateTimelineShareData']
+        });
 
-  try {
-    const res = await fetch(`/api/wechat?url=${encodeURIComponent(window.location.href.split('#')[0])}`);
-    const config = await res.json();
-    
-    window.wx.config({
-      debug: false,
-      appId: config.appId,
-      timestamp: config.timestamp,
-      nonceStr: config.nonceStr,
-      signature: config.signature,
-      jsApiList: [
-        'updateAppMessageShareData', 
-        'updateTimelineShareData', 
-        'onMenuShareAppMessage', 
-        'onMenuShareTimeline'
-      ]
-    });
-
-    window.wx.ready(() => {
-      window.wx.updateAppMessageShareData(shareData);
-      window.wx.updateTimelineShareData(shareData);
-      window.wx.onMenuShareAppMessage(shareData);
-      window.wx.onMenuShareTimeline(shareData);
-    });
-  } catch (e) {
-    console.error('Wechat SDK init failed', e);
-  }
+        wx.ready(() => {
+            const shareData = {
+                title: `【宜人出行】${ride.value.origin} ➔ ${ride.value.destination}`,
+                desc: `出发时间：${ride.value.date.replace('T', ' ').slice(0, 16)} | 剩余座位：${ride.value.seats}座`,
+                link: location.href,
+                imgUrl: 'https://cdn.jsdelivr.net/npm/@vant/assets/cat.jpeg' // 替换为您平台的真实 Logo URL
+            };
+            wx.updateAppMessageShareData(shareData); // 微信好友卡片
+            wx.updateTimelineShareData(shareData);   // 朋友圈
+        });
+    } catch (e) { console.error('微信配置失败'); }
 };
 
-onMounted(loadDetail);
-watch(() => route.params.id, (newId) => {
-  if (newId) loadDetail();
-});
+const goBack = () => router.back();
 </script>
 
 <template>
-  <div class="page-detail" v-if="ride">
-    <van-nav-bar title="行程详情" left-arrow @click-left="router.back()" />
-    
-    <div class="detail-card" :class="ride.type">
-      <div class="header">
-        <div class="type-tag" :class="ride.type">{{ ride.type === 'driver' ? '车找人' : '人找车' }}</div>
-        <div class="price">{{ ride.price || '面议' }}<span class="unit">元/人</span></div>
+  <div class="detail-page" v-if="ride">
+    <van-nav-bar title="行程详情" left-arrow @click-left="goBack" />
+    <div style="padding: 15px;">
+      <div style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,0.05);">
+        <h2>{{ ride.origin }} ➔ {{ ride.destination }}</h2>
+        <p style="color:#666; margin: 10px 0;">出发时间：{{ ride.date.replace('T', ' ') }}</p>
+        <p style="color:#666; margin: 10px 0;">提供座位：{{ ride.seats }}座</p>
+        <p style="color:#666; margin: 10px 0;">行程费用：<span style="color:red;font-size:18px;font-weight:bold;">¥{{ ride.price }}</span></p>
+        <van-divider />
+        <p style="color:#999; font-size:14px;">车主备注：{{ ride.remark || '无' }}</p>
       </div>
-
-      <div class="route-section">
-        <div class="route-item">
-          <div class="dot green"></div>
-          <div class="addr-box">
-            <div class="label">起点</div>
-            <div class="addr-text">{{ ride.origin }}</div>
-          </div>
-        </div>
-        <div class="route-line"></div>
-        <div class="route-item">
-          <div class="dot red"></div>
-          <div class="addr-box">
-            <div class="label">终点</div>
-            <div class="addr-text">{{ ride.destination }}</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="info-grid">
-        <div class="info-item">
-          <van-icon name="clock-o" />
-          <div class="val">{{ formatDate(ride.date) }}</div>
-        </div>
-        <div class="info-item">
-          <van-icon name="friends-o" />
-          <div class="val">余 {{ ride.seats }} 座</div>
-        </div>
-        <div class="info-item" v-if="ride.type === 'driver'">
-          <van-icon name="logistics" />
-          <div class="val" :style="getCarModelStyle(ride.car_model)">{{ ride.car_model }}</div>
-        </div>
-      </div>
-
-      <div class="remark-box">
-        <div class="label">备注信息</div>
-        <div class="content">{{ ride.remark || '无备注' }}</div>
-      </div>
-    </div>
-
-    <div class="share-guide">
-      <div class="guide-title">详情查看</div>
-      <div class="share-url">https://yrcx.ctsfc.top/#/detail/{{ ride.id }}</div>
-      <div class="guide-tip">点击下方按钮复制信息或直接点击右上角分享</div>
-    </div>
-
-    <div class="action-bar">
-      <div class="btn-group">
-        <van-button v-if="ride.user_id === userStore.userProfile.id" round type="warning" icon="edit" class="action-btn" @click="router.push(`/post?edit=${ride.id}`)">重新编辑</van-button>
-        <van-button round type="success" icon="phone-o" class="action-btn" @click="handleCall">拨打电话</van-button>
-        <van-button round type="primary" icon="share-o" class="action-btn" @click="copyShareText">一键复制</van-button>
-      </div>
-      <div v-if="isAdmin" style="margin-top: 10px;">
-        <van-button block round type="danger" plain size="small" @click="handleBlacklist(ride.user_id)">拉黑该用户(仅管理员可见)</van-button>
-      </div>
+      <van-button block round type="primary" style="margin-top: 20px;" @click="() => window.location.href=`tel:${ride.contact}`">
+         拨打电话联系
+      </van-button>
     </div>
   </div>
 </template>
-
-<style scoped>
-.page-detail { min-height: 100vh; background: #f7f8fa; padding-bottom: 120px; }
-.detail-card { background: #fff; margin: 15px; padding: 20px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border-top: 6px solid #1989fa; }
-.detail-card.passenger { border-top-color: #ee0a24; }
-
-.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
-.type-tag { padding: 4px 12px; border-radius: 6px; font-weight: bold; font-size: 16px; }
-.type-tag.driver { background: #eef5fe; color: #1989fa; }
-.type-tag.passenger { background: #fdf2f2; color: #ee0a24; }
-.price { font-size: 24px; font-weight: bold; color: #ee0a24; }
-.unit { font-size: 14px; font-weight: normal; margin-left: 4px; }
-
-.route-section { position: relative; margin-bottom: 30px; }
-.route-item { display: flex; gap: 15px; align-items: flex-start; }
-.dot { width: 12px; height: 12px; border-radius: 50%; margin-top: 18px; flex-shrink: 0; }
-.dot.green { background: #07c160; }
-.dot.red { background: #ee0a24; }
-.route-line { position: absolute; left: 5px; top: 30px; bottom: 30px; width: 2px; background: #ebedf0; }
-.addr-box .label { font-size: 14px; color: #969799; margin-bottom: 4px; }
-.addr-box .addr-text { font-size: 20px; font-weight: bold; color: #323233; }
-
-.info-grid { display: grid; grid-template-columns: 1fr; gap: 15px; margin-bottom: 25px; padding: 15px; background: #f7f8fa; border-radius: 12px; }
-.info-item { display: flex; align-items: center; gap: 10px; color: #646566; font-size: 16px; }
-.info-item .val { font-weight: 500; color: #323233; }
-
-.remark-box .label { font-size: 16px; font-weight: bold; color: #323233; margin-bottom: 10px; }
-.remark-box .content { font-size: 16px; color: #646566; line-height: 1.6; }
-
-.share-guide { margin: 20px 15px; padding: 15px; background: #fff; border-radius: 12px; text-align: center; border: 1px dashed #1989fa; }
-.guide-title { font-size: 16px; font-weight: bold; color: #1989fa; margin-bottom: 8px; }
-.share-url { font-size: 12px; color: #969799; word-break: break-all; margin-bottom: 8px; }
-.guide-tip { font-size: 12px; color: #c8c9cc; }
-
-.action-bar { position: fixed; bottom: 20px; left: 15px; right: 15px; z-index: 100; }
-.btn-group { display: flex; gap: 12px; width: 100%; }
-.action-btn { flex: 1; height: 50px; font-size: 16px; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-</style>
