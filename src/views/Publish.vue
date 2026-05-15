@@ -8,7 +8,7 @@ const router = useRouter();
 const route = useRoute();
 const store = useAppStore();
 
-// 获取当前时间用于默认赋值
+// 1. 获取当前时间用于默认赋值
 const getNowDate = () => {
   const now = new Date();
   const y = now.getFullYear();
@@ -17,7 +17,8 @@ const getNowDate = () => {
   const h = now.getHours();
   return {
     display: `${y}年${m}月${d}日 ${h}点`,
-    value: `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}T${String(h).padStart(2, '0')}:00:00`
+    value: `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}T${String(h).padStart(2, '0')}:00:00`,
+    pickerValues: [y, m, d, h] // 用于绑定底部弹窗的选择刻度
   };
 };
 const defaultDateInfo = getNowDate();
@@ -32,11 +33,14 @@ const postForm = reactive({
   price: '', 
   remark: [], 
   car_model: '油车', 
-  contact: store.userProfile?.phone || '', // 自动调用已有手机号
+  contact: store.userProfile?.phone || '', 
   old_id: null 
 });
-const submitLoading = ref(false);
 
+// 用于绑定时间选择器弹窗的默认值
+const currentDateValues = ref(defaultDateInfo.pickerValues);
+
+const submitLoading = ref(false);
 const showMap = ref(false);
 const showDate = ref(false);
 const showAuth = ref(false);
@@ -48,7 +52,7 @@ const currentMapField = ref('');
 const mapSelectionText = ref('定位中...');
 let mapInstance = null;
 const userLocation = ref(null); 
-// 快捷城市：江浙沪粤及宜宾市热门城市
+
 const hotCities = ['上海', '广州', '深圳', '杭州', '南京', '苏州', '宜宾', '宁波', '无锡', '东莞', '佛山'];
 
 const currentRemarkOptions = computed(() => {
@@ -85,22 +89,30 @@ const loadAMapScript = () => {
     document.body.appendChild(s); 
 };
 
-// 先 IP 取市，再 GPS 取区县
+// 2. 优化：强制赋值 origin，确保绝不为空
 const autoLocate = () => { 
     if(!window.AMap) { setTimeout(autoLocate, 800); return; }
-    showLoadingToast({ message: '精确定位中...', duration: 4000 });
+    showLoadingToast({ message: '获取位置中...', duration: 4000 });
     
+    // 第一层保底：先用 IP 获取城市
     new AMap.CitySearch().getLocalCity((s1, r1) => {
-        if (s1 === 'complete' && r1.city && !postForm.origin) {
+        if (s1 === 'complete' && r1.city) {
             postForm.origin = r1.city.replace(/[省市]/g, ''); 
         }
+        
+        // 第二层精准：尝试使用 GPS 获取区县
         new AMap.Geolocation({ enableHighAccuracy: true, timeout: 3500 }).getCurrentPosition((s2, r2) => {
             closeToast();
             if (s2 === 'complete' && r2.addressComponent) {
                 userLocation.value = [r2.position.lng, r2.position.lat];
                 const ac = r2.addressComponent;
-                if (ac.district) postForm.origin = ac.district.replace(/[区县市]/g, ''); 
-                else if (ac.city) postForm.origin = ac.city.replace(/[省市]/g, '');
+                if (ac.district) {
+                    postForm.origin = ac.district.replace(/[区县市]/g, ''); 
+                } else if (ac.city) {
+                    postForm.origin = ac.city.replace(/[省市]/g, '');
+                }
+            } else if (!postForm.origin) {
+                showToast('定位失败，请手动选择');
             }
         });
     });
@@ -113,7 +125,6 @@ const initMapInstance = () => {
     const center = userLocation.value || [116.397428, 39.90923];
     mapInstance = new AMap.Map('picker-map-container', { zoom: 14, center: center }); 
     
-    // 如果没有精确GPS坐标，但拿到了城市名，自动将地图中心切换到该城市
     if (!userLocation.value && postForm.origin) {
         mapInstance.setCity(postForm.origin);
     }
@@ -150,30 +161,39 @@ const submitAuth = async () => {
         payload.id = data.userId;
         store.saveUser(payload);
         showAuth.value = false;
-        postForm.contact = registerForm.phone; // 同步给表单
+        postForm.contact = registerForm.phone;
         showSuccessToast('授权成功');
+        handleRealPublish(); // 授权完直接帮忙发布
     }
 };
 
+// 3. 修复发布报错：精确捕获并展示错误信息
 const handleRealPublish = async () => { 
     submitLoading.value = true; 
     const dateVal = postForm.date || new Date().toISOString(); 
     const remarkStr = Array.isArray(postForm.remark) ? postForm.remark.join('，') : postForm.remark; 
-    // contact 字段现在已经绑定在 postForm 中了
-    const newRide = { ...postForm, user_id: store.userProfile.id, date: dateVal, remark: remarkStr }; 
+    
+    // 确保 user_id 存在
+    const currentUserId = store.userProfile?.id || store.userInfo?.id || '';
+    
+    const newRide = { ...postForm, user_id: currentUserId, date: dateVal, remark: remarkStr }; 
     if (!newRide.price) newRide.price = '面议';
 
     try { 
         const res = await fetch('/api/rides', { method: 'POST', body: JSON.stringify(newRide) }); 
+        const result = await res.json(); // 解析后端返回数据
+        
         if (res.ok) { 
             showSuccessToast('发布成功'); 
             router.replace('/'); 
         } else {
-            const err = await res.json();
-            showFailToast(err.error || '发布失败');
+            // 如果后端返回了错误，直接弹窗显示具体的错误字段
+            showFailToast(result.error || '发布失败(接口拒绝)');
+            console.error('后端拒绝原因:', result);
         }
     } catch(e) {
-        showFailToast('网络异常，请重试');
+        showFailToast('网络异常: ' + e.message);
+        console.error('请求崩溃:', e);
     } finally { 
         submitLoading.value = false; 
     } 
@@ -194,13 +214,13 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
     
     <div style="background:#fff; border-radius:8px; padding:15px; margin-top:15px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
       <div style="display:flex; align-items:center; margin-bottom:10px; border-bottom:1px dashed #eee; padding-bottom:10px;">
-        <div style="width:24px; height:24px; border-radius:50%; background:#07c160; color:#fff; text-align:center; line-height:24px; margin-right:12px; font-size:14px;">起</div>
-        <div style="font-size:16px; font-weight:bold; flex:1;" @click="openMapSelector('origin')">{{ postForm.origin || '点击定位' }}</div>
-        <div @click="autoLocate"><van-icon name="aim" size="20" color="#1989fa"/></div>
+        <div style="width:32px; height:32px; border-radius:50%; background:#07c160; color:#fff; text-align:center; line-height:32px; margin-right:12px; font-size:16px; font-weight:bold;">起</div>
+        <div style="font-size:18px; font-weight:bold; flex:1;" @click="openMapSelector('origin')">{{ postForm.origin || '点击定位' }}</div>
+        <div @click="autoLocate"><van-icon name="aim" size="24" color="#1989fa"/></div>
       </div>
       <div style="display:flex; align-items:center; position: relative;">
-        <div style="width:24px; height:24px; border-radius:50%; background:red; color:#fff; text-align:center; line-height:24px; margin-right:12px; font-size:14px;">终</div>
-        <div style="font-size:16px; font-weight:bold; flex:1;" @click="openMapSelector('destination')">{{ postForm.destination || '点击选择' }}</div>
+        <div style="width:32px; height:32px; border-radius:50%; background:red; color:#fff; text-align:center; line-height:32px; margin-right:12px; font-size:16px; font-weight:bold;">终</div>
+        <div style="font-size:18px; font-weight:bold; flex:1;" @click="openMapSelector('destination')">{{ postForm.destination || '点击选择' }}</div>
         <div style="position:absolute; right:40px; top:-15px; background:#fff; padding:5px; border-radius:50%; box-shadow:0 2px 8px rgba(0,0,0,0.1);" @click="()=>{const t=postForm.origin;postForm.origin=postForm.destination;postForm.destination=t;}"><van-icon name="exchange" size="20" color="#1989fa" style="transform: rotate(90deg);" /></div>
       </div>
     </div>
@@ -222,15 +242,15 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
       </div>
       <div style="display:flex; align-items:center; padding:12px 0; border-bottom:1px solid #f0f0f0;" @click="showDate=true">
         <div style="width:70px; font-weight:bold;">时间</div>
-        <div style="flex:1; text-align:right;">{{ postForm.dateDisplay || '请选择' }} <van-icon name="arrow" color="#999"/></div>
+        <div style="flex:1; text-align:right; font-size:16px;">{{ postForm.dateDisplay || '请选择' }} <van-icon name="arrow" color="#999"/></div>
       </div>
       <div style="display:flex; align-items:center; padding:12px 0; border-bottom:1px solid #f0f0f0;">
         <div style="width:70px; font-weight:bold;">电话</div>
-        <van-field v-model="postForm.contact" type="tel" placeholder="请输入联系号码" input-align="right" :border="false" style="padding:0;"/>
+        <van-field v-model="postForm.contact" type="tel" placeholder="请输入联系号码" input-align="right" :border="false" style="padding:0; font-size:16px;"/>
       </div>
       <div style="display:flex; align-items:center; padding:12px 0; border-bottom:1px solid #f0f0f0;">
         <div style="width:70px; font-weight:bold;">费用</div>
-        <van-field v-model="postForm.price" type="digit" placeholder="元(不填默认为面议)" input-align="right" :border="false" style="padding:0;"/>
+        <van-field v-model="postForm.price" type="digit" placeholder="元(不填默认为面议)" input-align="right" :border="false" style="padding:0; font-size:16px;"/>
       </div>
       <div style="padding:12px 0;">
         <div style="font-weight:bold; margin-bottom:8px;">备注标签</div>
@@ -240,7 +260,7 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
       </div>
     </div>
 
-    <van-button round block type="primary" color="#07c160" :loading="submitLoading" @click="onPreSubmit" style="margin-top:30px;">{{ postForm.old_id ? '保存并更新' : '确认发布' }}</van-button>
+    <van-button round block type="primary" color="#07c160" :loading="submitLoading" @click="onPreSubmit" style="margin-top:30px; font-size:16px; height: 44px;">{{ postForm.old_id ? '保存并更新' : '确认发布' }}</van-button>
 
     <van-popup v-model:show="showMap" position="bottom" :style="{height:'90%'}" round @opened="initMapInstance">
         <div style="display:flex;flex-direction:column;height:100%;">
@@ -258,7 +278,9 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
         </div>
     </van-popup>
 
-    <van-popup v-model:show="showDate" position="bottom"><van-picker :columns="dateColumns" @confirm="onConfirmDate" @cancel="showDate=false"/></van-popup>
+    <van-popup v-model:show="showDate" position="bottom">
+        <van-picker v-model="currentDateValues" :columns="dateColumns" @confirm="onConfirmDate" @cancel="showDate=false"/>
+    </van-popup>
     
     <van-popup v-model:show="showAuth" position="bottom" style="height:65%;padding:20px;" :close-on-click-overlay="false">
         <h3 style="text-align:center">宜人出行 身份认证</h3>
