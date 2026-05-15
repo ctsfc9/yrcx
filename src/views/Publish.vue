@@ -1,14 +1,14 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { showToast, showSuccessToast, showFailToast, showLoadingToast, closeToast } from 'vant';
+import { showToast, showSuccessToast, showFailToast, showLoadingToast, closeToast, showDialog } from 'vant';
 import { useAppStore } from '../store';
 
 const router = useRouter();
 const route = useRoute();
 const store = useAppStore();
 
-// 1. 获取当前时间用于默认赋值
+// 获取当前时间用于默认赋值
 const getNowDate = () => {
   const now = new Date();
   const y = now.getFullYear();
@@ -18,7 +18,7 @@ const getNowDate = () => {
   return {
     display: `${y}年${m}月${d}日 ${h}点`,
     value: `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}T${String(h).padStart(2, '0')}:00:00`,
-    pickerValues: [y, m, d, h] // 用于绑定底部弹窗的选择刻度
+    pickerValues: [y, m, d, h]
   };
 };
 const defaultDateInfo = getNowDate();
@@ -37,10 +37,9 @@ const postForm = reactive({
   old_id: null 
 });
 
-// 用于绑定时间选择器弹窗的默认值
 const currentDateValues = ref(defaultDateInfo.pickerValues);
-
 const submitLoading = ref(false);
+
 const showMap = ref(false);
 const showDate = ref(false);
 const showAuth = ref(false);
@@ -89,31 +88,38 @@ const loadAMapScript = () => {
     document.body.appendChild(s); 
 };
 
-// 2. 优化：强制赋值 origin，确保绝不为空
+// 1. 修复定位：使用 AMap.plugin 确保组件加载，防止静默失败
 const autoLocate = () => { 
     if(!window.AMap) { setTimeout(autoLocate, 800); return; }
-    showLoadingToast({ message: '获取位置中...', duration: 4000 });
+    showLoadingToast({ message: '获取位置中...', duration: 0 });
     
-    // 第一层保底：先用 IP 获取城市
-    new AMap.CitySearch().getLocalCity((s1, r1) => {
-        if (s1 === 'complete' && r1.city) {
-            postForm.origin = r1.city.replace(/[省市]/g, ''); 
-        }
-        
-        // 第二层精准：尝试使用 GPS 获取区县
-        new AMap.Geolocation({ enableHighAccuracy: true, timeout: 3500 }).getCurrentPosition((s2, r2) => {
-            closeToast();
-            if (s2 === 'complete' && r2.addressComponent) {
-                userLocation.value = [r2.position.lng, r2.position.lat];
-                const ac = r2.addressComponent;
-                if (ac.district) {
-                    postForm.origin = ac.district.replace(/[区县市]/g, ''); 
-                } else if (ac.city) {
-                    postForm.origin = ac.city.replace(/[省市]/g, '');
-                }
-            } else if (!postForm.origin) {
-                showToast('定位失败，请手动选择');
+    // 强制按需加载插件
+    window.AMap.plugin(['AMap.CitySearch', 'AMap.Geolocation'], function() {
+        // 第一层：IP 定位城市
+        var citySearch = new window.AMap.CitySearch();
+        citySearch.getLocalCity(function(status, result) {
+            if (status === 'complete' && result.info === 'OK') {
+                postForm.origin = result.city.replace(/[省市]/g, ''); 
             }
+            
+            // 第二层：GPS 精确定位区县
+            var geolocation = new window.AMap.Geolocation({ enableHighAccuracy: true, timeout: 3500 });
+            geolocation.getCurrentPosition(function(status2, result2) {
+                closeToast();
+                if (status2 === 'complete' && result2.addressComponent) {
+                    userLocation.value = [result2.position.lng, result2.position.lat];
+                    const ac = result2.addressComponent;
+                    if (ac.district) {
+                        postForm.origin = ac.district.replace(/[区县市]/g, ''); 
+                    } else if (ac.city) {
+                        postForm.origin = ac.city.replace(/[省市]/g, '');
+                    }
+                } else if (!postForm.origin) {
+                    // 终极兜底：如果啥都没拿到，不让它空着
+                    postForm.origin = '定位失败';
+                    showToast('自动定位失败，请手动点击修改');
+                }
+            });
         });
     });
 };
@@ -123,14 +129,14 @@ const openMapSelector = (f) => { currentMapField.value = f; showMap.value = true
 const initMapInstance = () => {
     document.getElementById('picker-map-container').innerHTML = ''; 
     const center = userLocation.value || [116.397428, 39.90923];
-    mapInstance = new AMap.Map('picker-map-container', { zoom: 14, center: center }); 
+    mapInstance = new window.AMap.Map('picker-map-container', { zoom: 14, center: center }); 
     
-    if (!userLocation.value && postForm.origin) {
+    if (!userLocation.value && postForm.origin && postForm.origin !== '定位失败') {
         mapInstance.setCity(postForm.origin);
     }
     
     mapInstance.on('moveend', () => { 
-        new AMap.Geocoder().getAddress(mapInstance.getCenter(), (s, r) => {
+        new window.AMap.Geocoder().getAddress(mapInstance.getCenter(), (s, r) => {
             if (s === 'complete') mapSelectionText.value = r.regeocode.formattedAddress;
         }); 
     }); 
@@ -146,16 +152,20 @@ const confirmMapSelection = (val) => {
 };
 
 const onPreSubmit = () => { 
-    if(!postForm.origin || !postForm.destination) { showFailToast('请完善路线'); return; } 
-    if(!postForm.contact) { showFailToast('请填写电话'); return; }
-    if(!store.userProfile.phone) { showAuth.value = true; authStep.value = 1; return; } 
+    if(!postForm.origin || postForm.origin === '定位失败' || !postForm.destination) { showFailToast('请正确填写起点和终点'); return; } 
+    if(!postForm.contact) { showFailToast('请填写联系电话'); return; }
+    if(!store.userProfile?.phone) { showAuth.value = true; authStep.value = 1; return; } 
     handleRealPublish(); 
 };
 
 const submitAuth = async () => {
     if(!registerForm.phone || !registerForm.nickname) { showFailToast('需填完整'); return; }
     const payload = { ...store.userProfile, phone: registerForm.phone, nickname: registerForm.nickname, avatar: 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg' };
-    const res = await fetch('/api/login', { method: 'POST', body: JSON.stringify(payload) });
+    const res = await fetch('/api/login', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, // 修复：必须声明 JSON
+        body: JSON.stringify(payload) 
+    });
     if(res.ok) {
         const data = await res.json();
         payload.id = data.userId;
@@ -163,37 +173,49 @@ const submitAuth = async () => {
         showAuth.value = false;
         postForm.contact = registerForm.phone;
         showSuccessToast('授权成功');
-        handleRealPublish(); // 授权完直接帮忙发布
+        handleRealPublish();
     }
 };
 
-// 3. 修复发布报错：精确捕获并展示错误信息
+// 2. 修复发布报错：加入 Headers 并强化错误弹窗机制
 const handleRealPublish = async () => { 
     submitLoading.value = true; 
     const dateVal = postForm.date || new Date().toISOString(); 
     const remarkStr = Array.isArray(postForm.remark) ? postForm.remark.join('，') : postForm.remark; 
     
-    // 确保 user_id 存在
-    const currentUserId = store.userProfile?.id || store.userInfo?.id || '';
+    const currentUserId = store.userProfile?.id || '';
     
     const newRide = { ...postForm, user_id: currentUserId, date: dateVal, remark: remarkStr }; 
     if (!newRide.price) newRide.price = '面议';
 
     try { 
-        const res = await fetch('/api/rides', { method: 'POST', body: JSON.stringify(newRide) }); 
-        const result = await res.json(); // 解析后端返回数据
+        const res = await fetch('/api/rides', { 
+            method: 'POST', 
+            // 致命修复：之前漏了这行，导致后端无法识别数据！
+            headers: { 'Content-Type': 'application/json' }, 
+            body: JSON.stringify(newRide) 
+        }); 
+        
+        const textResponse = await res.text();
+        let result = {};
+        try { result = JSON.parse(textResponse); } catch(e) { result = { error: textResponse }; }
         
         if (res.ok) { 
             showSuccessToast('发布成功'); 
             router.replace('/'); 
         } else {
-            // 如果后端返回了错误，直接弹窗显示具体的错误字段
-            showFailToast(result.error || '发布失败(接口拒绝)');
-            console.error('后端拒绝原因:', result);
+            // 如果失败，强制弹出一个无法被轻易忽略的大弹窗！
+            showDialog({
+                title: '发布失败 ❌',
+                message: `后端拒绝了请求：\n状态码: ${res.status}\n报错详情: ${result.error || result.message || '未知数据错误'}`,
+            });
+            console.error('发布失败完整报文:', result);
         }
     } catch(e) {
-        showFailToast('网络异常: ' + e.message);
-        console.error('请求崩溃:', e);
+        showDialog({
+            title: '网络报错',
+            message: `请求没有发出去，错误信息：\n${e.message}`
+        });
     } finally { 
         submitLoading.value = false; 
     } 
