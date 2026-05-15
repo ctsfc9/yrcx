@@ -1,14 +1,18 @@
-import { createApp } from 'vue';
-import { createPinia } from 'pinia';
-import router from './router';
-import App from './App.vue';
-import { ConfigProvider } from 'vant';
-import 'vant/lib/index.css';
+import { createApp } from 'vue'
+import { createPinia } from 'pinia'
+import App from './App.vue'
+import router from './router'
 
-const app = createApp(App);
+// 引入 Vant 全局样式
+import 'vant/lib/index.css'
+import { Button, NavBar, Form, Field, RadioGroup, Radio, Popup, Picker, Stepper, Toast, Dialog, Search, Icon, Tab, Tabs } from 'vant'
 
-app.use(createPinia());
-app.use(router);
-app.use(ConfigProvider);
+const app = createApp(App)
 
-app.mount('#app');
+// 注册所需组件
+const components = [Button, NavBar, Form, Field, RadioGroup, Radio, Popup, Picker, Stepper, Toast, Dialog, Search, Icon, Tab, Tabs]
+components.forEach(cmp => app.use(cmp))
+
+app.use(createPinia())
+app.use(router)
+app.mount('#app')
