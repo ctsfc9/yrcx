@@ -6,11 +6,66 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" />
     <title>宜人出行 - 长途顺风合乘平台</title>
     <meta name="description" content="一个专注长途顺风拼车的合乘平台，老乡互助，共享出行！" />
+
+    <link rel="dns-prefetch" href="//webapi.amap.com" />
+    <link rel="dns-prefetch" href="//res.wx.qq.com" />
+    <link rel="dns-prefetch" href="//fastly.jsdelivr.net" />
+
+    <style>
+      body, html { margin: 0; padding: 0; background-color: #f7f8fa; }
+      #app:empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+      }
+      /* 品牌 Slogan 动画 */
+      .loading-slogan {
+        font-size: 20px;
+        font-weight: bold;
+        color: #ff6600;
+        margin-bottom: 15px;
+        letter-spacing: 2px;
+        animation: pulse 1.5s infinite;
+      }
+      .loading-ad {
+        font-size: 14px;
+        color: #999;
+        margin-top: 10px;
+      }
+      /* 经典的转圈动画 */
+      .spinner {
+        width: 32px;
+        height: 32px;
+        border: 3px solid #eee;
+        border-top-color: #ff6600;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @keyframes pulse { 
+        0% { opacity: 0.6; transform: scale(0.95); }
+        50% { opacity: 1; transform: scale(1); }
+        100% { opacity: 0.6; transform: scale(0.95); }
+      }
+    </style>
+
+    <script>
+      window._AMapSecurityConfig = { securityJsCode: '您的安全密钥' }; // 如没配置可删除此行
+    </script>
+    <script async src="https://webapi.amap.com/maps?v=2.0&key=您的真实Key&plugin=AMap.Geolocation,AMap.CitySearch,AMap.Geocoder"></script>
     
     <script src="https://res.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
   </head>
+
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <div class="loading-slogan">宜人出行</div>
+      <div class="spinner"></div>
+      <div class="loading-ad">老乡互助 · 共享出行 · 安全便捷</div>
+    </div>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
