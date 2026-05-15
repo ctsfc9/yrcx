@@ -1,38 +1,24 @@
-import { createRouter, createWebHashHistory } from 'vue-router';
+import { createRouter, createWebHistory } from 'vue-router';
 
 const routes = [
-  {
-    path: '/',
-    name: 'Home',
-    component: () => import('../views/Home.vue'),
-  },
-  {
-    path: '/post',
-    name: 'Post',
-    component: () => import('../views/Post.vue'),
-  },
-  {
-    path: '/my',
-    name: 'MyRides',
-    component: () => import('../views/MyRides.vue'),
-  },
-  {
-    path: '/admin',
-    name: 'Admin',
-    component: () => import('../views/Admin.vue'),
-  },
-  {
-    path: '/detail/:id',
-    name: 'Detail',
-    component: () => import('../views/Detail.vue'),
-    meta: { hideTabbar: true }
-  }
+  { path: '/', name: 'Home', component: () => import('../views/Home.vue'), meta: { title: '首页' } },
+  { path: '/publish', name: 'Publish', component: () => import('../views/Publish.vue'), meta: { title: '发布行程' } },
+  { path: '/me', name: 'Me', component: () => import('../views/Me.vue'), meta: { title: '个人中心' } },
+  // ★ 真正的直达路由，天然支持分享和单独打开
+  { path: '/ride/:id', name: 'Detail', component: () => import('../views/Detail.vue'), meta: { title: '行程详情' } },
+  { path: '/admin', name: 'Admin', component: () => import('../views/Admin.vue'), meta: { title: '管理后台' } },
+  // 微信授权中转页
+  { path: '/auth', name: 'Auth', component: () => import('../views/Auth.vue'), meta: { title: '微信授权登录' } }
 ];
 
 const router = createRouter({
-  // 使用 Hash 模式确保在微信和静态托管中跳转精准
-  history: createWebHashHistory(),
+  history: createWebHistory(),
   routes,
+});
+
+router.beforeEach((to, from, next) => {
+  if (to.meta.title) document.title = `${to.meta.title} - 宜人出行`;
+  next();
 });
 
 export default router;
