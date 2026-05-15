@@ -1,228 +1,321 @@
-<script setup>
-import { ref, reactive, computed, onMounted } from 'vue';
-import { useRouter, useRoute } from 'vue-router';
-import { showToast, showSuccessToast, showFailToast, showLoadingToast, closeToast } from 'vant';
-import { useAppStore } from '../store';
-
-const router = useRouter();
-const route = useRoute();
-const store = useAppStore();
-
-const postForm = reactive({ type: route.query.type || 'driver', origin: '', destination: '', date: '', dateDisplay: '', seats: 1, price: '', remark: [], car_model: '', old_id: null });
-const submitLoading = ref(false);
-
-const showMap = ref(false);
-const showDate = ref(false);
-const showAuth = ref(false);
-const authStep = ref(1);
-const registerForm = reactive({ phone: '', nickname: '' });
-
-const mapSearchKeyword = ref('');
-const currentMapField = ref(''); 
-const mapSelectionText = ref('定位中...');
-let mapInstance = null;
-const userLocation = ref(null); 
-const hotCities = ['北京', '上海', '广州', '深圳', '杭州', '成都', '武汉', '西安'];
-
-const currentRemarkOptions = computed(() => {
-  const str = postForm.type === 'driver' ? store.sysConfig.tags_driver : store.sysConfig.tags_passenger;
-  return (str || '').split(',').filter(Boolean);
-});
-
-const dateColumns = computed(() => {
-  const y = new Date().getFullYear();
-  return [
-    [{ text: `${y}年`, value: y }, { text: `${y+1}年`, value: y+1 }],
-    Array.from({length: 12}, (_, i) => ({ text: `${i+1}月`, value: i+1 })),
-    Array.from({length: 31}, (_, i) => ({ text: `${i+1}日`, value: i+1 })),
-    Array.from({length: 24}, (_, i) => ({ text: `${i}点`, value: i }))
-  ];
-});
-
-onMounted(() => {
-    if (store.editPayload) {
-        Object.assign(postForm, store.editPayload);
-        postForm.remark = store.editPayload.remark ? store.editPayload.remark.split('，') : [];
-        postForm.old_id = store.editPayload.id;
-        store.setEditPayload(null); 
-    } else {
-        loadAMapScript();
-    }
-});
-
-const loadAMapScript = () => { 
-    if(window.AMap) { autoLocate(); return; }
-    const s = document.createElement('script'); 
-    s.src = `https://webapi.amap.com/maps?v=2.0&key=${store.sysConfig.amap_key}&plugin=AMap.CitySearch,AMap.Geolocation,AMap.Geocoder`; 
-    s.onload = autoLocate;
-    document.body.appendChild(s); 
-};
-
-// 先 IP 取市，再 GPS 取区县
-const autoLocate = () => { 
-    if(!window.AMap) { setTimeout(autoLocate, 800); return; }
-    showLoadingToast({ message: '精确定位中...', duration: 4000 });
-    
-    new AMap.CitySearch().getLocalCity((s1, r1) => {
-        if (s1 === 'complete' && r1.city && !postForm.origin) {
-            postForm.origin = r1.city.replace(/[省市]/g, ''); 
-        }
-        new AMap.Geolocation({ enableHighAccuracy: true, timeout: 3500 }).getCurrentPosition((s2, r2) => {
-            closeToast();
-            if (s2 === 'complete' && r2.addressComponent) {
-                userLocation.value = [r2.position.lng, r2.position.lat];
-                const ac = r2.addressComponent;
-                if (ac.district) postForm.origin = ac.district.replace(/[区县市]/g, ''); 
-                else if (ac.city) postForm.origin = ac.city.replace(/[省市]/g, '');
-            }
-        });
-    });
-};
-
-const openMapSelector = (f) => { currentMapField.value = f; showMap.value = true; mapSearchKeyword.value = ''; };
-
-const initMapInstance = () => {
-    document.getElementById('picker-map-container').innerHTML = ''; 
-    const center = userLocation.value || [116.397428, 39.90923];
-    mapInstance = new AMap.Map('picker-map-container', { zoom: 14, center: center }); 
-    mapInstance.on('moveend', () => { 
-        new AMap.Geocoder().getAddress(mapInstance.getCenter(), (s, r) => {
-            if (s === 'complete') mapSelectionText.value = r.regeocode.formattedAddress;
-        }); 
-    }); 
-};
-
-const confirmMapSelection = (val) => { 
-    const finalVal = val || mapSearchKeyword.value || mapSelectionText.value;
-    if (finalVal && finalVal !== '定位中...') {
-        if (currentMapField.value === 'origin') postForm.origin = finalVal; 
-        else postForm.destination = finalVal; 
-        showMap.value = false;
-    } else showToast('请等待定位'); 
-};
-
-const onPreSubmit = () => { 
-    if(!postForm.origin || !postForm.destination) { showFailToast('请完善路线'); return; } 
-    if(!store.userProfile.phone) { showAuth.value = true; authStep.value = 1; return; } 
-    handleRealPublish(); 
-};
-
-const submitAuth = async () => {
-    if(!registerForm.phone || !registerForm.nickname) { showFailToast('需填完整'); return; }
-    const payload = { ...store.userProfile, phone: registerForm.phone, nickname: registerForm.nickname, avatar: 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg' };
-    const res = await fetch('/api/login', { method: 'POST', body: JSON.stringify(payload) });
-    if(res.ok) {
-        const data = await res.json();
-        payload.id = data.userId;
-        store.saveUser(payload);
-        showAuth.value = false;
-        showSuccessToast('授权成功');
-    }
-};
-
-const handleRealPublish = async () => { 
-    submitLoading.value = true; 
-    const dateVal = postForm.date || new Date().toISOString(); 
-    const remarkStr = Array.isArray(postForm.remark) ? postForm.remark.join('，') : postForm.remark; 
-    const newRide = { ...postForm, user_id: store.userProfile.id, contact: store.userProfile.phone, date: dateVal, remark: remarkStr }; 
-    if (!newRide.price) newRide.price = '面议';
-
-    try { 
-        const res = await fetch('/api/rides', { method: 'POST', body: JSON.stringify(newRide) }); 
-        if (res.ok) { showSuccessToast('发布成功'); router.replace('/'); } 
-    } catch(e) {} finally { submitLoading.value = false; } 
-};
-
-const onConfirmDate = ({selectedOptions}) => { 
-  const v = selectedOptions.map(o=>o.value); 
-  postForm.dateDisplay=`${v[0]}年${v[1]}月${v[2]}日 ${v[3]}点`; 
-  postForm.date=`${v[0]}-${String(v[1]).padStart(2,'0')}-${String(v[2]).padStart(2,'0')}T${String(v[3]).padStart(2,'0')}:00:00`; 
-  showDate.value=false; 
-};
-const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postForm.remark.splice(i,1); else postForm.remark.push(t); };
-</script>
-
 <template>
-  <div style="padding:10px;">
-    <van-nav-bar :title="postForm.old_id ? '编辑行程' : '发布行程'" left-arrow @click-left="router.back()" />
-    
-    <div style="background:#fff; border-radius:8px; padding:15px; margin-top:15px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
-      <div style="display:flex; align-items:center; margin-bottom:10px; border-bottom:1px dashed #eee; padding-bottom:10px;">
-        <div style="width:24px; height:24px; border-radius:50%; background:#07c160; color:#fff; text-align:center; line-height:24px; margin-right:12px; font-size:14px;">起</div>
-        <div style="font-size:16px; font-weight:bold; flex:1;" @click="openMapSelector('origin')">{{ postForm.origin || '点击定位' }}</div>
-        <div @click="autoLocate"><van-icon name="aim" size="20" color="#1989fa"/></div>
-      </div>
-      <div style="display:flex; align-items:center; position: relative;">
-        <div style="width:24px; height:24px; border-radius:50%; background:red; color:#fff; text-align:center; line-height:24px; margin-right:12px; font-size:14px;">终</div>
-        <div style="font-size:16px; font-weight:bold; flex:1;" @click="openMapSelector('destination')">{{ postForm.destination || '点击选择' }}</div>
-        <div style="position:absolute; right:40px; top:-15px; background:#fff; padding:5px; border-radius:50%; box-shadow:0 2px 8px rgba(0,0,0,0.1);" @click="()=>{const t=postForm.origin;postForm.origin=postForm.destination;postForm.destination=t;}"><van-icon name="exchange" size="20" color="#1989fa" style="transform: rotate(90deg);" /></div>
-      </div>
-    </div>
+  <div class="publish-container">
+    <van-nav-bar title="发布行程" left-arrow @click-left="onClickLeft" />
 
-    <div style="background:#fff; border-radius:8px; padding:15px; margin-top:15px;">
-      <div style="display:flex; align-items:center; padding:12px 0; border-bottom:1px solid #f0f0f0;">
-        <div style="width:70px; font-weight:bold;">座位</div>
-        <div style="display:flex; gap:8px;">
-          <div v-for="n in 6" :key="n" @click="postForm.seats=n" style="width:30px; height:30px; background:#f0f0f0; display:flex; align-items:center; justify-content:center; border-radius:4px;" :style="postForm.seats===n ? 'background:#1989fa;color:#fff;' : ''">{{n}}</div>
-        </div>
-      </div>
-      <div v-if="postForm.type==='driver'" style="display:flex; align-items:center; padding:12px 0; border-bottom:1px solid #f0f0f0;">
-        <div style="width:70px; font-weight:bold;">车型</div>
-        <van-radio-group v-model="postForm.car_model" direction="horizontal"><van-radio name="油车">油车</van-radio><van-radio name="电车">电车</van-radio></van-radio-group>
-      </div>
-      <div style="display:flex; align-items:center; padding:12px 0; border-bottom:1px solid #f0f0f0;" @click="showDate=true">
-        <div style="width:70px; font-weight:bold;">时间</div>
-        <div style="flex:1; text-align:right;">{{ postForm.dateDisplay || '请选择' }} <van-icon name="arrow" color="#999"/></div>
-      </div>
-      <div style="display:flex; align-items:center; padding:12px 0; border-bottom:1px solid #f0f0f0;">
-        <div style="width:70px; font-weight:bold;">费用</div>
-        <van-field v-model="postForm.price" type="digit" placeholder="元(不填默认为面议)" input-align="right" :border="false" style="padding:0;"/>
-      </div>
-      <div style="padding:12px 0;">
-        <div style="font-weight:bold; margin-bottom:8px;">备注标签</div>
-        <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
-          <div v-for="t in currentRemarkOptions" :key="t" @click="toggleRemark(t)" style="padding:4px 12px; background:#f0f0f0; border-radius:4px; font-size:13px;" :style="postForm.remark.includes(t) ? 'background:#eaf5ff; color:#1989fa; border:1px solid #1989fa;' : ''">{{t}}</div>
-        </div>
-      </div>
-    </div>
+    <van-form @submit="onSubmit">
+      <van-field name="type" label="我是">
+        <template #input>
+          <van-radio-group v-model="form.type" direction="horizontal">
+            <van-radio name="driver">车主</van-radio>
+            <van-radio name="passenger">乘客</van-radio>
+          </van-radio-group>
+        </template>
+      </van-field>
 
-    <van-button round block type="primary" color="#07c160" :loading="submitLoading" @click="onPreSubmit" style="margin-top:30px;">{{ postForm.old_id ? '保存并更新' : '确认发布' }}</van-button>
+      <van-field
+        v-model="form.origin"
+        is-link
+        readonly
+        name="origin"
+        label="出发地"
+        placeholder="正在获取位置..."
+        @click="showOriginPicker = true"
+        :rules="[{ required: true, message: '请选择出发地' }]"
+      >
+        <template #button>
+           <van-button size="small" type="primary" plain @click.stop="getLocation">重新定位</van-button>
+        </template>
+      </van-field>
+      <van-popup v-model:show="showOriginPicker" position="bottom">
+        <van-picker
+          title="选择出发地"
+          :columns="cityColumns"
+          @confirm="onConfirmOrigin"
+          @cancel="showOriginPicker = false"
+        />
+      </van-popup>
 
-    <van-popup v-model:show="showMap" position="bottom" :style="{height:'90%'}" round @opened="initMapInstance">
-        <div style="display:flex;flex-direction:column;height:100%;">
-          <van-search v-model="mapSearchKeyword" show-action placeholder="搜索地点" @search="confirmMapSelection()"><template #action><div @click="showMap=false">取消</div></template></van-search>
-          <div id="picker-map-container" style="width:100%;height:300px;position:relative;flex-shrink:0;">
-             <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-100%);z-index:999;pointer-events:none;"><van-icon name="location" size="32" color="#ee0a24" /></div>
-          </div>
-          <div style="padding:15px;background:#fff;border-top:1px solid #eee;">
-            <div style="margin-bottom:10px;font-size:14px;color:#333;font-weight:bold;">当前：{{ mapSelectionText }}</div>
-            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
-                <div v-for="c in hotCities" :key="c" @click="confirmMapSelection(c)" style="padding:4px 10px;background:#f2f3f5;border-radius:4px;font-size:12px;">{{c}}</div>
-            </div>
-            <van-button block type="primary" @click="confirmMapSelection()">确定选择</van-button>
-          </div>
-        </div>
-    </van-popup>
+      <van-field
+        v-model="form.destination"
+        is-link
+        readonly
+        name="destination"
+        label="目的地"
+        placeholder="点击选择目的地"
+        @click="showDestPicker = true"
+        :rules="[{ required: true, message: '请选择目的地' }]"
+      />
+      <van-popup v-model:show="showDestPicker" position="bottom">
+        <van-picker
+          title="选择目的地"
+          :columns="cityColumns"
+          @confirm="onConfirmDest"
+          @cancel="showDestPicker = false"
+        />
+      </van-popup>
 
-    <van-popup v-model:show="showDate" position="bottom"><van-picker :columns="dateColumns" @confirm="onConfirmDate" @cancel="showDate=false"/></van-popup>
-    
-    <van-popup v-model:show="showAuth" position="bottom" style="height:65%;padding:20px;" :close-on-click-overlay="false">
-        <h3 style="text-align:center">宜人出行 身份认证</h3>
-        <div v-if="authStep === 1" style="text-align:center; margin-top: 20px;">
-            <p style="color:#666; font-size:14px; margin-bottom:20px;">【安全提醒】请长按保存或识别下方二维码，关注公众号接收行程提醒。</p>
-            <div style="background:#f5f5f5; padding: 10px; display:inline-block; border-radius: 8px;">
-                <img src="https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg" style="width: 180px; height: 180px;" alt="公众号二维码" />
-            </div>
-            <van-button block type="primary" color="#07c160" style="margin-top:30px;" @click="authStep=2">我已关注，去填写信息</van-button>
-            <van-button block plain type="default" style="margin-top:10px;" @click="showAuth=false">暂不发布</van-button>
-        </div>
-        <div v-else style="margin-top: 20px;">
-            <p style="color:#666; font-size:14px; margin-bottom:20px; text-align:center;">【第二步】授权基本信息</p>
-            <van-field v-model="registerForm.nickname" label="真实姓名" placeholder="填写真实姓名" border />
-            <van-field v-model="registerForm.phone" label="手机号码" type="tel" placeholder="填写联系手机号" border />
-            <van-button block type="primary" @click="submitAuth" style="margin-top:30px;">确认授权并发布</van-button>
-            <van-button block plain type="default" style="margin-top:10px;" @click="authStep=1">返回上一步</van-button>
-        </div>
-    </van-popup>
+      <van-field
+        v-model="form.date"
+        name="date"
+        label="出发时间"
+        type="datetime-local"
+        :rules="[{ required: true, message: '请填写出发时间' }]"
+      />
+
+      <van-field name="seats" :label="form.type === 'driver' ? '提供座位' : '乘车人数'">
+        <template #input>
+          <van-stepper v-model="form.seats" min="1" max="6" />
+        </template>
+      </van-field>
+
+      <template v-if="form.type === 'driver'">
+        <van-field
+          v-model="form.car_model"
+          is-link
+          readonly
+          name="car_model"
+          label="车型"
+          placeholder="点击选择车型"
+          @click="showCarModelPicker = true"
+        />
+        <van-popup v-model:show="showCarModelPicker" position="bottom">
+          <van-picker
+            :columns="carModelColumns"
+            @confirm="onConfirmCarModel"
+            @cancel="showCarModelPicker = false"
+          />
+        </van-popup>
+      </template>
+
+      <van-field
+        v-model="form.price"
+        name="price"
+        label="期望价格"
+        type="digit"
+        placeholder="请输入金额 (元)"
+        :rules="[{ required: true, message: '请输入价格' }]"
+      >
+        <template #extra>元</template>
+      </van-field>
+
+      <van-field
+        v-model="form.contact"
+        name="contact"
+        label="联系电话"
+        type="tel"
+        placeholder="请输入您的手机号"
+        :rules="[{ required: true, message: '请输入联系电话' }, { pattern: /^1[3-9]\d{9}$/, message: '手机号格式错误' }]"
+      />
+
+      <van-field
+        v-model="form.remark"
+        name="remark"
+        label="备注"
+        type="textarea"
+        placeholder="可填写行李大小、上车地点、是否走高速等"
+        rows="2"
+        autosize
+        maxlength="100"
+        show-word-limit
+      />
+
+      <div style="margin: 32px 16px;">
+        <van-button round block type="primary" native-type="submit" size="large">
+          确认发布
+        </van-button>
+      </div>
+    </van-form>
   </div>
 </template>
+
+<script setup>
+import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { showLoadingToast, closeToast, showSuccessToast, showFailToast, showToast } from 'vant'
+
+const router = useRouter()
+
+// --- 1. 获取当前时间并格式化，作为默认时间 ---
+const getNowStr = () => {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  const hours = String(now.getHours()).padStart(2, '0')
+  const minutes = String(now.getMinutes()).padStart(2, '0')
+  return `${year}-${month}-${day}T${hours}:${minutes}` // datetime-local 要求的格式
+}
+
+// 自动读取上次填写的手机号（优先从个人中心或本地缓存获取）
+const defaultPhone = localStorage.getItem('yrcx_user_phone') || ''
+
+// --- 表单数据 ---
+const form = ref({
+  type: 'driver',
+  origin: '',
+  destination: '',
+  date: getNowStr(), // 默认赋值为当前时间
+  seats: 1,
+  price: '',
+  remark: '',
+  contact: defaultPhone, 
+  car_model: '轿车'
+})
+
+// --- 2. 车型配置 (已增加油电混动) ---
+const showCarModelPicker = ref(false)
+const carModelColumns = [
+  { text: '轿车', value: '轿车' },
+  { text: 'SUV', value: 'SUV' },
+  { text: 'MPV', value: 'MPV' },
+  { text: '油电混动', value: '油电混动' },
+  { text: '纯电动', value: '纯电动' }
+]
+const onConfirmCarModel = ({ selectedOptions }) => {
+  form.value.car_model = selectedOptions[0].value
+  showCarModelPicker.value = false
+}
+
+// --- 3. 城市选择器配置 (🌟 常用城市置顶) ---
+const showOriginPicker = ref(false)
+const showDestPicker = ref(false)
+const cityColumns = [
+  {
+    text: '🌟 常用城市',
+    children: [
+      { text: '成都市', value: '成都市' },
+      { text: '绵阳市', value: '绵阳市' },
+      { text: '南充市', value: '南充市' },
+      { text: '巴中市', value: '巴中市' },
+      { text: '达州市', value: '达州市' }
+    ]
+  },
+  {
+    text: '四川省',
+    children: [
+      { text: '成都市', value: '成都市' },
+      { text: '绵阳市', value: '绵阳市' },
+      { text: '自贡市', value: '自贡市' },
+      { text: '攀枝花市', value: '攀枝花市' },
+      { text: '泸州市', value: '泸州市' },
+      { text: '德阳市', value: '德阳市' },
+      { text: '广元市', value: '广元市' },
+      { text: '遂宁市', value: '遂宁市' },
+      { text: '内江市', value: '内江市' },
+      { text: '乐山市', value: '乐山市' },
+      { text: '南充市', value: '南充市' },
+      { text: '眉山市', value: '眉山市' },
+      { text: '宜宾市', value: '宜宾市' },
+      { text: '广安市', value: '广安市' },
+      { text: '达州市', value: '达州市' },
+      { text: '雅安市', value: '雅安市' },
+      { text: '巴中市', value: '巴中市' },
+      { text: '资阳市', value: '资阳市' }
+    ]
+  }
+]
+
+const onConfirmOrigin = ({ selectedOptions }) => {
+  form.value.origin = selectedOptions[1]?.value || selectedOptions[0]?.value
+  showOriginPicker.value = false
+}
+const onConfirmDest = ({ selectedOptions }) => {
+  form.value.destination = selectedOptions[1]?.value || selectedOptions[0]?.value
+  showDestPicker.value = false
+}
+
+// --- 4. 安全的高德定位 (带超时防卡死) ---
+const getLocation = () => {
+  showLoadingToast({ message: '精确定位中...', forbidClick: true, duration: 0 })
+  
+  if (window.AMap && window.AMap.Geolocation) {
+    const geolocation = new window.AMap.Geolocation({
+      enableHighAccuracy: true, // 设置为高精度
+      timeout: 4000,            // 🌟 核心：4秒超时，绝不无限卡死
+      buttonPosition: 'RB',
+    })
+    
+    geolocation.getCurrentPosition((status, result) => {
+      closeToast()
+      if (status === 'complete' && result.addressComponent) {
+        // 优先使用具体的区县，没有区县才用市
+        form.value.origin = result.addressComponent.district || result.addressComponent.city || '北京市'
+        showToast('已获取当前区县')
+      } else {
+        console.warn('定位失败，转为手动模式', result)
+        form.value.origin = ''
+        showToast('自动定位超时，请手动选择')
+      }
+    })
+  } else {
+    closeToast()
+    form.value.origin = ''
+    showToast('未能加载地图，请手动选择城市')
+  }
+}
+
+// 进入页面时尝试自动定位
+onMounted(() => {
+  getLocation()
+})
+
+const onClickLeft = () => {
+  router.back()
+}
+
+// --- 5. 提交表单 ---
+const onSubmit = async () => {
+  try {
+    showLoadingToast({ message: '正在发布...', forbidClick: true, duration: 0 })
+    
+    // 🌟 将本次填写的手机号存在本地缓存，下次进来直接调用
+    localStorage.setItem('yrcx_user_phone', form.value.contact)
+    
+    // 整理要发送到后端的数据
+    const postData = {
+       ...form.value,
+       // 把 HTML5 原生的 T 符号换成空格，保持格式美观：2026-05-15 10:00
+       date: form.value.date.replace('T', ' ')
+    }
+
+    // 调用 Cloudflare 的后端 API (如果您的代码里统一用 api.post，可以把这里改回 api.post)
+    const response = await fetch('/api/rides', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(postData)
+    })
+
+    const result = await response.json()
+
+    if (!response.ok) {
+       throw new Error(result.error || '服务器连接失败')
+    }
+
+    closeToast()
+    showSuccessToast('发布成功！')
+    
+    // 延迟跳回首页，让用户看到成功提示
+    setTimeout(() => {
+      router.push('/')
+    }, 1000)
+    
+  } catch (error) {
+    closeToast()
+    // 🌟 错误原因弹窗展示，再也不会“点完没反应”了
+    showFailToast(error.message || '发布失败，请检查网络')
+    console.error('发布错误：', error)
+  }
+}
+</script>
+
+<style scoped>
+.publish-container {
+  padding-bottom: 20px;
+  background-color: #f7f8fa;
+  min-height: 100vh;
+}
+/* 优化表单边距，看起来更专业 */
+:deep(.van-cell-group) {
+  margin-top: 10px;
+}
+</style>
