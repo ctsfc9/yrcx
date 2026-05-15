@@ -1,2 +1,1 @@
-# 强制所有路径都指向 index.html，让 Vue 处理路由
-/* /index.html  200
+/* /index.html 200
