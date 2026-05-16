@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { showToast, showDialog } from 'vant';
+import { showToast } from 'vant';
 import { useAppStore } from '../store';
 import TabBar from '../components/TabBar.vue';
 
@@ -10,13 +10,9 @@ const store = useAppStore();
 const rideList = ref([]);
 const loading = ref(true);
 
-// 过期显示开关
 const showExpired = ref(false);
+const showAuthGuide = ref(false); // 授权弹窗状态
 
-// 新用户授权弹窗状态
-const showAuthGuide = ref(false);
-
-// 1. 连续两次点击返回键退出的逻辑
 let exitTime = 0;
 const handlePopstate = () => {
   const now = Date.now();
@@ -34,15 +30,16 @@ onMounted(async () => {
   history.pushState(null, null, document.URL);
   window.addEventListener('popstate', handlePopstate);
 
-  // 确保配置加载
   if(!store.sysConfig.amap_key) await store.loadConfig();
 
-  // 检查是否为新用户 (无手机号或无微信openid)，弹窗提示授权
-  if (!store.userProfile.phone) {
+  const urlParams = new URLSearchParams(window.location.search);
+  const code = urlParams.get('code');
+
+  // 👉 核心逻辑：如果用户没有 OpenID，且当前不是刚从微信带 code 回来的状态，就弹出授权引导
+  if (!store.userProfile.openid && !code) {
       showAuthGuide.value = true;
   }
 
-  // 拉取首页数据
   try {
     const res = await fetch('/api/rides');
     const data = await res.json();
@@ -58,19 +55,13 @@ onUnmounted(() => {
   window.removeEventListener('popstate', handlePopstate);
 });
 
-// 处理过期信息与排序 (优先置顶，其次出发时间)
 const processedRides = computed(() => {
     const now = new Date();
     let arr = rideList.value.map(item => {
-        // 判断是否过期 (出发时间小于当前时间)
         const isExp = new Date(item.date) < now;
         return { ...item, is_expired: isExp };
     });
-
-    if (!showExpired.value) {
-        arr = arr.filter(item => !item.is_expired);
-    }
-    
+    if (!showExpired.value) arr = arr.filter(item => !item.is_expired);
     return arr;
 });
 
@@ -81,9 +72,16 @@ const formatDate = (str) => {
   return str;
 };
 
+// 👉 核心修复：点击授权后，真实跳转到微信官方带头像的授权界面
 const goToAuth = () => {
-    showAuthGuide.value = false;
-    router.push('/me'); // 引导去个人中心或者绑定页
+    const appId = store.sysConfig.wx_appid;
+    if (!appId) {
+        showToast('请联系管理员在后台配置微信AppID');
+        return;
+    }
+    const redirectUri = encodeURIComponent(window.location.origin + '/');
+    // 使用 snsapi_userinfo，这才会弹出绿色的授权确认页并获取头像！
+    window.location.href = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_userinfo&state=STATE#wechat_redirect`;
 };
 </script>
 
@@ -91,12 +89,8 @@ const goToAuth = () => {
   <div style="padding-bottom: 80px; min-height: 100vh; background: #f7f8fa;">
     
     <van-swipe class="my-swipe" :autoplay="3000" indicator-color="white" style="height: 160px;">
-      <van-swipe-item>
-        <img src="https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg" style="width: 100%; height: 100%; object-fit: cover;" />
-      </van-swipe-item>
-      <van-swipe-item>
-        <img src="https://fastly.jsdelivr.net/npm/@vant/assets/apple-2.jpeg" style="width: 100%; height: 100%; object-fit: cover;" />
-      </van-swipe-item>
+      <van-swipe-item><img src="https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg" style="width: 100%; height: 100%; object-fit: cover;" /></van-swipe-item>
+      <van-swipe-item><img src="https://fastly.jsdelivr.net/npm/@vant/assets/apple-2.jpeg" style="width: 100%; height: 100%; object-fit: cover;" /></van-swipe-item>
     </van-swipe>
 
     <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 15px; background: #fff;">
@@ -113,14 +107,7 @@ const goToAuth = () => {
       <div v-if="loading" style="text-align: center; padding: 40px; color: #999;">正在加载行程...</div>
       <div v-else-if="processedRides.length === 0" style="text-align: center; padding: 40px; color: #999;">暂无匹配的行程</div>
       
-      <div 
-        v-else 
-        v-for="item in processedRides" 
-        :key="item.id" 
-        class="ride-card"
-        :class="{ 'is-expired-card': item.is_expired }"
-        @click="router.push({ path: '/detail', query: { id: item.id } })"
-      >
+      <div v-else v-for="item in processedRides" :key="item.id" class="ride-card" :class="{ 'is-expired-card': item.is_expired }" @click="router.push({ path: '/detail', query: { id: item.id } })">
         <div v-if="item.is_expired" class="expired-stamp">已过期</div>
 
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
@@ -144,9 +131,10 @@ const goToAuth = () => {
       </div>
     </div>
     
-    <van-dialog v-model:show="showAuthGuide" title="安全出行提示" confirm-button-text="前往授权" confirm-button-color="#07c160" @confirm="goToAuth" :close-on-click-overlay="false">
+    <van-dialog v-model:show="showAuthGuide" title="微信快捷登录" confirm-button-text="安全授权" confirm-button-color="#07c160" @confirm="goToAuth" :close-on-click-overlay="false">
       <div style="padding: 20px; text-align: center; color: #666; line-height: 1.6;">
-        <p>为了保障出行安全及接收行程通知，<br>请先授权获取微信信息并绑定手机号。</p>
+        <van-icon name="wechat" color="#07c160" size="48" style="margin-bottom: 10px;" />
+        <p>为了给您提供更优质的拼车服务<br>请授权获取您的微信头像和昵称</p>
       </div>
     </van-dialog>
 
@@ -170,7 +158,6 @@ const goToAuth = () => {
 }
 .ride-card:active { background: #f9f9f9; }
 
-/* 过期卡片置灰并加盖印章 */
 .is-expired-card {
     opacity: 0.7;
     filter: grayscale(100%);
