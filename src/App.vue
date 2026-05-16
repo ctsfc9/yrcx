@@ -5,32 +5,38 @@ import { useAppStore } from './store'
 const store = useAppStore()
 
 onMounted(async () => {
-  await store.loadConfig() // 拉取系统配置
+  await store.loadConfig() 
   
-  // 👉 核心修复：如果当前访问的是后台管理地址，直接跳出，绝不拉起微信授权！
+  // 如果是后台管理，绝对不进行微信授权拦截
   if (window.location.pathname.startsWith('/admin')) {
     return;
   }
 
-  // 以下是普通用户的微信静默授权逻辑
+  // 接收微信重定向回来时附带的 code
   const urlParams = new URLSearchParams(window.location.search);
   const code = urlParams.get('code');
 
-  if (!store.userProfile.openid && store.sysConfig.wx_appid) {
-    if (!code) {
-      // 没 openid 也没 code，去微信要
-      const redirectUri = encodeURIComponent(window.location.href);
-      window.location.href = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${store.sysConfig.wx_appid}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_base&state=STATE#wechat_redirect`;
-    } else {
-      // 从微信跳回来了，用 code 换 openid
-      try {
-        const res = await fetch(`/api/get_openid?code=${code}`);
-        const data = await res.json();
-        if (data.openid) {
-          store.saveUser({ ...store.userProfile, openid: data.openid });
-          window.history.replaceState({}, '', window.location.origin + window.location.pathname);
-        }
-      } catch (e) {}
+  // 如果 URL 里有 code，且本地没有 openid，说明刚从微信授权页回来
+  if (code && !store.userProfile.openid) {
+    try {
+      const res = await fetch(`/api/get_openid?code=${code}`);
+      const data = await res.json();
+      
+      if (data.openid) {
+        // 将微信返回的真实头像、昵称、ID 保存到本地
+        store.saveUser({ 
+            ...store.userProfile, 
+            id: data.id,
+            openid: data.openid,
+            nickname: data.nickname,
+            avatar: data.avatar
+        });
+        
+        // 清理地址栏里的 code，让页面看起来干净
+        window.history.replaceState({}, '', window.location.origin + window.location.pathname);
+      }
+    } catch (e) {
+      console.error('获取微信信息失败', e);
     }
   }
 })
