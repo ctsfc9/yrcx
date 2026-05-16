@@ -7,7 +7,12 @@ const store = useAppStore()
 onMounted(async () => {
   await store.loadConfig() // 拉取系统配置
   
-  // 微信静默授权逻辑
+  // 👉 核心修复：如果当前访问的是后台管理地址，直接跳出，绝不拉起微信授权！
+  if (window.location.pathname.startsWith('/admin')) {
+    return;
+  }
+
+  // 以下是普通用户的微信静默授权逻辑
   const urlParams = new URLSearchParams(window.location.search);
   const code = urlParams.get('code');
 
@@ -30,6 +35,7 @@ onMounted(async () => {
   }
 })
 </script>
+
 <template>
   <router-view />
 </template>
