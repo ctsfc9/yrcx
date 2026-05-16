@@ -1,26 +1,29 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { showToast } from 'vant';
+import { showToast, showDialog } from 'vant';
+import { useAppStore } from '../store';
 import TabBar from '../components/TabBar.vue';
 
 const router = useRouter();
+const store = useAppStore();
 const rideList = ref([]);
 const loading = ref(true);
+
+// 过期显示开关
+const showExpired = ref(false);
+
+// 新用户授权弹窗状态
+const showAuthGuide = ref(false);
 
 // 1. 连续两次点击返回键退出的逻辑
 let exitTime = 0;
 const handlePopstate = () => {
   const now = Date.now();
   if (now - exitTime < 2000) {
-    // 2秒内连续点击，执行退出
-    if (typeof WeixinJSBridge !== "undefined") {
-        WeixinJSBridge.call('closeWindow');
-    } else {
-        window.close();
-    }
+    if (typeof WeixinJSBridge !== "undefined") WeixinJSBridge.call('closeWindow');
+    else window.close();
   } else {
-    // 第一次点击，拦截并提示
     exitTime = now;
     showToast({ message: '再按一次退出平台', position: 'bottom' });
     history.pushState(null, null, document.URL); 
@@ -28,9 +31,16 @@ const handlePopstate = () => {
 };
 
 onMounted(async () => {
-  // 挂载防退出拦截
   history.pushState(null, null, document.URL);
   window.addEventListener('popstate', handlePopstate);
+
+  // 确保配置加载
+  if(!store.sysConfig.amap_key) await store.loadConfig();
+
+  // 检查是否为新用户 (无手机号或无微信openid)，弹窗提示授权
+  if (!store.userProfile.phone) {
+      showAuthGuide.value = true;
+  }
 
   // 拉取首页数据
   try {
@@ -45,8 +55,23 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
-  // 离开首页时卸载拦截，防止影响其他页面
   window.removeEventListener('popstate', handlePopstate);
+});
+
+// 处理过期信息与排序 (优先置顶，其次出发时间)
+const processedRides = computed(() => {
+    const now = new Date();
+    let arr = rideList.value.map(item => {
+        // 判断是否过期 (出发时间小于当前时间)
+        const isExp = new Date(item.date) < now;
+        return { ...item, is_expired: isExp };
+    });
+
+    if (!showExpired.value) {
+        arr = arr.filter(item => !item.is_expired);
+    }
+    
+    return arr;
 });
 
 const formatDate = (str) => {
@@ -55,30 +80,56 @@ const formatDate = (str) => {
   if (match) return `${match[2]}月${match[3]}日 ${match[4]}:${match[5]}`;
   return str;
 };
+
+const goToAuth = () => {
+    showAuthGuide.value = false;
+    router.push('/me'); // 引导去个人中心或者绑定页
+};
 </script>
 
 <template>
   <div style="padding-bottom: 80px; min-height: 100vh; background: #f7f8fa;">
-    <div style="background: #ff6600; padding: 20px; color: #fff; text-align: center;">
-      <h2 style="margin: 0; font-size: 22px;">宜人出行</h2>
-      <p style="margin: 5px 0 0; font-size: 14px; opacity: 0.8;">老乡互助 · 共享出行</p>
+    
+    <van-swipe class="my-swipe" :autoplay="3000" indicator-color="white" style="height: 160px;">
+      <van-swipe-item>
+        <img src="https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg" style="width: 100%; height: 100%; object-fit: cover;" />
+      </van-swipe-item>
+      <van-swipe-item>
+        <img src="https://fastly.jsdelivr.net/npm/@vant/assets/apple-2.jpeg" style="width: 100%; height: 100%; object-fit: cover;" />
+      </van-swipe-item>
+    </van-swipe>
+
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 15px; background: #fff;">
+        <div style="color: #ff6600; font-size: 14px; font-weight: bold;">
+            <van-icon name="volume-o" /> {{ store.sysConfig.notice || '老乡互助，共享出行' }}
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #666;">
+            显示已过期
+            <van-switch v-model="showExpired" size="18px" active-color="#ff6600" />
+        </div>
     </div>
 
     <div style="padding: 10px;">
       <div v-if="loading" style="text-align: center; padding: 40px; color: #999;">正在加载行程...</div>
-      <div v-else-if="rideList.length === 0" style="text-align: center; padding: 40px; color: #999;">暂无最新行程</div>
+      <div v-else-if="processedRides.length === 0" style="text-align: center; padding: 40px; color: #999;">暂无匹配的行程</div>
       
       <div 
         v-else 
-        v-for="item in rideList" 
+        v-for="item in processedRides" 
         :key="item.id" 
         class="ride-card"
+        :class="{ 'is-expired-card': item.is_expired }"
         @click="router.push({ path: '/detail', query: { id: item.id } })"
       >
+        <div v-if="item.is_expired" class="expired-stamp">已过期</div>
+
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-          <span :style="{background: item.type==='driver'?'#eaf5ff':'#fff2e8', color: item.type==='driver'?'#1989fa':'#ff7700'}" style="font-size:12px; padding:2px 6px; border-radius:4px;">
-            {{ item.type === 'driver' ? '车主找人' : '乘客找车' }}
-          </span>
+          <div>
+              <span v-if="item.is_top" style="background:#ee0a24; color:#fff; font-size:12px; padding:2px 6px; border-radius:4px; margin-right:6px;">置顶</span>
+              <span :style="{background: item.type==='driver'?'#eaf5ff':'#fff2e8', color: item.type==='driver'?'#1989fa':'#ff7700'}" style="font-size:12px; padding:2px 6px; border-radius:4px;">
+                {{ item.type === 'driver' ? '车主找人' : '乘客找车' }}
+              </span>
+          </div>
           <span style="color:#999; font-size:12px;">{{ formatDate(item.created_at) }} 发布</span>
         </div>
         
@@ -93,12 +144,21 @@ const formatDate = (str) => {
       </div>
     </div>
     
+    <van-dialog v-model:show="showAuthGuide" title="安全出行提示" confirm-button-text="前往授权" confirm-button-color="#07c160" @confirm="goToAuth" :close-on-click-overlay="false">
+      <div style="padding: 20px; text-align: center; color: #666; line-height: 1.6;">
+        <p>为了保障出行安全及接收行程通知，<br>请先授权获取微信信息并绑定手机号。</p>
+      </div>
+    </van-dialog>
+
     <TabBar />
   </div>
 </template>
 
 <style scoped>
+.my-swipe .van-swipe-item { color: #fff; text-align: center; background-color: #39a9ed; }
+
 .ride-card {
+  position: relative;
   background: #fff;
   margin-bottom: 12px;
   padding: 15px;
@@ -106,8 +166,28 @@ const formatDate = (str) => {
   box-shadow: 0 2px 8px rgba(0,0,0,0.04);
   cursor: pointer;
   transition: all 0.2s;
+  overflow: hidden;
 }
-.ride-card:active {
-  background: #f9f9f9;
+.ride-card:active { background: #f9f9f9; }
+
+/* 过期卡片置灰并加盖印章 */
+.is-expired-card {
+    opacity: 0.7;
+    filter: grayscale(100%);
+}
+.expired-stamp {
+    position: absolute;
+    top: 25px;
+    right: 20px;
+    font-size: 24px;
+    font-weight: bold;
+    color: #cc0000;
+    border: 3px solid #cc0000;
+    padding: 5px 10px;
+    transform: rotate(-25deg);
+    border-radius: 8px;
+    opacity: 0.6;
+    letter-spacing: 2px;
+    pointer-events: none;
 }
 </style>
