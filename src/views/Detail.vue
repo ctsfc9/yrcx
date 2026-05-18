@@ -7,9 +7,9 @@ const route = useRoute();
 const router = useRouter();
 const rideInfo = ref(null);
 
-// 👉 核心修复：微信环境专用的物理返回键劫持机制
+// 👉 终极物理返回键防退策略：Hash Trap (哈希陷阱)
 const handlePopstate = () => {
-    // 监听到物理返回键按下，强制跳往首页
+    // 只要触发了返回键，强制回到首页
     router.replace('/');
 };
 
@@ -17,12 +17,14 @@ onMounted(async () => {
   const id = route.query.id;
   if (!id) return router.replace('/');
   
-  // 👉 历史记录欺骗：针对微信直接打开链接（无上一页）
+  // 判断是否为外部直接进入（历史记录为空）
   if (window.history.length <= 2 || document.referrer === '') {
-      // 压入一个假的历史状态
-      window.history.pushState({ page: 'detail_fake' }, null, window.location.href);
-      // 监听返回动作，一旦触发，执行 handlePopstate
-      window.addEventListener('popstate', handlePopstate, false);
+      // 核心修复：微信会忽略同 URL 的历史注入，必须加一个无害的 # 锚点才能100%生效
+      if (window.location.hash !== '#/detail_view') {
+          window.history.replaceState(null, null, window.location.href);
+          window.history.pushState(null, null, window.location.href + '#/detail_view');
+      }
+      window.addEventListener('popstate', handlePopstate);
   }
   
   showLoadingToast({ message: '加载中...', forbidClick: true });
@@ -53,10 +55,10 @@ const formatDate = (str) => {
   return str;
 };
 
-// 左上角导航栏返回
+// 页面左上角导航栏返回
 const onClickLeft = () => {
     if (window.history.length <= 2 || document.referrer === '') {
-        router.replace('/'); // 直接跳首页
+        router.replace('/'); // 外部跳入的，按左上角也强制回首页
     } else {
         router.back();
     }
@@ -69,7 +71,7 @@ const handleCall = () => {
 };
 
 const handleCopyText = () => {
-    const url = window.location.href; 
+    const url = window.location.href.split('#')[0]; // 复制出去的链接去掉伪装锚点
     const dateStr = formatDate(rideInfo.value.date);
     const priceStr = rideInfo.value.price === '面议' ? '面议' : `¥${rideInfo.value.price}`;
     const typeStr = rideInfo.value.type === 'driver' ? '车主找人' : '乘客找车';
