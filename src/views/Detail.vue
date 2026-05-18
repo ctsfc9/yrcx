@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { showToast, showLoadingToast, closeToast, showSuccessToast, showFailToast } from 'vant';
 
@@ -7,19 +7,22 @@ const route = useRoute();
 const router = useRouter();
 const rideInfo = ref(null);
 
-// 👉 核心：物理返回键防退极简方案
-const handlePopstate = () => {
-    router.replace('/');
-};
-
 onMounted(async () => {
   const id = route.query.id;
   if (!id) return router.replace('/');
   
-  // 👉 微信 H5 终极防退机制：利用 Hash 伪造历史栈
-  if (window.history.length <= 2 || !document.referrer) {
-      window.history.pushState({}, "trap", "#");
-      window.addEventListener("popstate", handlePopstate, false);
+  // 👉 核心修复：微信内置浏览器最底层的真实历史记录覆写技术
+  // 必须直接使用真实地址推入栈，否则微信不买账
+  if (window.history.length <= 1 || document.referrer === '') {
+      // 第一步：把历史记录的当前页替换为网站根目录 /
+      window.history.replaceState({ name: 'home' }, 'home', '/');
+      // 第二步：再把原本要看的详情页重新压入最顶层
+      window.history.pushState({ name: 'detail' }, 'detail', window.location.href);
+      
+      // 第三步：监听返回。用户一按返回，顶层被弹掉，露出的是 /，我们直接硬跳转
+      window.addEventListener('popstate', () => {
+          window.location.href = '/';
+      }, { once: true });
   }
   
   showLoadingToast({ message: '加载中...', forbidClick: true });
@@ -39,10 +42,6 @@ onMounted(async () => {
   }
 });
 
-onUnmounted(() => {
-    window.removeEventListener('popstate', handlePopstate);
-});
-
 const formatDate = (str) => {
   if (!str) return '';
   const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})[T\s](\d{1,2}):(\d{1,2})/);
@@ -51,8 +50,8 @@ const formatDate = (str) => {
 };
 
 const onClickLeft = () => {
-    if (window.history.length <= 2 || !document.referrer) {
-        router.replace('/'); 
+    if (window.history.length <= 2 || document.referrer === '') {
+        window.location.href = '/'; 
     } else {
         router.back();
     }
