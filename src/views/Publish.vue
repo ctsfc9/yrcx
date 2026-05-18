@@ -76,7 +76,7 @@ onMounted(async () => {
     loadMapScript();
 });
 
-// 固定成功的父子城市（如上海长宁）解析方案
+// 👉 锁定版：完美解析父子城市（如：上海长宁）
 const parseLocationName = (addressComp) => {
     if (!addressComp) return '';
     let province = addressComp.province || '';
@@ -194,8 +194,6 @@ const onPreSubmit = () => {
 
 const handlePublish = async () => { 
     submitLoading.value = true; 
-    
-    // 👉【核心修复】：如果发现没有本地 ID，生成后必须强制调用 store.saveUser 固化回全局状态
     let currentUserId = store.userProfile?.id;
     if (!currentUserId) {
         currentUserId = 'user_wx_' + Date.now();
@@ -247,15 +245,23 @@ const handlePublish = async () => {
     finally { submitLoading.value = false; } 
 };
 
+// 👉 核心修复：微信统一下单防崩拦截，还原最纯净参数
 const executePayment = async () => {
+    // 拦截 1：如果此时 openid 是空的，微信支付绝对会报预支付失败
+    if (!store.userProfile?.openid) {
+        showFailToast('缺少微信环境授权，无法唤起支付');
+        showPayModal.value = false;
+        return;
+    }
+
     showLoadingToast({ message: '正在呼起微信支付...', forbidClick: true, duration: 0 });
     try {
-        // 👉【由于上面处理了 ID 固化，此处 store.userProfile.id 绝不可能再为空，100% 解决预支付失败】
+        // 拦截 2：还原后端原本认识的参数格式，绝不多传陌生字段
         const payRes = await fetch('/api/pay', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
                 user_id: store.userProfile.id, 
-                amount: Number(requiredFee.value), 
+                amount: requiredFee.value, 
                 openid: store.userProfile.openid
             })
         });
