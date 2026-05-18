@@ -6,7 +6,7 @@ import { showToast, showSuccessToast, showFailToast } from 'vant';
 const route = useRoute();
 const router = useRouter();
 const rideInfo = ref(null);
-const pageLoading = ref(true); // 控制骨架屏
+const pageLoading = ref(true); 
 
 onMounted(async () => {
   const id = route.query.id;
@@ -24,7 +24,7 @@ onMounted(async () => {
   } catch (e) {
     showToast('网络错误');
   } finally {
-    pageLoading.value = false; // 无论成功失败，瞬间关闭加载骨架
+    pageLoading.value = false;
   }
 });
 
@@ -35,8 +35,9 @@ const formatDate = (str) => {
   return str;
 };
 
+// 页面左上角的返回箭头逻辑
 const onClickLeft = () => {
-    if (window.history.length <= 1) {
+    if (window.history.length <= 1 || !document.referrer.includes(window.location.host)) {
         router.replace('/'); 
     } else {
         router.back();
@@ -143,9 +144,9 @@ const fallbackCopy = (text) => {
             </div>
         </div>
 
-        <div @click="router.replace('/')" style="position: fixed; bottom: 180px; right: 20px; width: 75px; height: 75px; background: linear-gradient(135deg, #ff8c00, #ff5000); border-radius: 50%; box-shadow: 0 6px 20px rgba(255,102,0,0.6); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; cursor: pointer; border: 3px solid #fff;">
-            <van-icon name="wap-home-o" size="32" color="#fff" />
-            <span style="font-size: 14px; color: #fff; margin-top: 2px; font-weight: 900; letter-spacing: 1px; text-shadow: 1px 1px 2px rgba(0,0,0,0.3);">回首页</span>
+        <div @click="router.replace('/')" class="pulse-btn" style="position: fixed; bottom: 200px; right: 20px; width: 75px; height: 75px; background: linear-gradient(135deg, #ff7a00, #ff0000); border-radius: 50%; box-shadow: 0 8px 24px rgba(255,80,0,0.5); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; cursor: pointer; border: 3px solid rgba(255,255,255,0.9);">
+            <van-icon name="wap-home-o" size="34" color="#fff" />
+            <span style="font-size: 15px; color: #fff; margin-top: 2px; font-weight: 900; letter-spacing: 1px; text-shadow: 1px 1px 3px rgba(0,0,0,0.4);">回首页</span>
         </div>
 
         <div style="position: fixed; bottom: 0; left: 0; right: 0; background: #fff; padding: 10px 15px; box-shadow: 0 -2px 10px rgba(0,0,0,0.05); z-index: 98; display: flex; gap: 10px;">
@@ -157,6 +158,16 @@ const fallbackCopy = (text) => {
 </template>
 
 <style scoped>
+/* 悬浮按钮呼吸动画 */
+@keyframes pulse {
+  0% { transform: scale(1); box-shadow: 0 8px 24px rgba(255,80,0,0.5); }
+  50% { transform: scale(1.05); box-shadow: 0 12px 30px rgba(255,80,0,0.7); }
+  100% { transform: scale(1); box-shadow: 0 8px 24px rgba(255,80,0,0.5); }
+}
+.pulse-btn {
+  animation: pulse 2s infinite ease-in-out;
+}
+
 :deep(.bold-text) { font-weight: bold; color: #333; }
 :deep(.price-text) { font-weight: bold; color: #ee0a24; font-size: 16px; }
 .car-tag { padding: 3px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; }
