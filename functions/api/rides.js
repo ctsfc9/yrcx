@@ -1,3 +1,4 @@
+// 版本号: v2.0 稳定版
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -18,7 +19,7 @@ export async function onRequest(context) {
     }
   }
 
-  // 新增：支付成功后调用此接口将行程置顶
+  // 处理支付置顶的 PUT 请求
   if (request.method === 'PUT') {
     try {
         const data = await request.json();
@@ -61,7 +62,6 @@ export async function onRequest(context) {
       const runResult = await db.prepare(`INSERT INTO rides (user_id, type, origin, destination, date, seats, price, car_model, remark, contact, is_top) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .bind(data.user_id, data.type, data.origin, data.destination, data.date, data.seats, data.price, data.car_model, data.remark, data.contact, data.is_top || 0).run();
       
-      // 返回新插入的行程 ID，用于后续可能发起的置顶支付
       return new Response(JSON.stringify({ success: true, ride_id: runResult.meta.last_row_id }));
     } catch (e) {
       return new Response(JSON.stringify({ error: e.message }), { status: 500 });
