@@ -76,7 +76,6 @@ onMounted(async () => {
     loadMapScript();
 });
 
-// 👉 锁定版：完美解析父子城市（如：上海长宁）
 const parseLocationName = (addressComp) => {
     if (!addressComp) return '';
     let province = addressComp.province || '';
@@ -245,28 +244,35 @@ const handlePublish = async () => {
     finally { submitLoading.value = false; } 
 };
 
-// 👉 核心修复：微信统一下单防崩拦截，还原最纯净参数
+// 👉 核心防御：补全所有合法参数，防止微信商户号因格式或订单号重复而拦截
 const executePayment = async () => {
-    // 拦截 1：如果此时 openid 是空的，微信支付绝对会报预支付失败
     if (!store.userProfile?.openid) {
-        showFailToast('缺少微信环境授权，无法唤起支付');
+        showFailToast('缺少微信身份，无法唤起支付');
         showPayModal.value = false;
         return;
     }
 
-    showLoadingToast({ message: '正在呼起微信支付...', forbidClick: true, duration: 0 });
+    showLoadingToast({ message: '正在呼起收银台...', forbidClick: true, duration: 0 });
     try {
-        // 拦截 2：还原后端原本认识的参数格式，绝不多传陌生字段
+        const payPayload = { 
+            user_id: store.userProfile.id, 
+            amount: Number(requiredFee.value), 
+            openid: store.userProfile.openid,
+            order_id: 'ORD_' + Date.now(), // 强行生成唯一单号，防止预支付失败
+            description: payType.value === 'top' ? '行程置顶服务' : '发布行程服务',
+            pay_type: payType.value // 发给后端的业务类型
+        };
+
         const payRes = await fetch('/api/pay', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                user_id: store.userProfile.id, 
-                amount: requiredFee.value, 
-                openid: store.userProfile.openid
-            })
+            body: JSON.stringify(payPayload)
         });
         const data = await payRes.json();
-        if (data.error) throw new Error(data.error);
+        
+        // 捕获后端的具体抛错，如果是商户秘钥问题，直接显示在屏幕上方便排查
+        if (data.error) {
+            throw new Error(data.error + (data.details ? ' ' + JSON.stringify(data.details) : ''));
+        }
 
         const payArgs = data.payArgs;
         if (typeof WeixinJSBridge !== "undefined") {
@@ -287,7 +293,9 @@ const executePayment = async () => {
                 } else { showFailToast('支付已取消'); }
             });
         } else { showFailToast('请在微信内打开'); }
-    } catch (e) { showFailToast('支付失败: ' + e.message); }
+    } catch (e) { 
+        showFailToast('支付异常: ' + e.message); 
+    }
 };
 
 const onConfirmDate = ({selectedOptions}) => { 
