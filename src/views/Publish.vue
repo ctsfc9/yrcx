@@ -23,19 +23,15 @@ const getNowDate = () => {
 const defaultDateInfo = getNowDate();
 
 const postForm = reactive({ 
-  type: 'driver', 
+  type: '', // 初始为空，强制用户选择
   origin: '', destination: '', 
   date: defaultDateInfo.value, dateDisplay: defaultDateInfo.display, 
   seats: 1, price: '', remark: [], car_model: '油车', 
   contact: store.userProfile?.phone || '', old_id: null 
 });
 
-// 👉 新增：弹窗选择车主或乘客
+// 👉 核心优化：控制巨屏选择器的展示
 const showTypeSelector = ref(false);
-const typeActions = [
-  { name: '🚗 车主找人 (我有车)', value: 'driver', color: '#1989fa' },
-  { name: '🙋‍♂️ 乘客找车 (我找车)', value: 'passenger', color: '#ff7700' }
-];
 
 const currentDateValues = ref(defaultDateInfo.pickerValues);
 const submitLoading = ref(false);
@@ -72,10 +68,9 @@ const dateColumns = computed(() => {
   ];
 });
 
-onMounted(() => {
-    // 异步拉取配置，绝不阻塞页面渲染
-    if (!store.sysConfig.amap_key) store.loadConfig();
-
+onMounted(async () => {
+    if (!store.sysConfig.amap_key) await store.loadConfig();
+    
     if (store.editPayload) {
         Object.assign(postForm, store.editPayload);
         postForm.remark = store.editPayload.remark ? store.editPayload.remark.split('，') : [];
@@ -84,22 +79,22 @@ onMounted(() => {
     } else if (route.query.type) {
         postForm.type = route.query.type;
     } else {
-        // 👉 核心逻辑：如果没有明确类型，页面一加载立刻弹出底部选择框！
+        // 如果没有传入类型，页面打开直接显示巨屏选择器
         showTypeSelector.value = true;
     }
     
-    // 👉 极速优化：强行延迟地图脚本的加载，保证 UI 界面 0 毫秒立刻呈现
     setTimeout(() => {
         loadMapScript();
     }, 800);
 });
 
-const onSelectType = (action) => {
-    postForm.type = action.value;
+// 巨屏选择器的方法
+const selectPostType = (type) => {
+    postForm.type = type;
     showTypeSelector.value = false;
 };
-const onCancelType = () => {
-    router.replace('/'); // 取消选择直接退回首页
+const cancelPostType = () => {
+    router.replace('/'); 
 };
 
 const parseLocationName = (addressComp) => {
@@ -259,7 +254,7 @@ const handlePublish = async () => {
     finally { submitLoading.value = false; } 
 };
 
-// 👉 核心修复：极其纯净的支付 Payload，绝不多传一个陌生参数惹怒微信
+// 👉 极简净化版：只传微信统一下单绝对必须的参数，其他通通不传，防止由于字段冗余导致签名错误
 const executePayment = async () => {
     if (!store.userProfile?.openid) {
         showFailToast('缺少微信身份，无法唤起支付');
@@ -267,13 +262,14 @@ const executePayment = async () => {
         return;
     }
 
-    showLoadingToast({ message: '正在呼起收银台...', forbidClick: true, duration: 0 });
+    showLoadingToast({ message: '正在请求微信网关...', forbidClick: true, duration: 0 });
     try {
-        // 🚨 绝对回退到最初能用的 3 个参数：user_id, amount, openid 🚨
         const payPayload = { 
             user_id: store.userProfile.id, 
-            amount: Number(requiredFee.value), 
-            openid: store.userProfile.openid
+            openid: store.userProfile.openid,
+            amount: Number(requiredFee.value),
+            pay_type: payType.value,
+            ride_id: currentPayRideId.value
         };
 
         const payRes = await fetch('/api/pay', {
@@ -306,7 +302,7 @@ const executePayment = async () => {
             });
         } else { showFailToast('请在微信内打开'); }
     } catch (e) { 
-        showFailToast('商户拦截: ' + e.message); 
+        showFailToast('微信商户拦截: ' + e.message); 
     }
 };
 
@@ -323,74 +319,85 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
   <div style="padding:10px; padding-bottom: 30px; background: #f7f8fa; min-height: 100vh;">
     <van-nav-bar :title="postForm.old_id ? '编辑行程' : '发布行程'" left-arrow @click-left="router.back()" />
     
-    <van-action-sheet
-      v-model:show="showTypeSelector"
-      :actions="typeActions"
-      cancel-text="暂不发布，返回大厅"
-      description="请选择您要发布的行程类型"
-      :close-on-click-action="true"
-      :closeable="false"
-      @select="onSelectType"
-      @cancel="onCancelType"
-      @click-overlay="onCancelType"
-    />
-
-    <div style="background: #fff; padding: 15px; border-radius: 8px; margin-top: 10px; font-weight: bold; text-align: center; color: #333; box-shadow: 0 2px 8px rgba(0,0,0,0.02);" @click="showTypeSelector = true">
-      当前模式：<span :style="{color: postForm.type === 'driver' ? '#1989fa' : '#ff7700'}">{{ postForm.type === 'driver' ? '🚗 车主找人' : '🙋‍♂️ 乘客找车' }}</span>
-      <van-icon name="exchange" style="margin-left: 10px; color: #999;" />
-    </div>
-
-    <div class="location-card">
-      <div class="row">
-        <div class="icon start">起</div>
-        <div class="text" @click="openMapSelector('origin')">{{ postForm.origin || '点击定位或输入' }}</div>
-        <div class="aim" @click="autoLocate"><van-icon name="aim" /></div>
-      </div>
-      <div class="row">
-        <div class="icon end">终</div>
-        <div class="text" @click="openMapSelector('destination')">{{ postForm.destination || '点击选择' }}</div>
-        <div class="exchange" @click="()=>{const t=postForm.origin;postForm.origin=postForm.destination;postForm.destination=t;}"><van-icon name="exchange" /></div>
-      </div>
-    </div>
-
-    <div class="form-card">
-      <div class="field-row">
-        <div class="label">座位</div>
-        <div class="stepper-wrap">
-          <div v-for="n in 6" :key="n" @click="postForm.seats=n" class="box" :class="{active: postForm.seats===n}">{{n}}</div>
-        </div>
+    <van-popup v-model:show="showTypeSelector" position="bottom" round :style="{ height: 'auto', padding: '30px 20px', background: '#f2f3f5' }" :close-on-click-overlay="false">
+      <div style="font-size: 22px; font-weight: 900; text-align: center; margin-bottom: 25px; color: #333; letter-spacing: 1px;">请选择发布类型</div>
+      
+      <div @click="selectPostType('driver')" style="background: #fff; border-radius: 16px; padding: 30px 20px; text-align: center; margin-bottom: 15px; box-shadow: 0 8px 24px rgba(25,137,250,0.12); border: 2px solid transparent; transition: all 0.2s;" :style="postForm.type === 'driver' ? 'border-color: #1989fa; background: #f0f7ff; transform: scale(1.02);' : ''">
+         <div style="font-size: 48px; margin-bottom: 15px; line-height: 1;">🚗</div>
+         <div style="font-size: 22px; font-weight: 900; color: #1989fa;">车主找人</div>
+         <div style="font-size: 15px; color: #666; margin-top: 8px;">我有空位，发布行程寻找顺路乘客</div>
       </div>
       
-      <div v-if="postForm.type==='driver'" class="field-row">
-        <div class="label">车型</div>
-        <van-radio-group v-model="postForm.car_model" direction="horizontal">
-          <van-radio name="油车">油车</van-radio>
-          <van-radio name="电车">电车</van-radio>
-          <van-radio name="油电混动">混动</van-radio>
-        </van-radio-group>
+      <div @click="selectPostType('passenger')" style="background: #fff; border-radius: 16px; padding: 30px 20px; text-align: center; margin-bottom: 30px; box-shadow: 0 8px 24px rgba(255,119,0,0.12); border: 2px solid transparent; transition: all 0.2s;" :style="postForm.type === 'passenger' ? 'border-color: #ff7700; background: #fff5eb; transform: scale(1.02);' : ''">
+         <div style="font-size: 48px; margin-bottom: 15px; line-height: 1;">🙋‍♂️</div>
+         <div style="font-size: 22px; font-weight: 900; color: #ff7700;">乘客找车</div>
+         <div style="font-size: 15px; color: #666; margin-top: 8px;">我找顺风车，发布行程寻找顺路车主</div>
       </div>
-      
-      <div class="field-row" @click="showDate=true">
-        <div class="label">时间</div>
-        <div class="val">{{ postForm.dateDisplay || '请选择' }} <van-icon name="arrow" /></div>
-      </div>
-      <div class="field-row">
-        <div class="label">电话</div>
-        <van-field v-model="postForm.contact" type="tel" placeholder="请输入11位手机号" input-align="right" :border="false" />
-      </div>
-      <div class="field-row">
-        <div class="label">费用</div>
-        <van-field v-model="postForm.price" type="digit" placeholder="元(不填为面议)" input-align="right" :border="false" />
-      </div>
-      <div class="remark-section">
-        <div class="label">备注标签</div>
-        <div class="tags">
-          <div v-for="t in currentRemarkOptions" :key="t" @click="toggleRemark(t)" class="tag" :class="{active: postForm.remark.includes(t)}">{{t}}</div>
-        </div>
-      </div>
-    </div>
 
-    <van-button round block type="primary" color="#07c160" :loading="submitLoading" @click="onPreSubmit" class="submit-btn">确认发布</van-button>
+      <van-button block round plain color="#999" size="large" @click="cancelPostType" style="font-weight: bold;">暂不发布，返回大厅</van-button>
+    </van-popup>
+
+    <div v-show="!showTypeSelector && postForm.type">
+        <div @click="showTypeSelector = true" style="background: #fff; padding: 15px; border-radius: 8px; margin-top: 10px; font-weight: bold; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.02); display: flex; align-items: center; justify-content: center; font-size: 16px;">
+          当前身份：
+          <span :style="{color: postForm.type === 'driver' ? '#1989fa' : '#ff7700', marginLeft: '5px'}">
+              {{ postForm.type === 'driver' ? '🚗 车主找人' : '🙋‍♂️ 乘客找车' }}
+          </span>
+          <span style="font-size: 12px; color: #999; margin-left: 15px; border: 1px solid #ddd; padding: 2px 8px; border-radius: 12px;">点击切换</span>
+        </div>
+
+        <div class="location-card">
+          <div class="row">
+            <div class="icon start">起</div>
+            <div class="text" @click="openMapSelector('origin')">{{ postForm.origin || '点击定位或输入' }}</div>
+            <div class="aim" @click="autoLocate"><van-icon name="aim" /></div>
+          </div>
+          <div class="row">
+            <div class="icon end">终</div>
+            <div class="text" @click="openMapSelector('destination')">{{ postForm.destination || '点击选择' }}</div>
+            <div class="exchange" @click="()=>{const t=postForm.origin;postForm.origin=postForm.destination;postForm.destination=t;}"><van-icon name="exchange" /></div>
+          </div>
+        </div>
+
+        <div class="form-card">
+          <div class="field-row">
+            <div class="label">座位</div>
+            <div class="stepper-wrap">
+              <div v-for="n in 6" :key="n" @click="postForm.seats=n" class="box" :class="{active: postForm.seats===n}">{{n}}</div>
+            </div>
+          </div>
+          
+          <div v-if="postForm.type==='driver'" class="field-row">
+            <div class="label">车型</div>
+            <van-radio-group v-model="postForm.car_model" direction="horizontal">
+              <van-radio name="油车">油车</van-radio>
+              <van-radio name="电车">电车</van-radio>
+              <van-radio name="油电混动">混动</van-radio>
+            </van-radio-group>
+          </div>
+          
+          <div class="field-row" @click="showDate=true">
+            <div class="label">时间</div>
+            <div class="val">{{ postForm.dateDisplay || '请选择' }} <van-icon name="arrow" /></div>
+          </div>
+          <div class="field-row">
+            <div class="label">电话</div>
+            <van-field v-model="postForm.contact" type="tel" placeholder="请输入11位手机号" input-align="right" :border="false" />
+          </div>
+          <div class="field-row">
+            <div class="label">费用</div>
+            <van-field v-model="postForm.price" type="digit" placeholder="元(不填为面议)" input-align="right" :border="false" />
+          </div>
+          <div class="remark-section">
+            <div class="label">备注标签</div>
+            <div class="tags">
+              <div v-for="t in currentRemarkOptions" :key="t" @click="toggleRemark(t)" class="tag" :class="{active: postForm.remark.includes(t)}">{{t}}</div>
+            </div>
+          </div>
+        </div>
+
+        <van-button round block type="primary" color="#07c160" :loading="submitLoading" @click="onPreSubmit" class="submit-btn" size="large" style="margin-top: 40px; height: 50px; font-size: 18px; font-weight: bold;">确认发布</van-button>
+    </div>
 
     <van-popup v-model:show="showPayModal" position="bottom" round class="pay-popup">
       <div class="pay-header">
