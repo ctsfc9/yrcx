@@ -7,26 +7,19 @@ const route = useRoute();
 const router = useRouter();
 const rideInfo = ref(null);
 
-// 标识是否触发了防退陷阱
-let isTrapped = false;
-
-// 👉 终极物理返回键防退策略：监听到退掉 #trap 时，强跳首页
+// 👉 核心：物理返回键防退极简方案
 const handlePopstate = () => {
-    if (isTrapped) {
-        router.replace('/');
-    }
+    router.replace('/');
 };
 
 onMounted(async () => {
   const id = route.query.id;
   if (!id) return router.replace('/');
   
-  // 👉 核心修复：微信会强制关闭只有一个记录的网页。必须用 Hash Trap 强行撑开历史栈！
-  if (window.history.length <= 2 || document.referrer === '') {
-      isTrapped = true;
-      // 在当前链接末尾悄悄塞入一个 #trap
-      window.history.pushState({ trap: true }, null, window.location.href + '#trap');
-      window.addEventListener('popstate', handlePopstate);
+  // 👉 微信 H5 终极防退机制：利用 Hash 伪造历史栈
+  if (window.history.length <= 2 || !document.referrer) {
+      window.history.pushState({}, "trap", "#");
+      window.addEventListener("popstate", handlePopstate, false);
   }
   
   showLoadingToast({ message: '加载中...', forbidClick: true });
@@ -57,10 +50,9 @@ const formatDate = (str) => {
   return str;
 };
 
-// 页面左上角导航栏返回
 const onClickLeft = () => {
-    if (isTrapped || window.history.length <= 2 || document.referrer === '') {
-        router.replace('/'); // 外部跳入的，按左上角也强制回首页
+    if (window.history.length <= 2 || !document.referrer) {
+        router.replace('/'); 
     } else {
         router.back();
     }
@@ -73,7 +65,6 @@ const handleCall = () => {
 };
 
 const handleCopyText = () => {
-    // 复制出去的链接自动剥离掉 #trap 尾巴，保持纯净
     const url = window.location.href.split('#')[0]; 
     const dateStr = formatDate(rideInfo.value.date);
     const priceStr = rideInfo.value.price === '面议' ? '面议' : `¥${rideInfo.value.price}`;
