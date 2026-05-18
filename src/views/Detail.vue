@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { showToast, showLoadingToast, closeToast, showSuccessToast, showFailToast } from 'vant';
 
@@ -7,9 +7,21 @@ const route = useRoute();
 const router = useRouter();
 const rideInfo = ref(null);
 
+// 👉 核心：物理返回键劫持，强制留在本站
+const handlePopstate = () => {
+    // 按下手机物理返回键时，强制跳往首页
+    router.replace('/');
+};
+
 onMounted(async () => {
   const id = route.query.id;
   if (!id) return router.replace('/');
+  
+  // 👉 判断如果是通过分享直接进来的（历史记录<=2），强行写入一条记录进行拦截
+  if (window.history.length <= 2) {
+      history.pushState(null, null, document.URL);
+      window.addEventListener('popstate', handlePopstate);
+  }
   
   showLoadingToast({ message: '加载中...', forbidClick: true });
   try {
@@ -28,6 +40,10 @@ onMounted(async () => {
   }
 });
 
+onUnmounted(() => {
+    window.removeEventListener('popstate', handlePopstate);
+});
+
 const formatDate = (str) => {
   if (!str) return '';
   const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})[T\s](\d{1,2}):(\d{1,2})/);
@@ -35,10 +51,10 @@ const formatDate = (str) => {
   return str;
 };
 
-// 👉 核心修复：智能返回。如果直接打开链接没有上一页，强行跳转首页
+// 页面左上角导航栏返回
 const onClickLeft = () => {
     if (window.history.length <= 2) {
-        router.replace('/');
+        router.replace('/'); // 直接跳首页
     } else {
         router.back();
     }
@@ -50,7 +66,6 @@ const handleCall = () => {
     }
 };
 
-// 👉 核心完善：文案包含所有内容（独缺电话号码）
 const handleCopyText = () => {
     const url = window.location.href; 
     const dateStr = formatDate(rideInfo.value.date);
