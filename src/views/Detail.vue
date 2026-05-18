@@ -7,9 +7,11 @@ const route = useRoute();
 const router = useRouter();
 const rideInfo = ref(null);
 
-// 👉 核心：物理返回键劫持，强制留在本站
+// 标识是否被劫持了历史记录
+let isHistoryInjected = false;
+
+// 👉 核心修复：物理返回键劫持，强制留在本站主页
 const handlePopstate = () => {
-    // 按下手机物理返回键时，强制跳往首页
     router.replace('/');
 };
 
@@ -17,10 +19,14 @@ onMounted(async () => {
   const id = route.query.id;
   if (!id) return router.replace('/');
   
-  // 👉 判断如果是通过分享直接进来的（历史记录<=2），强行写入一条记录进行拦截
+  // 👉 浏览器历史记录欺骗技术：
+  // 如果用户是直接从外部点链接进来的（没上一页），我们强行把首页塞进他的历史记录底部
   if (window.history.length <= 2) {
-      history.pushState(null, null, document.URL);
-      window.addEventListener('popstate', handlePopstate);
+      const currentUrl = window.location.href;
+      window.history.replaceState(null, null, '/'); 
+      window.history.pushState(null, null, currentUrl); 
+      isHistoryInjected = true;
+      window.addEventListener('popstate', handlePopstate, { once: true });
   }
   
   showLoadingToast({ message: '加载中...', forbidClick: true });
@@ -53,7 +59,7 @@ const formatDate = (str) => {
 
 // 页面左上角导航栏返回
 const onClickLeft = () => {
-    if (window.history.length <= 2) {
+    if (isHistoryInjected || window.history.length <= 2) {
         router.replace('/'); // 直接跳首页
     } else {
         router.back();
@@ -66,6 +72,7 @@ const handleCall = () => {
     }
 };
 
+// 生成精美排版文案
 const handleCopyText = () => {
     const url = window.location.href; 
     const dateStr = formatDate(rideInfo.value.date);
@@ -74,7 +81,7 @@ const handleCopyText = () => {
     const carStr = rideInfo.value.type === 'driver' && rideInfo.value.car_model ? `\n🚗 车型：${rideInfo.value.car_model}` : '';
     const remarkStr = rideInfo.value.remark ? `\n🏷️ 备注：${rideInfo.value.remark}` : '';
     
-    const textToCopy = `【宜人出行 · 长途合乘拼车】
+    const textToCopy = `【宜人出行 · 顺风车】
 📢 ${typeStr}
 📍 路线：${rideInfo.value.origin} ➔ ${rideInfo.value.destination}
 🕒 时间：${dateStr}
