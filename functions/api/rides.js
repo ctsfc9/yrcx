@@ -7,17 +7,28 @@ export async function onRequest(context) {
     const id = url.searchParams.get('id');
 
     if (id) {
-      // 详情页查询
       const ride = await db.prepare("SELECT * FROM rides WHERE id = ?").bind(id).first();
       if (!ride) return new Response(JSON.stringify({ error: '行程不存在或已被删除' }), { status: 404 });
       
-      // 顺便查出发布者的头像和昵称
       const publisher = await db.prepare("SELECT nickname, avatar FROM users WHERE id = ?").bind(ride.user_id).first();
       return new Response(JSON.stringify({ ...ride, publisher }), { headers: { 'Content-Type': 'application/json' } });
     } else {
-      // 首页查询 (置顶优先，再按出发时间升序)
       const { results } = await db.prepare("SELECT * FROM rides ORDER BY is_top DESC, date ASC LIMIT 200").all();
       return new Response(JSON.stringify({ results }), { headers: { 'Content-Type': 'application/json' } });
+    }
+  }
+
+  // 新增：支付成功后调用此接口将行程置顶
+  if (request.method === 'PUT') {
+    try {
+        const data = await request.json();
+        if (data.action === 'top' && data.id) {
+            await db.prepare("UPDATE rides SET is_top = 1 WHERE id = ?").bind(data.id).run();
+            return new Response(JSON.stringify({ success: true }));
+        }
+        return new Response(JSON.stringify({ error: '无效指令' }), { status: 400 });
+    } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500 });
     }
   }
 
@@ -26,7 +37,6 @@ export async function onRequest(context) {
       const data = await request.json();
       if (!data.user_id || !data.origin) return new Response(JSON.stringify({ error: '参数缺失' }), { status: 400 });
 
-      // 如果是“重新编辑发布”，先删除旧的行程
       if (data.old_id) {
           await db.prepare("DELETE FROM rides WHERE id = ? AND user_id = ?").bind(data.old_id, data.user_id).run();
       }
@@ -37,7 +47,7 @@ export async function onRequest(context) {
       const config = await db.prepare("SELECT publish_fee FROM system_config LIMIT 1").first();
       const fee = config?.publish_fee ? parseFloat(config.publish_fee) : 0;
 
-      if (fee > 0 && !data.old_id) { // 如果是编辑就不再二次扣费
+      if (fee > 0 && !data.old_id) { 
         if (parseFloat(user.balance || 0) < fee) {
           return new Response(JSON.stringify({ error: '余额不足', fee: fee }), { status: 402, headers: {'Content-Type':'application/json'} });
         }
@@ -48,9 +58,11 @@ export async function onRequest(context) {
         ]);
       }
 
-      await db.prepare(`INSERT INTO rides (user_id, type, origin, destination, date, seats, price, car_model, remark, contact, is_top) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      const runResult = await db.prepare(`INSERT INTO rides (user_id, type, origin, destination, date, seats, price, car_model, remark, contact, is_top) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .bind(data.user_id, data.type, data.origin, data.destination, data.date, data.seats, data.price, data.car_model, data.remark, data.contact, data.is_top || 0).run();
-      return new Response(JSON.stringify({ success: true }));
+      
+      // 返回新插入的行程 ID，用于后续可能发起的置顶支付
+      return new Response(JSON.stringify({ success: true, ride_id: runResult.meta.last_row_id }));
     } catch (e) {
       return new Response(JSON.stringify({ error: e.message }), { status: 500 });
     }
