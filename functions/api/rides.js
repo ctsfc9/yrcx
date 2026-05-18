@@ -1,4 +1,4 @@
-// 版本号: v2.0 稳定版
+// 版本号: v2.1 稳定版
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -19,7 +19,6 @@ export async function onRequest(context) {
     }
   }
 
-  // 处理支付置顶的 PUT 请求
   if (request.method === 'PUT') {
     try {
         const data = await request.json();
