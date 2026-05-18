@@ -2,7 +2,6 @@ export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
 
-  // 1. 获取行程 (修复：支持单条详情查询 & 按置顶、时间排序)
   if (request.method === 'GET') {
     const url = new URL(request.url);
     const id = url.searchParams.get('id');
@@ -11,19 +10,26 @@ export async function onRequest(context) {
       // 详情页查询
       const ride = await db.prepare("SELECT * FROM rides WHERE id = ?").bind(id).first();
       if (!ride) return new Response(JSON.stringify({ error: '行程不存在或已被删除' }), { status: 404 });
-      return new Response(JSON.stringify(ride), { headers: { 'Content-Type': 'application/json' } });
+      
+      // 顺便查出发布者的头像和昵称
+      const publisher = await db.prepare("SELECT nickname, avatar FROM users WHERE id = ?").bind(ride.user_id).first();
+      return new Response(JSON.stringify({ ...ride, publisher }), { headers: { 'Content-Type': 'application/json' } });
     } else {
-      // 首页列表查询 (置顶优先，再按出发时间升序)
+      // 首页查询 (置顶优先，再按出发时间升序)
       const { results } = await db.prepare("SELECT * FROM rides ORDER BY is_top DESC, date ASC LIMIT 200").all();
       return new Response(JSON.stringify({ results }), { headers: { 'Content-Type': 'application/json' } });
     }
   }
 
-  // 2. 发布行程 (保留全部扣费逻辑)
   if (request.method === 'POST') {
     try {
       const data = await request.json();
       if (!data.user_id || !data.origin) return new Response(JSON.stringify({ error: '参数缺失' }), { status: 400 });
+
+      // 如果是“重新编辑发布”，先删除旧的行程
+      if (data.old_id) {
+          await db.prepare("DELETE FROM rides WHERE id = ? AND user_id = ?").bind(data.old_id, data.user_id).run();
+      }
 
       const user = await db.prepare("SELECT phone, balance FROM users WHERE id = ?").bind(data.user_id).first();
       if (!user || !user.phone) return new Response(JSON.stringify({ error: '请先绑定手机' }), { status: 403 });
@@ -31,7 +37,7 @@ export async function onRequest(context) {
       const config = await db.prepare("SELECT publish_fee FROM system_config LIMIT 1").first();
       const fee = config?.publish_fee ? parseFloat(config.publish_fee) : 0;
 
-      if (fee > 0) {
+      if (fee > 0 && !data.old_id) { // 如果是编辑就不再二次扣费
         if (parseFloat(user.balance || 0) < fee) {
           return new Response(JSON.stringify({ error: '余额不足', fee: fee }), { status: 402, headers: {'Content-Type':'application/json'} });
         }
