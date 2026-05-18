@@ -34,11 +34,8 @@ const submitLoading = ref(false);
 const showMap = ref(false);
 const showDate = ref(false);
 const showAuth = ref(false);
-const registerForm = reactive({ phone: '', nickname: '' });
-
-// 支付收银台状态
-const showPayModal = ref(false);
-const requiredFee = ref(0);
+// 极简绑定，只要手机号
+const registerForm = reactive({ phone: '' });
 
 const mapSearchKeyword = ref('');
 const currentMapField = ref(''); 
@@ -62,7 +59,6 @@ const dateColumns = computed(() => {
   ];
 });
 
-// 动态加载后台配置的地图Key (核心修复点)
 onMounted(async () => {
     if (!store.sysConfig.amap_key) await store.loadConfig();
     
@@ -76,21 +72,20 @@ onMounted(async () => {
     loadMapScript();
 });
 
+// 彻底修复高德加载逻辑
 const loadMapScript = () => {
-    if (window.AMap) { 
-        setTimeout(autoLocate, 300); 
-        return; 
-    }
+    if (window.AMap) { setTimeout(autoLocate, 300); return; }
     const key = store.sysConfig.amap_key;
     if (!key) {
         showToast('后台未配置高德Key，请联系管理员');
-        postForm.origin = '需配置地图Key';
         return;
     }
-    window._AMapSecurityConfig = { securityJsCode: '如需安全密钥请在后端配置或这里硬编码' };
+    // 强制声明高德配置，避免拦截
+    window._AMapSecurityConfig = { securityJsCode: '' }; 
     const s = document.createElement('script');
     s.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.CitySearch,AMap.Geolocation,AMap.Geocoder`;
-    s.onload = () => setTimeout(autoLocate, 300);
+    s.onload = () => setTimeout(autoLocate, 500);
+    s.onerror = () => showToast('地图加载失败，请检查Key');
     document.body.appendChild(s);
 };
 
@@ -144,14 +139,14 @@ const confirmMapSelection = (val) => {
     } else showToast('请等待定位'); 
 };
 
+// 极简手机号绑定
 const submitAuth = async () => {
-    if(!registerForm.phone || !registerForm.nickname) { showFailToast('需填完整'); return; }
-    const payload = { ...store.userProfile, phone: registerForm.phone, nickname: registerForm.nickname, avatar: 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg' };
+    if(!/^\d{11}$/.test(registerForm.phone)) { showFailToast('请输入11位手机号'); return; }
+    // 保留原有的 nickname，只更新手机号
+    const payload = { ...store.userProfile, phone: registerForm.phone };
     try {
         const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         if(res.ok) {
-            const data = await res.json();
-            payload.id = data.userId || store.userProfile.id || ('user_' + Date.now());
             store.saveUser(payload);
             showAuth.value = false;
             postForm.contact = registerForm.phone;
@@ -170,15 +165,13 @@ const onPreSubmit = () => {
 
 const handlePublish = async () => { 
     submitLoading.value = true; 
-    let currentUserId = store.userProfile?.id;
-    if (!currentUserId) {
-        currentUserId = 'user_' + Date.now();
-        store.saveUser({ ...store.userProfile, id: currentUserId });
-    }
+    let currentUserId = store.userProfile?.id || ('user_' + Date.now());
 
     const dateVal = postForm.date || new Date().toISOString(); 
     const remarkStr = Array.isArray(postForm.remark) ? postForm.remark.join('，') : postForm.remark; 
-    const newRide = { ...postForm, user_id: currentUserId, date: dateVal, remark: remarkStr }; 
+    
+    // 携带 old_id 用于编辑时删除旧数据
+    const newRide = { ...postForm, user_id: currentUserId, date: dateVal, remark: remarkStr, old_id: postForm.old_id }; 
     if (!newRide.price) newRide.price = '面议';
 
     try { 
@@ -188,9 +181,6 @@ const handlePublish = async () => {
         if (res.ok) { 
             showSuccessToast('发布成功'); 
             router.replace('/'); 
-        } else if (res.status === 402) {
-            requiredFee.value = result.fee || 0;
-            showPayModal.value = true;
         } else if (res.status === 403) {
             showAuth.value = true;
         } else {
@@ -198,32 +188,6 @@ const handlePublish = async () => {
         }
     } catch(e) { showFailToast('请求异常，请重试'); } 
     finally { submitLoading.value = false; } 
-};
-
-const executePayment = async () => {
-    showLoadingToast({ message: '正在呼起微信支付...', forbidClick: true, duration: 0 });
-    try {
-        const payRes = await fetch('/api/pay', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_id: store.userProfile.id, amount: requiredFee.value, openid: store.userProfile.openid })
-        });
-        const data = await payRes.json();
-        if (data.error) throw new Error(data.error);
-
-        const payArgs = data.payArgs;
-        if (typeof WeixinJSBridge !== "undefined") {
-            WeixinJSBridge.invoke('getBrandWCPayRequest', {
-                "appId": payArgs.appId, "timeStamp": payArgs.timeStamp, "nonceStr": payArgs.nonceStr,
-                "package": payArgs.package, "signType": payArgs.signType, "paySign": payArgs.paySign
-            }, async (res) => {
-                if (res.err_msg === "get_brand_wcpay_request:ok") {
-                    showSuccessToast('支付成功');
-                    showPayModal.value = false;
-                    await handlePublish(); 
-                } else { showFailToast('支付已取消'); }
-            });
-        } else { showFailToast('请在微信内打开'); }
-    } catch (e) { showFailToast('支付失败: ' + e.message); }
 };
 
 const onConfirmDate = ({selectedOptions}) => { 
@@ -289,17 +253,6 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
 
     <van-button round block type="primary" color="#07c160" :loading="submitLoading" @click="onPreSubmit" class="submit-btn">确认发布</van-button>
 
-    <van-popup v-model:show="showPayModal" position="bottom" round class="pay-popup">
-      <div class="pay-header">
-        <van-icon name="gold-coin" color="#ff6600" size="48" />
-        <h3>发布服务费</h3>
-        <p>账户余额不足，支付后即可自动发布</p>
-        <div class="amount"><span>¥</span> {{ requiredFee }}</div>
-      </div>
-      <van-button block round type="primary" color="#07c160" size="large" @click="executePayment">微信安全支付</van-button>
-      <van-button block round plain class="cancel-btn" @click="showPayModal = false">取消支付</van-button>
-    </van-popup>
-
     <van-popup v-model:show="showMap" position="bottom" :style="{height:'90%'}" round @opened="initMapInstance">
         <div class="map-wrap">
           <van-search v-model="mapSearchKeyword" show-action placeholder="搜索地点" @search="confirmMapSelection()"><template #action><div @click="showMap=false">取消</div></template></van-search>
@@ -319,12 +272,10 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
     </van-popup>
     
     <van-popup v-model:show="showAuth" position="bottom" class="auth-popup" :close-on-click-overlay="false">
-        <h3>绑定信息</h3>
-        <div class="auth-body">
-            <van-field v-model="registerForm.nickname" label="真实姓名" placeholder="填写真实姓名" border />
-            <van-field v-model="registerForm.phone" label="手机号码" type="tel" placeholder="填写联系手机号" border />
-            <van-button block type="primary" color="#ff6600" @click="submitAuth">确认绑定</van-button>
-        </div>
+        <h3 style="margin-bottom: 20px;">补充联系方式</h3>
+        <p style="color:#666; font-size:14px; margin-bottom: 25px;">请留下手机号，方便司乘人员与您沟通</p>
+        <van-field v-model="registerForm.phone" type="tel" placeholder="请输入11位真实手机号" border style="background: #f5f5f5; border-radius: 8px;" />
+        <van-button block round type="primary" color="#ff6600" @click="submitAuth" style="margin-top:30px;">确认绑定</van-button>
     </van-popup>
   </div>
 </template>
@@ -339,7 +290,6 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
 .text { font-size:18px; font-weight:bold; flex:1; }
 .aim { padding:10px; }
 .exchange { position:absolute; right:40px; top:-15px; background:#fff; padding:5px; border-radius:50%; box-shadow:0 2px 8px rgba(0,0,0,0.1); transform: rotate(90deg); }
-
 .form-card { background:#fff; border-radius:8px; padding:15px; margin-top:15px; }
 .field-row { display:flex; align-items:center; padding:12px 0; border-bottom:1px solid #f0f0f0; }
 .label { width:75px; font-weight:bold; }
@@ -351,23 +301,12 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
 .tags { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
 .tag { padding:4px 12px; background:#f0f0f0; border-radius:4px; font-size:13px; border:1px solid transparent; }
 .tag.active { background:#eaf5ff; color:#1989fa; border-color:#1989fa; }
-
 .submit-btn { margin-top:30px; font-size:16px; height: 44px; }
-
-.pay-popup { padding: 30px 20px; text-align: center; }
-.pay-header h3 { margin: 15px 0 5px; }
-.pay-header p { color: #999; font-size: 14px; margin:0 0 20px; }
-.pay-header .amount { font-size: 36px; font-weight: bold; color: #333; margin: 10px 0 25px; }
-.pay-header .amount span { font-size: 20px; vertical-align: middle; }
-.cancel-btn { margin-top: 15px; border: none; color: #999; }
-
 .map-wrap { display:flex;flex-direction:column;height:100%; }
 #picker-map-container { width:100%;height:300px;position:relative;flex-shrink:0; }
 .map-footer { padding:15px;background:#fff;border-top:1px solid #eee; }
 .map-footer .current { margin-bottom:10px;font-size:14px;color:#333;font-weight:bold; }
 .hots { display:flex;gap:10px;flex-wrap:wrap;margin-bottom:15px; }
 .h-city { padding:4px 10px;background:#f2f3f5;border-radius:4px;font-size:12px; }
-
-.auth-popup { padding:20px; height:50%; text-align:center; }
-.auth-body { margin-top:20px; }
+.auth-popup { padding: 30px 20px; text-align:center; }
 </style>
