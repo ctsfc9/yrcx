@@ -4,7 +4,6 @@ import { useRouter } from 'vue-router';
 import { showToast } from 'vant';
 import { useAppStore } from '../store';
 import TabBar from '../components/TabBar.vue';
-import { initWeChatShare } from '../utils/wxShare';
 
 const router = useRouter();
 const store = useAppStore();
@@ -12,7 +11,7 @@ const rideList = ref([]);
 const loading = ref(true);
 const showAuthGuide = ref(false);
 
-// 1. 连续两次点击返回键退出的逻辑
+// 连续两次点击返回键退出的逻辑
 let exitTime = 0;
 const handlePopstate = () => {
   const now = Date.now();
@@ -33,14 +32,6 @@ onMounted(async () => {
 
   // 确保系统配置加载
   if(!store.sysConfig.amap_key) await store.loadConfig();
-
-  // 配置全局首页分享卡片
-  initWeChatShare({
-      title: '宜人出行-长途顺风合乘平台',
-      desc: '一个专注长途顺风拼车的合乘平台，老乡互助，共享出行！',
-      link: 'https://yb.ctsfc.top/index.php/index.html',
-      imgUrl: 'http://b191.photo.store.qq.com/psb?/V12OmDno0wX8Ar/DmRefUWYmAAeBoH8HXzWBy8wls.qQhylKwvryEgeH7Q!/c/dL8AAAAAAAAA&bo=wAPAA8ADwAMBACc!&rf=mood_app'
-  });
 
   // 检查是否为新用户且无授权 code，弹出微信授权引导
   const urlParams = new URLSearchParams(window.location.search);
@@ -70,7 +61,7 @@ const processedRides = computed(() => {
     const now = new Date();
     let arr = rideList.value.map(item => ({ ...item, is_expired: new Date(item.date) < now }));
     
-    // 读取后台的 show_expired 开关 (1为开启，0为关闭)
+    // 读取后台的 show_expired 开关
     if (store.sysConfig.show_expired != 1) {
         arr = arr.filter(item => !item.is_expired);
     }
