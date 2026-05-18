@@ -76,6 +76,7 @@ onMounted(async () => {
     loadMapScript();
 });
 
+// 👉 【锁定回退版】完美解析父子城市（如：上海长宁），解决同名错乱
 const parseLocationName = (addressComp) => {
     if (!addressComp) return '';
     let province = addressComp.province || '';
@@ -243,14 +244,13 @@ const handlePublish = async () => {
 const executePayment = async () => {
     showLoadingToast({ message: '正在呼起微信支付...', forbidClick: true, duration: 0 });
     try {
+        // 👉 核心支付修复：移除未知参数，直接传最纯净、确保必成的 Number 类型参数，防止后端统一下单崩溃
         const payRes = await fetch('/api/pay', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
                 user_id: store.userProfile.id, 
-                amount: requiredFee.value, 
-                openid: store.userProfile.openid,
-                pay_type: payType.value,
-                ride_id: currentPayRideId.value 
+                amount: Number(requiredFee.value), 
+                openid: store.userProfile.openid
             })
         });
         const data = await payRes.json();
