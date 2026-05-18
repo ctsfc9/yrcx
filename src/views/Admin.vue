@@ -72,6 +72,7 @@ const saveConfig = async () => {
         <li :class="{ active: activeMenu === 'config' }" @click="activeMenu = 'config'"><van-icon name="setting-o" /> 平台参数设置</li>
         <ul class="sub-menu" v-if="activeMenu === 'config'">
           <li :class="{ active: activeSubMenu === 'basic' }" @click="activeSubMenu = 'basic'">基本设置</li>
+          <li :class="{ active: activeSubMenu === 'tags' }" @click="activeSubMenu = 'tags'">常用备注标签</li>
           <li :class="{ active: activeSubMenu === 'wx' }" @click="activeSubMenu = 'wx'">微信公众号</li>
         </ul>
       </ul>
@@ -83,6 +84,7 @@ const saveConfig = async () => {
       </div>
       <div class="content-body">
         <div class="card" v-if="activeMenu === 'config'">
+          
           <div v-if="activeSubMenu === 'basic'">
             <div class="card-title">基本运行参数</div>
             <van-cell-group inset :border="false">
@@ -93,6 +95,15 @@ const saveConfig = async () => {
               <van-cell title="首页展示过期行程" center><template #right-icon><van-switch v-model="config.show_expired" size="24" /></template></van-cell>
             </van-cell-group>
           </div>
+
+          <div v-if="activeSubMenu === 'tags'">
+            <div class="card-title">自定义常用备注标签</div>
+            <van-cell-group inset :border="false">
+              <van-field v-model="config.tags_driver" label="车主常用备注" type="textarea" rows="2" autosize placeholder="多个标签请用逗号(,)分隔，如：有空位,走高速,不绕路" />
+              <van-field v-model="config.tags_passenger" label="乘客常用备注" type="textarea" rows="2" autosize placeholder="多个标签请用逗号(,)分隔，如：带宠物,行李多,两人同行" />
+            </van-cell-group>
+          </div>
+
           <div v-if="activeSubMenu === 'wx'">
             <div class="card-title">微信开放平台参数</div>
             <van-cell-group inset :border="false">
@@ -100,6 +111,7 @@ const saveConfig = async () => {
               <van-field v-model="config.wx_appsecret" label="微信AppSecret" type="password" />
             </van-cell-group>
           </div>
+          
           <div class="btn-wrap"><van-button block type="primary" color="#3b5998" :loading="submitLoading" @click="saveConfig">保存设置</van-button></div>
         </div>
       </div>
