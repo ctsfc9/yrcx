@@ -6,10 +6,16 @@ export const initWeChatShare = async (shareData) => {
     const res = await fetch(`/api/wx_sign?url=${currentUrl}`);
     const signData = await res.json();
 
+    // 👉 核心排错弹窗：如果后端被微信拦截，直接把原封不动的微信报错弹出来！
+    if (signData.error) {
+        console.error("后端签名失败:", signData);
+        alert(`签名拦截警告: ${signData.error}\n详情: ${JSON.stringify(signData.details)}`);
+        return;
+    }
+
     if (signData.appId) {
       window.wx.config({
-        // 👉 开启调试模式！进网页时如果弹出一个写着 "config:ok" 的绿色框，说明签名完全成功！
-        debug: true, 
+        debug: true, // 保持 true，成功时会弹出 config:ok
         appId: signData.appId,
         timestamp: signData.timestamp,
         nonceStr: signData.nonceStr,
@@ -32,10 +38,10 @@ export const initWeChatShare = async (shareData) => {
       });
       
       window.wx.error((res) => {
-          console.error("微信JS-SDK签名配置失败:", res);
+          console.error("wx.config 验证失败:", res);
       });
     }
   } catch (e) {
-    console.error('微信分享请求失败', e);
+    console.error('前端请求签名出错', e);
   }
 };
