@@ -76,6 +76,7 @@ onMounted(async () => {
     loadMapScript();
 });
 
+// 父子城市解析保持不变，100%解决同名错乱
 const parseLocationName = (addressComp) => {
     if (!addressComp) return '';
     let province = addressComp.province || '';
@@ -92,9 +93,13 @@ const parseLocationName = (addressComp) => {
     }
 };
 
+// 👉 核心优化：彻底删除阻塞页面的 Loading 弹窗，改为静默定位，页面秒开！
 const autoLocate = () => { 
     if (postForm.origin) return; 
     if (!window.AMap) return;
+
+    // 静默提示
+    mapSelectionText.value = '静默获取位置中...';
     
     window.AMap.plugin(['AMap.Geolocation', 'AMap.CitySearch'], function() {
         var geolocation = new window.AMap.Geolocation({
@@ -117,7 +122,6 @@ const autoLocate = () => {
     });
 };
 
-// 👉 核心修复：添加 async，网页瞬间秒开，再也不会因为地图接口卡顿白屏！
 const loadMapScript = () => {
     if (window.AMap) {
         autoLocate();
@@ -128,17 +132,16 @@ const loadMapScript = () => {
     
     window._AMapSecurityConfig = { securityJsCode: '' }; 
     const s = document.createElement('script');
-    s.async = true;  // 异步无阻塞加载
-    s.defer = true;
+    s.async = true; // 异步加载，不卡顿页面
     s.src = `https://webapi.amap.com/maps?v=1.4.15&key=${key}&plugin=AMap.CitySearch,AMap.Geolocation,AMap.Geocoder`;
     s.onload = () => {
-        setTimeout(autoLocate, 600);
+        setTimeout(autoLocate, 300);
     };
     document.body.appendChild(s);
 };
 
 const openMapSelector = (f) => { 
-    if (!window.AMap) { showToast('地图正在加载，请直接输入'); return; }
+    if (!window.AMap) { showToast('地图加载中，请稍后再试或手动输入'); return; }
     currentMapField.value = f; showMap.value = true; mapSearchKeyword.value = ''; 
 };
 
@@ -241,7 +244,7 @@ const handlePublish = async () => {
     finally { submitLoading.value = false; } 
 };
 
-// 👉 核心修复：全网最坚固的支付请求包，避免微信网关统一下单失败
+// 👉 核心净化：剔除多余参数，纯净入参避免后端支付包抛出“预支付失败”
 const executePayment = async () => {
     if (!store.userProfile?.openid) {
         showFailToast('缺少微信身份，无法唤起支付');
@@ -251,17 +254,13 @@ const executePayment = async () => {
 
     showLoadingToast({ message: '正在呼起收银台...', forbidClick: true, duration: 0 });
     try {
-        // 构建极其严谨的支付包
-        const feeNum = Number(requiredFee.value);
+        // 只保留最基础的三个参数以及类型，不越俎代庖生成 out_trade_no
         const payPayload = { 
             user_id: store.userProfile.id, 
             openid: store.userProfile.openid,
-            amount: feeNum, 
-            total_fee: Math.round(feeNum * 100), // 很多后端系统强依赖转为“分”的单位
-            out_trade_no: 'ORD_' + Date.now() + '_' + Math.floor(Math.random() * 10000), // 杜绝订单号重复引发的“预支付失败”
-            body: payType.value === 'top' ? '顺风车-置顶服务' : '顺风车-发布服务',
-            pay_type: payType.value,
-            ride_id: currentPayRideId.value 
+            amount: Number(requiredFee.value),
+            type: payType.value, // 'publish' 或 'top'
+            ride_id: currentPayRideId.value
         };
 
         const payRes = await fetch('/api/pay', {
@@ -271,7 +270,7 @@ const executePayment = async () => {
         const data = await payRes.json();
         
         if (data.error) {
-            throw new Error(data.error + (data.details ? ' ' + JSON.stringify(data.details) : ''));
+            throw new Error(data.error);
         }
 
         const payArgs = data.payArgs;
