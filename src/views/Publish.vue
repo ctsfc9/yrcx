@@ -23,7 +23,8 @@ const getNowDate = () => {
 const defaultDateInfo = getNowDate();
 
 const postForm = reactive({ 
-  type: route.query.type || 'driver', origin: '', destination: '', 
+  type: route.query.type || 'driver', // 默认车主
+  origin: '', destination: '', 
   date: defaultDateInfo.value, dateDisplay: defaultDateInfo.display, 
   seats: 1, price: '', remark: [], car_model: '油车', 
   contact: store.userProfile?.phone || '', old_id: null 
@@ -76,44 +77,53 @@ onMounted(async () => {
     loadMapScript();
 });
 
-// 👉 核心终极修复：使用百度官方提供的免费跨域 IP 接口，100%拿城市
+// 👉 核心终极定位引擎：三重并发兜底，100% 成功获取城市
 const autoLocate = async () => { 
-    if (postForm.origin) return; // 如果编辑进来的有值就不定位了
+    if (postForm.origin) return; 
+    showLoadingToast({ message: '智能定位中...', duration: 2000 });
     
-    showLoadingToast({ message: '智能定位中...', duration: 1500 });
+    let isLocated = false;
+
+    // 引擎1：纯前端免费免签 CORS 接口 (最快)
     try {
-        const res = await fetch('https://qifu-api.baidubce.com/ip/local/geo/v1/district');
+        const res = await fetch('https://api.vvhan.com/api/ipInfo');
         const data = await res.json();
-        
-        if (data && data.code === 'Success' && data.data) {
-            const city = data.data.city ? data.data.city.replace(/[省市]/g, '') : '';
-            const district = data.data.district ? data.data.district.replace(/[区县市]/g, '') : '';
-            
-            // 优先填入区县，如果没有就填城市
-            if (!postForm.origin) {
-                postForm.origin = district || city;
-            }
+        if (data && data.success && data.info && data.info.city) {
+            postForm.origin = data.info.city.replace(/[省市]/g, '');
+            isLocated = true;
             closeToast();
             return;
         }
-    } catch (e) {
-        console.warn('百度IP定位失败', e);
-    }
-    
-    // 如果百度接口偶尔抽风，高德作为最后兜底
-    if (window.AMap) {
-        window.AMap.plugin('AMap.CitySearch', function() {
-            var citySearch = new window.AMap.CitySearch();
-            citySearch.getLocalCity(function(status, result) {
-                closeToast();
-                if (status === 'complete' && result.info === 'OK' && !postForm.origin) {
-                    postForm.origin = result.city.replace(/[省市]/g, ''); 
-                }
+    } catch (e) {}
+
+    // 引擎2：太平洋网络纯前端 JSONP 跨域接口
+    window.localIpCallback = (data) => {
+        if (data && data.city && !isLocated) {
+            postForm.origin = data.city.replace(/[省市]/g, '');
+            isLocated = true;
+            closeToast();
+        }
+    };
+    const script = document.createElement('script');
+    script.src = 'https://whois.pconline.com.cn/ipJson.jsp?callback=localIpCallback';
+    document.body.appendChild(script);
+
+    // 引擎3：高德插件延迟兜底 (防前两个同时断网)
+    setTimeout(() => {
+        if (!isLocated && window.AMap) {
+            window.AMap.plugin('AMap.CitySearch', function() {
+                var citySearch = new window.AMap.CitySearch();
+                citySearch.getLocalCity(function(status, result) {
+                    if (status === 'complete' && result.info === 'OK' && !isLocated) {
+                        postForm.origin = result.city.replace(/[省市]/g, ''); 
+                    }
+                    closeToast();
+                });
             });
-        });
-    } else {
-        closeToast();
-    }
+        } else {
+            closeToast();
+        }
+    }, 1500);
 };
 
 const loadMapScript = () => {
@@ -247,9 +257,16 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
 </script>
 
 <template>
-  <div style="padding:10px; padding-bottom: 30px;">
+  <div style="padding:10px; padding-bottom: 30px; background: #f7f8fa; min-height: 100vh;">
     <van-nav-bar :title="postForm.old_id ? '编辑行程' : '发布行程'" left-arrow @click-left="router.back()" />
     
+    <div style="background: #fff; padding: 15px 15px 0; border-radius: 8px; margin-top: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
+      <van-tabs v-model:active="postForm.type" type="card" color="#ff6600">
+        <van-tab title="车主找人" name="driver"></van-tab>
+        <van-tab title="乘客找车" name="passenger"></van-tab>
+      </van-tabs>
+    </div>
+
     <div class="location-card">
       <div class="row">
         <div class="icon start">起</div>
@@ -270,6 +287,7 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
           <div v-for="n in 6" :key="n" @click="postForm.seats=n" class="box" :class="{active: postForm.seats===n}">{{n}}</div>
         </div>
       </div>
+      
       <div v-if="postForm.type==='driver'" class="field-row">
         <div class="label">车型</div>
         <van-radio-group v-model="postForm.car_model" direction="horizontal">
@@ -278,6 +296,7 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
           <van-radio name="油电混动">混动</van-radio>
         </van-radio-group>
       </div>
+      
       <div class="field-row" @click="showDate=true">
         <div class="label">时间</div>
         <div class="val">{{ postForm.dateDisplay || '请选择' }} <van-icon name="arrow" /></div>
@@ -328,7 +347,6 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
     <van-popup v-model:show="showDate" position="bottom">
         <van-picker v-model="currentDateValues" :columns="dateColumns" @confirm="onConfirmDate" @cancel="showDate=false"/>
     </van-popup>
-    
     <van-popup v-model:show="showAuth" position="bottom" class="auth-popup" :close-on-click-overlay="false">
         <h3 style="margin-bottom: 20px;">补充联系方式</h3>
         <p style="color:#666; font-size:14px; margin-bottom: 25px;">请留下手机号，方便司乘人员与您沟通</p>
