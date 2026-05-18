@@ -23,15 +23,18 @@ const getNowDate = () => {
 const defaultDateInfo = getNowDate();
 
 const postForm = reactive({ 
-  type: '', // 初始为空，强制用户选择
+  type: '', 
   origin: '', destination: '', 
   date: defaultDateInfo.value, dateDisplay: defaultDateInfo.display, 
   seats: 1, price: '', remark: [], car_model: '油车', 
   contact: store.userProfile?.phone || '', old_id: null 
 });
 
-// 👉 核心优化：控制巨屏选择器的展示
 const showTypeSelector = ref(false);
+const typeActions = [
+  { name: '🚗 车主找人 (我有车)', value: 'driver', color: '#1989fa' },
+  { name: '🙋‍♂️ 乘客找车 (我找车)', value: 'passenger', color: '#ff7700' }
+];
 
 const currentDateValues = ref(defaultDateInfo.pickerValues);
 const submitLoading = ref(false);
@@ -79,7 +82,6 @@ onMounted(async () => {
     } else if (route.query.type) {
         postForm.type = route.query.type;
     } else {
-        // 如果没有传入类型，页面打开直接显示巨屏选择器
         showTypeSelector.value = true;
     }
     
@@ -88,7 +90,6 @@ onMounted(async () => {
     }, 800);
 });
 
-// 巨屏选择器的方法
 const selectPostType = (type) => {
     postForm.type = type;
     showTypeSelector.value = false;
@@ -254,7 +255,7 @@ const handlePublish = async () => {
     finally { submitLoading.value = false; } 
 };
 
-// 👉 极简净化版：只传微信统一下单绝对必须的参数，其他通通不传，防止由于字段冗余导致签名错误
+// 👉 核心诊断探针：捕获底层报错并直接弹窗显示
 const executePayment = async () => {
     if (!store.userProfile?.openid) {
         showFailToast('缺少微信身份，无法唤起支付');
@@ -276,33 +277,60 @@ const executePayment = async () => {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payPayload)
         });
-        const data = await payRes.json();
         
-        if (data.error) {
-            throw new Error(data.error);
+        // 探针一：直接解析文本，防止后端崩溃返回 HTML 而不是 JSON
+        const rawText = await payRes.text();
+        let data;
+        try {
+            data = JSON.parse(rawText);
+        } catch (err) {
+            closeToast();
+            alert("⚠️ 后端接口崩溃，非JSON格式：\n" + rawText.substring(0, 100));
+            return;
+        }
+        
+        // 探针二：捕获后端传出的微信报错明细
+        if (data.error || !data.payArgs) {
+            closeToast();
+            const detailMsg = data.details ? JSON.stringify(data.details) : '';
+            alert(`⚠️ 商户网关报错：\n${data.error || '未生成payArgs'}\n${detailMsg}\n请检查微信商户平台配置！`);
+            return;
         }
 
         const payArgs = data.payArgs;
+        closeToast(); // 关闭 loading
+        
         if (typeof WeixinJSBridge !== "undefined") {
             WeixinJSBridge.invoke('getBrandWCPayRequest', {
-                "appId": payArgs.appId, "timeStamp": payArgs.timeStamp, "nonceStr": payArgs.nonceStr,
-                "package": payArgs.package, "signType": payArgs.signType, "paySign": payArgs.paySign
+                "appId": payArgs.appId, 
+                "timeStamp": payArgs.timeStamp, 
+                "nonceStr": payArgs.nonceStr,
+                "package": payArgs.package, 
+                "signType": payArgs.signType, 
+                "paySign": payArgs.paySign
             }, async (res) => {
                 if (res.err_msg === "get_brand_wcpay_request:ok") {
                     showSuccessToast('支付成功');
                     showPayModal.value = false;
-                    
                     if (payType.value === 'publish') {
                         await handlePublish(); 
                     } else if (payType.value === 'top') {
                         await fetch('/api/rides', { method: 'PUT', body: JSON.stringify({ action: 'top', id: currentPayRideId.value }) });
                         router.replace('/');
                     }
-                } else { showFailToast('支付已取消'); }
+                } else if (res.err_msg === "get_brand_wcpay_request:cancel") { 
+                    showFailToast('支付已取消'); 
+                } else {
+                    // 探针三：前端统一下单后被微信直接拒绝
+                    alert(`⚠️ 微信端拦截：\n${res.err_msg}\n这通常是由于签名或统一下单参数不对导致。`);
+                }
             });
-        } else { showFailToast('请在微信内打开'); }
+        } else { 
+            showFailToast('请在微信内打开'); 
+        }
     } catch (e) { 
-        showFailToast('微信商户拦截: ' + e.message); 
+        closeToast();
+        alert('前端执行异常: ' + e.message); 
     }
 };
 
