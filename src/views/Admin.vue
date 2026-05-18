@@ -87,17 +87,10 @@ const saveConfig = async () => {
             <div class="card-title">基本运行参数</div>
             <van-cell-group inset :border="false">
               <van-field v-model="config.notice" label="首页公告" type="textarea" rows="2" autosize />
-              <van-field v-model="config.publish_fee" label="单次发布收费" type="number" placeholder="填 0 为免费发布" input-align="right">
-                <template #button>元</template>
-              </van-field>
-              <van-field v-model="config.top_fee" label="行程置顶收费" type="number" placeholder="填 0 为免费置顶" input-align="right">
-                <template #button>元</template>
-              </van-field>
-
+              <van-field v-model="config.publish_fee" label="单次发布收费" type="number" placeholder="填 0 为免费" input-align="right"><template #button>元</template></van-field>
+              <van-field v-model="config.top_fee" label="行程置顶收费" type="number" placeholder="填 0 为免费" input-align="right"><template #button>元</template></van-field>
               <van-field v-model="config.amap_key" label="高德地图Key" />
-              <van-cell title="首页展示过期行程" center>
-                 <template #right-icon><van-switch v-model="config.show_expired" size="24" /></template>
-              </van-cell>
+              <van-cell title="首页展示过期行程" center><template #right-icon><van-switch v-model="config.show_expired" size="24" /></template></van-cell>
             </van-cell-group>
           </div>
           <div v-if="activeSubMenu === 'wx'">
