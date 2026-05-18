@@ -72,35 +72,48 @@ onMounted(async () => {
         store.setEditPayload(null); 
     } 
     
-    // 页面加载即触发双擎定位
     autoLocate();
     loadMapScript();
 });
 
-// 👉 核心修复：100% 成功的 JSONP IP 智能兜底定位
-const autoLocate = () => {
-    showLoadingToast({ message: '智能定位城市...', duration: 1500 });
+// 👉 核心终极修复：使用百度官方提供的免费跨域 IP 接口，100%拿城市
+const autoLocate = async () => { 
+    if (postForm.origin) return; // 如果编辑进来的有值就不定位了
     
-    // 挂载全局回调接收无视跨域的城市数据
-    window.ipJson = (data) => {
-        if (data && data.city && !postForm.origin) {
-            let city = data.city.replace(/[省市]/g, '');
-            let region = data.region ? data.region.replace(/[区县市]/g, '') : '';
-            // 优先填入区县，如果没有就填入城市
-            postForm.origin = region || city;
+    showLoadingToast({ message: '智能定位中...', duration: 1500 });
+    try {
+        const res = await fetch('https://qifu-api.baidubce.com/ip/local/geo/v1/district');
+        const data = await res.json();
+        
+        if (data && data.code === 'Success' && data.data) {
+            const city = data.data.city ? data.data.city.replace(/[省市]/g, '') : '';
+            const district = data.data.district ? data.data.district.replace(/[区县市]/g, '') : '';
             
-            // 如果高德地图弹窗已经初始化，同步中心点
-            if (mapInstance && window.AMap) {
-                 mapInstance.setCity(postForm.origin);
+            // 优先填入区县，如果没有就填城市
+            if (!postForm.origin) {
+                postForm.origin = district || city;
             }
+            closeToast();
+            return;
         }
-    };
+    } catch (e) {
+        console.warn('百度IP定位失败', e);
+    }
     
-    // 创建跨域请求标签 (太平洋网络免费接口，国内速度极快)
-    const script = document.createElement('script');
-    script.src = 'https://whois.pconline.com.cn/ipJson.jsp?callback=ipJson';
-    script.charset = 'gbk';
-    document.body.appendChild(script);
+    // 如果百度接口偶尔抽风，高德作为最后兜底
+    if (window.AMap) {
+        window.AMap.plugin('AMap.CitySearch', function() {
+            var citySearch = new window.AMap.CitySearch();
+            citySearch.getLocalCity(function(status, result) {
+                closeToast();
+                if (status === 'complete' && result.info === 'OK' && !postForm.origin) {
+                    postForm.origin = result.city.replace(/[省市]/g, ''); 
+                }
+            });
+        });
+    } else {
+        closeToast();
+    }
 };
 
 const loadMapScript = () => {
@@ -115,7 +128,7 @@ const loadMapScript = () => {
 };
 
 const openMapSelector = (f) => { 
-    if (!window.AMap) { showToast('地图未就绪，请直接输入'); return; }
+    if (!window.AMap) { showToast('地图未准备好，请手动输入'); return; }
     currentMapField.value = f; showMap.value = true; mapSearchKeyword.value = ''; 
 };
 
@@ -123,7 +136,8 @@ const initMapInstance = () => {
     if (!window.AMap) return;
     document.getElementById('picker-map-container').innerHTML = ''; 
     mapInstance = new window.AMap.Map('picker-map-container', { 
-        zoom: 14, center: userLocation.value || [104.06, 30.67] 
+        zoom: 14, 
+        center: userLocation.value || [104.06, 30.67] 
     }); 
     
     if (postForm.origin) {
@@ -162,7 +176,7 @@ const submitAuth = async () => {
 };
 
 const onPreSubmit = () => { 
-    if(!postForm.origin || !postForm.destination) { showFailToast('请完善起点和终点'); return; } 
+    if(!postForm.origin || postForm.origin === '定位失败' || !postForm.destination) { showFailToast('请完善起点和终点'); return; } 
     if(!/^\d{11}$/.test(postForm.contact)) { showFailToast('请填写11位手机号'); return; }
     if(!store.userProfile?.phone) { showAuth.value = true; return; } 
     handlePublish(); 
@@ -171,8 +185,10 @@ const onPreSubmit = () => {
 const handlePublish = async () => { 
     submitLoading.value = true; 
     let currentUserId = store.userProfile?.id || ('user_' + Date.now());
+
     const dateVal = postForm.date || new Date().toISOString(); 
     const remarkStr = Array.isArray(postForm.remark) ? postForm.remark.join('，') : postForm.remark; 
+    
     const newRide = { ...postForm, user_id: currentUserId, date: dateVal, remark: remarkStr, old_id: postForm.old_id }; 
     if (!newRide.price) newRide.price = '面议';
 
@@ -204,6 +220,7 @@ const executePayment = async () => {
         });
         const data = await payRes.json();
         if (data.error) throw new Error(data.error);
+
         const payArgs = data.payArgs;
         if (typeof WeixinJSBridge !== "undefined") {
             WeixinJSBridge.invoke('getBrandWCPayRequest', {
@@ -236,7 +253,7 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
     <div class="location-card">
       <div class="row">
         <div class="icon start">起</div>
-        <div class="text" @click="openMapSelector('origin')">{{ postForm.origin || '点击定位/输入' }}</div>
+        <div class="text" @click="openMapSelector('origin')">{{ postForm.origin || '点击定位或输入' }}</div>
         <div class="aim" @click="autoLocate"><van-icon name="aim" /></div>
       </div>
       <div class="row">
