@@ -1,8 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { showToast, showLoadingToast, closeToast } from 'vant';
-import { initWeChatShare } from '../utils/wxShare';
+import { showToast, showLoadingToast, closeToast, showSuccessToast, showFailToast } from 'vant';
 
 const route = useRoute();
 const router = useRouter();
@@ -18,15 +17,6 @@ onMounted(async () => {
     const data = await res.json();
     if (res.ok) {
       rideInfo.value = data;
-      
-      // 👉 配置详情页专属的引流分享卡片
-      initWeChatShare({
-          title: `【顺风车】${data.origin} ➔ ${data.destination}`,
-          desc: `出发时间: ${formatDate(data.date)} | 剩余座位: ${data.seats}个 (点击查看安全合乘详情)`,
-          link: window.location.href, // 分享当前详情页
-          imgUrl: 'http://b191.photo.store.qq.com/psb?/V12OmDno0wX8Ar/DmRefUWYmAAeBoH8HXzWBy8wls.qQhylKwvryEgeH7Q!/c/dL8AAAAAAAAA&bo=wAPAA8ADwAMBACc!&rf=mood_app'
-      });
-      
     } else {
       showToast(data.error || '行程不存在');
       setTimeout(() => router.replace('/'), 1500);
@@ -50,10 +40,63 @@ const handleCall = () => {
         window.location.href = `tel:${rideInfo.value.contact}`;
     }
 };
+
+// 👉 核心新增：生成精美分享文案并一键复制
+const handleCopyText = () => {
+    const url = window.location.href; 
+    const dateStr = formatDate(rideInfo.value.date);
+    const priceStr = rideInfo.value.price === '面议' ? '面议' : `¥${rideInfo.value.price}`;
+    const typeStr = rideInfo.value.type === 'driver' ? '车主找人' : '乘客找车';
+    const remarkStr = rideInfo.value.remark ? `\n🏷️ 备注：${rideInfo.value.remark}` : '';
+    
+    // 精心设计的拼车排版文案
+    const textToCopy = `【宜人出行 · 顺风车】
+📢 ${typeStr}
+📍 路线：${rideInfo.value.origin} ➔ ${rideInfo.value.destination}
+🕒 时间：${dateStr}
+💺 余座：${rideInfo.value.seats}座
+💰 分摊：${priceStr}${remarkStr}
+👇 点击链接查看详情并联系TA：
+${url}`;
+
+    // 剪贴板写入逻辑 (兼容现代浏览器与微信内置浏览器)
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(textToCopy).then(() => {
+            showSuccessToast('✅ 文案已复制，快去发微信群吧！');
+        }).catch(() => fallbackCopy(textToCopy));
+    } else {
+        fallbackCopy(textToCopy);
+    }
+};
+
+// 微信环境下的降级复制方案（极其重要，防止复制失败）
+const fallbackCopy = (text) => {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    // 隐藏文本域，防止页面滚动跳跃
+    textArea.style.position = "fixed"; 
+    textArea.style.top = "-9999px";
+    textArea.style.left = "-9999px";
+    textArea.style.opacity = "0";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    try {
+        const successful = document.execCommand('copy');
+        if (successful) {
+            showSuccessToast('✅ 文案已复制，快去粘贴分享吧！');
+        } else {
+            showFailToast('复制失败，请手动截屏分享');
+        }
+    } catch (err) {
+        showFailToast('当前环境不支持一键复制');
+    }
+    document.body.removeChild(textArea);
+};
 </script>
 
 <template>
-  <div style="background: #f7f8fa; min-height: 100vh; padding-bottom: 80px;" v-if="rideInfo">
+  <div style="background: #f7f8fa; min-height: 100vh; padding-bottom: 100px;" v-if="rideInfo">
     <van-nav-bar title="行程详情" left-arrow @click-left="router.back()" />
     
     <div style="background: #fff; padding: 20px; text-align: center; border-bottom: 1px solid #eee;">
@@ -75,7 +118,6 @@ const handleCall = () => {
             <van-cell title="出发时间" icon="clock-o" :value="formatDate(rideInfo.date)" value-class="bold-text" />
             <van-cell title="提供座位" icon="friends-o" :value="rideInfo.seats + ' 座'" />
             <van-cell title="行程分摊" icon="gold-coin-o" :value="rideInfo.price === '面议' ? '面议' : '¥' + rideInfo.price" value-class="price-text" />
-            
             <van-cell v-if="rideInfo.type === 'driver'" title="车辆类型" icon="logistics">
                <template #value>
                   <span :class="{'car-gas': rideInfo.car_model==='油车', 'car-ev': rideInfo.car_model==='电车', 'car-hybrid': rideInfo.car_model==='油电混动'}" class="car-tag">
@@ -94,8 +136,9 @@ const handleCall = () => {
         </div>
     </div>
 
-    <div style="position: fixed; bottom: 0; left: 0; right: 0; background: #fff; padding: 10px 20px; box-shadow: 0 -2px 10px rgba(0,0,0,0.05); z-index: 99;">
-        <van-button block round type="primary" color="#07c160" icon="phone-o" @click="handleCall">立即联系TA</van-button>
+    <div style="position: fixed; bottom: 0; left: 0; right: 0; background: #fff; padding: 10px 15px; box-shadow: 0 -2px 10px rgba(0,0,0,0.05); z-index: 99; display: flex; gap: 10px;">
+        <van-button round plain type="primary" color="#ff6600" icon="orders-o" style="flex: 1;" @click="handleCopyText">复制分享文案</van-button>
+        <van-button round type="primary" color="#07c160" icon="phone-o" style="flex: 1.5;" @click="handleCall">立即联系TA</van-button>
     </div>
   </div>
 </template>
@@ -103,10 +146,8 @@ const handleCall = () => {
 <style scoped>
 :deep(.bold-text) { font-weight: bold; color: #333; }
 :deep(.price-text) { font-weight: bold; color: #ee0a24; font-size: 16px; }
-
-/* 车型彩色标签样式 */
 .car-tag { padding: 3px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; }
-.car-gas { background: #ffebee; color: #d32f2f; }      /* 油车：红色系 */
-.car-ev { background: #e8f5e9; color: #2e7d32; }       /* 电车：绿色系 */
-.car-hybrid { background: #e3f2fd; color: #1565c0; }   /* 混动：蓝色系 */
+.car-gas { background: #ffebee; color: #d32f2f; }      
+.car-ev { background: #e8f5e9; color: #2e7d32; }       
+.car-hybrid { background: #e3f2fd; color: #1565c0; }   
 </style>
