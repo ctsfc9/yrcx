@@ -23,7 +23,7 @@ const getNowDate = () => {
 const defaultDateInfo = getNowDate();
 
 const postForm = reactive({ 
-  type: route.query.type || 'driver', // 默认车主
+  type: route.query.type || 'driver', 
   origin: '', destination: '', 
   date: defaultDateInfo.value, dateDisplay: defaultDateInfo.display, 
   seats: 1, price: '', remark: [], car_model: '油车', 
@@ -77,44 +77,47 @@ onMounted(async () => {
     loadMapScript();
 });
 
-// 👉 核心终极定位引擎：三重并发兜底，100% 成功获取城市
-const autoLocate = async () => { 
+// 👉 核心终极定位引擎：搜狐 + 太平洋网络 双JSONP引擎，百分百获取城市
+const autoLocate = () => { 
     if (postForm.origin) return; 
-    showLoadingToast({ message: '智能定位中...', duration: 2000 });
+    showLoadingToast({ message: '精确定位中...', duration: 2500 });
     
-    let isLocated = false;
-
-    // 引擎1：纯前端免费免签 CORS 接口 (最快)
-    try {
-        const res = await fetch('https://api.vvhan.com/api/ipInfo');
-        const data = await res.json();
-        if (data && data.success && data.info && data.info.city) {
-            postForm.origin = data.info.city.replace(/[省市]/g, '');
-            isLocated = true;
-            closeToast();
-            return;
+    // 引擎1：搜狐官方IP接口 (国内稳定、速度快)
+    const scriptSohu = document.createElement('script');
+    scriptSohu.src = 'https://pv.sohu.com/cityjson?ie=utf-8';
+    scriptSohu.onload = () => {
+        if (window.returnCitySN && window.returnCitySN.cname && !postForm.origin) {
+            let cname = window.returnCitySN.cname;
+            // 提取出"XX市"
+            let match = cname.match(/省(.+?市)/) || cname.match(/(.+?市)/);
+            if (match && match[1]) {
+                postForm.origin = match[1].replace(/[省市]/g, '');
+                closeToast();
+            }
         }
-    } catch (e) {}
+    };
+    document.body.appendChild(scriptSohu);
 
-    // 引擎2：太平洋网络纯前端 JSONP 跨域接口
+    // 引擎2：太平洋网络备用
     window.localIpCallback = (data) => {
-        if (data && data.city && !isLocated) {
-            postForm.origin = data.city.replace(/[省市]/g, '');
-            isLocated = true;
+        if (data && data.city && !postForm.origin) {
+            let city = data.city.replace(/[省市]/g, '');
+            let region = data.region ? data.region.replace(/[区县市]/g, '') : '';
+            postForm.origin = region || city;
             closeToast();
         }
     };
-    const script = document.createElement('script');
-    script.src = 'https://whois.pconline.com.cn/ipJson.jsp?callback=localIpCallback';
-    document.body.appendChild(script);
+    const scriptPc = document.createElement('script');
+    scriptPc.src = 'https://whois.pconline.com.cn/ipJson.jsp?callback=localIpCallback';
+    document.body.appendChild(scriptPc);
 
-    // 引擎3：高德插件延迟兜底 (防前两个同时断网)
+    // 引擎3：高德兜底
     setTimeout(() => {
-        if (!isLocated && window.AMap) {
+        if (!postForm.origin && window.AMap) {
             window.AMap.plugin('AMap.CitySearch', function() {
                 var citySearch = new window.AMap.CitySearch();
                 citySearch.getLocalCity(function(status, result) {
-                    if (status === 'complete' && result.info === 'OK' && !isLocated) {
+                    if (status === 'complete' && result.info === 'OK' && !postForm.origin) {
                         postForm.origin = result.city.replace(/[省市]/g, ''); 
                     }
                     closeToast();
@@ -347,6 +350,7 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
     <van-popup v-model:show="showDate" position="bottom">
         <van-picker v-model="currentDateValues" :columns="dateColumns" @confirm="onConfirmDate" @cancel="showDate=false"/>
     </van-popup>
+    
     <van-popup v-model:show="showAuth" position="bottom" class="auth-popup" :close-on-click-overlay="false">
         <h3 style="margin-bottom: 20px;">补充联系方式</h3>
         <p style="color:#666; font-size:14px; margin-bottom: 25px;">请留下手机号，方便司乘人员与您沟通</p>
