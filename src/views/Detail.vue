@@ -6,12 +6,12 @@ import { showToast, showSuccessToast, showFailToast } from 'vant';
 const route = useRoute();
 const router = useRouter();
 const rideInfo = ref(null);
+const pageLoading = ref(true); // 控制骨架屏的状态
 
 onMounted(async () => {
   const id = route.query.id;
   if (!id) return router.replace('/');
   
-  // 👉 核心优化：不再使用任何阻塞式 Loading 弹窗，实现真正的毫秒级秒开
   try {
     const res = await fetch(`/api/rides?id=${id}`);
     const data = await res.json();
@@ -23,6 +23,8 @@ onMounted(async () => {
     }
   } catch (e) {
     showToast('网络错误');
+  } finally {
+    pageLoading.value = false; // 请求结束，关闭骨架屏
   }
 });
 
@@ -33,7 +35,6 @@ const formatDate = (str) => {
   return str;
 };
 
-// 常规的左上角返回
 const onClickLeft = () => {
     if (window.history.length <= 1) {
         router.replace('/'); 
@@ -49,7 +50,7 @@ const handleCall = () => {
 };
 
 const handleCopyText = () => {
-    const url = window.location.href; 
+    const url = window.location.href.split('#')[0]; 
     const dateStr = formatDate(rideInfo.value.date);
     const priceStr = rideInfo.value.price === '面议' ? '面议' : `¥${rideInfo.value.price}`;
     const typeStr = rideInfo.value.type === 'driver' ? '车主找人' : '乘客找车';
@@ -96,54 +97,61 @@ const fallbackCopy = (text) => {
 </script>
 
 <template>
-  <div style="background: #f7f8fa; min-height: 100vh; padding-bottom: 100px;" v-if="rideInfo">
+  <div style="background: #f7f8fa; min-height: 100vh; padding-bottom: 100px;">
     <van-nav-bar title="行程详情" left-arrow @click-left="onClickLeft" />
     
-    <div style="background: #fff; padding: 20px; text-align: center; border-bottom: 1px solid #eee;">
-        <img :src="rideInfo.publisher?.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" style="width: 60px; height: 60px; border-radius: 50%; margin-bottom: 10px;" />
-        <div style="font-size: 16px; font-weight: bold;">{{ rideInfo.publisher?.nickname || '热心老乡' }}</div>
-        <div style="margin-top: 8px;">
-            <span :style="{background: rideInfo.type==='driver'?'#eaf5ff':'#fff2e8', color: rideInfo.type==='driver'?'#1989fa':'#ff7700'}" style="font-size:12px; padding:2px 8px; border-radius:4px;">
-                {{ rideInfo.type === 'driver' ? '车主找人' : '乘客找车' }}
-            </span>
-        </div>
+    <div v-if="pageLoading" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 60vh; color: #999;">
+        <van-loading type="spinner" color="#ff6600" size="36px" />
+        <div style="margin-top: 15px; font-size: 14px; letter-spacing: 1px;">急速加载中...</div>
     </div>
 
-    <div style="margin: 15px; background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
-        <div style="font-size: 20px; font-weight: bold; text-align: center; margin-bottom: 20px; color: #333;">
-            {{ rideInfo.origin }} <van-icon name="arrow" color="#ccc" style="margin: 0 10px;" /> {{ rideInfo.destination }}
-        </div>
-        
-        <van-cell-group :border="false">
-            <van-cell title="出发时间" icon="clock-o" :value="formatDate(rideInfo.date)" value-class="bold-text" />
-            <van-cell title="提供座位" icon="friends-o" :value="rideInfo.seats + ' 座'" />
-            <van-cell title="行程分摊" icon="gold-coin-o" :value="rideInfo.price === '面议' ? '面议' : '¥' + rideInfo.price" value-class="price-text" />
-            <van-cell v-if="rideInfo.type === 'driver'" title="车辆类型" icon="logistics">
-               <template #value>
-                  <span :class="{'car-gas': rideInfo.car_model==='油车', 'car-ev': rideInfo.car_model==='电车', 'car-hybrid': rideInfo.car_model==='油电混动'}" class="car-tag">
-                      {{ rideInfo.car_model || '小汽车' }}
-                  </span>
-               </template>
-            </van-cell>
-        </van-cell-group>
-
-        <div style="margin-top: 15px; padding-top: 15px; border-top: 1px dashed #eee;">
-            <div style="color: #666; font-size: 14px; margin-bottom: 8px;">补充备注：</div>
-            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-                <span v-for="tag in (rideInfo.remark || '').split('，').filter(Boolean)" :key="tag" style="background: #f0f4f8; color: #555; padding: 4px 10px; border-radius: 4px; font-size: 13px;">{{ tag }}</span>
-                <span v-if="!rideInfo.remark" style="color: #999; font-size: 14px;">无补充信息</span>
+    <div v-else-if="rideInfo">
+        <div style="background: #fff; padding: 20px; text-align: center; border-bottom: 1px solid #eee;">
+            <img :src="rideInfo.publisher?.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" style="width: 60px; height: 60px; border-radius: 50%; margin-bottom: 10px;" />
+            <div style="font-size: 16px; font-weight: bold;">{{ rideInfo.publisher?.nickname || '热心老乡' }}</div>
+            <div style="margin-top: 8px;">
+                <span :style="{background: rideInfo.type==='driver'?'#eaf5ff':'#fff2e8', color: rideInfo.type==='driver'?'#1989fa':'#ff7700'}" style="font-size:12px; padding:2px 8px; border-radius:4px;">
+                    {{ rideInfo.type === 'driver' ? '车主找人' : '乘客找车' }}
+                </span>
             </div>
         </div>
-    </div>
 
-    <div @click="router.replace('/')" style="position: fixed; bottom: 180px; right: 20px; width: 75px; height: 75px; background: linear-gradient(135deg, #ff8c00, #ff5000); border-radius: 50%; box-shadow: 0 6px 20px rgba(255,102,0,0.6); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; cursor: pointer; border: 3px solid #fff;">
-        <van-icon name="wap-home-o" size="32" color="#fff" />
-        <span style="font-size: 14px; color: #fff; margin-top: 2px; font-weight: 900; letter-spacing: 1px; text-shadow: 1px 1px 2px rgba(0,0,0,0.3);">回首页</span>
-    </div>
+        <div style="margin: 15px; background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+            <div style="font-size: 20px; font-weight: bold; text-align: center; margin-bottom: 20px; color: #333;">
+                {{ rideInfo.origin }} <van-icon name="arrow" color="#ccc" style="margin: 0 10px;" /> {{ rideInfo.destination }}
+            </div>
+            
+            <van-cell-group :border="false">
+                <van-cell title="出发时间" icon="clock-o" :value="formatDate(rideInfo.date)" value-class="bold-text" />
+                <van-cell title="提供座位" icon="friends-o" :value="rideInfo.seats + ' 座'" />
+                <van-cell title="行程分摊" icon="gold-coin-o" :value="rideInfo.price === '面议' ? '面议' : '¥' + rideInfo.price" value-class="price-text" />
+                <van-cell v-if="rideInfo.type === 'driver'" title="车辆类型" icon="logistics">
+                   <template #value>
+                      <span :class="{'car-gas': rideInfo.car_model==='油车', 'car-ev': rideInfo.car_model==='电车', 'car-hybrid': rideInfo.car_model==='油电混动'}" class="car-tag">
+                          {{ rideInfo.car_model || '小汽车' }}
+                      </span>
+                   </template>
+                </van-cell>
+            </van-cell-group>
 
-    <div style="position: fixed; bottom: 0; left: 0; right: 0; background: #fff; padding: 10px 15px; box-shadow: 0 -2px 10px rgba(0,0,0,0.05); z-index: 98; display: flex; gap: 10px;">
-        <van-button round plain type="primary" color="#ff6600" icon="orders-o" style="flex: 1;" @click="handleCopyText">复制分享文案</van-button>
-        <van-button round type="primary" color="#07c160" icon="phone-o" style="flex: 1.5;" @click="handleCall">立即联系TA</van-button>
+            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px dashed #eee;">
+                <div style="color: #666; font-size: 14px; margin-bottom: 8px;">补充备注：</div>
+                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                    <span v-for="tag in (rideInfo.remark || '').split('，').filter(Boolean)" :key="tag" style="background: #f0f4f8; color: #555; padding: 4px 10px; border-radius: 4px; font-size: 13px;">{{ tag }}</span>
+                    <span v-if="!rideInfo.remark" style="color: #999; font-size: 14px;">无补充信息</span>
+                </div>
+            </div>
+        </div>
+
+        <div @click="router.replace('/')" style="position: fixed; bottom: 180px; right: 20px; width: 75px; height: 75px; background: linear-gradient(135deg, #ff8c00, #ff5000); border-radius: 50%; box-shadow: 0 6px 20px rgba(255,102,0,0.6); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; cursor: pointer; border: 3px solid #fff;">
+            <van-icon name="wap-home-o" size="32" color="#fff" />
+            <span style="font-size: 14px; color: #fff; margin-top: 2px; font-weight: 900; letter-spacing: 1px; text-shadow: 1px 1px 2px rgba(0,0,0,0.3);">回首页</span>
+        </div>
+
+        <div style="position: fixed; bottom: 0; left: 0; right: 0; background: #fff; padding: 10px 15px; box-shadow: 0 -2px 10px rgba(0,0,0,0.05); z-index: 98; display: flex; gap: 10px;">
+            <van-button round plain type="primary" color="#ff6600" icon="orders-o" style="flex: 1;" @click="handleCopyText">复制分享文案</van-button>
+            <van-button round type="primary" color="#07c160" icon="phone-o" style="flex: 1.5;" @click="handleCall">立即联系TA</van-button>
+        </div>
     </div>
   </div>
 </template>
