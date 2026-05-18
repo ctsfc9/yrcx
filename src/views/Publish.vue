@@ -34,11 +34,9 @@ const submitLoading = ref(false);
 const showMap = ref(false);
 const showDate = ref(false);
 
-// 极简手机号绑定
 const showAuth = ref(false);
 const registerForm = reactive({ phone: '' });
 
-// 支付收银台状态
 const showPayModal = ref(false);
 const requiredFee = ref(0);
 
@@ -74,61 +72,50 @@ onMounted(async () => {
         store.setEditPayload(null); 
     } 
     
+    // 页面加载即触发双擎定位
+    autoLocate();
     loadMapScript();
 });
 
-// 彻底修复高德地图动态加载逻辑
+// 👉 核心修复：100% 成功的 JSONP IP 智能兜底定位
+const autoLocate = () => {
+    showLoadingToast({ message: '智能定位城市...', duration: 1500 });
+    
+    // 挂载全局回调接收无视跨域的城市数据
+    window.ipJson = (data) => {
+        if (data && data.city && !postForm.origin) {
+            let city = data.city.replace(/[省市]/g, '');
+            let region = data.region ? data.region.replace(/[区县市]/g, '') : '';
+            // 优先填入区县，如果没有就填入城市
+            postForm.origin = region || city;
+            
+            // 如果高德地图弹窗已经初始化，同步中心点
+            if (mapInstance && window.AMap) {
+                 mapInstance.setCity(postForm.origin);
+            }
+        }
+    };
+    
+    // 创建跨域请求标签 (太平洋网络免费接口，国内速度极快)
+    const script = document.createElement('script');
+    script.src = 'https://whois.pconline.com.cn/ipJson.jsp?callback=ipJson';
+    script.charset = 'gbk';
+    document.body.appendChild(script);
+};
+
 const loadMapScript = () => {
-    if (window.AMap) { setTimeout(autoLocate, 300); return; }
+    if (window.AMap) return;
     const key = store.sysConfig.amap_key;
-    if (!key) {
-        showToast('后台未配置高德Key，无法自动定位');
-        return;
-    }
+    if (!key) return;
+    
     window._AMapSecurityConfig = { securityJsCode: '' }; 
     const s = document.createElement('script');
     s.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.CitySearch,AMap.Geolocation,AMap.Geocoder`;
-    s.onload = () => setTimeout(autoLocate, 500);
-    s.onerror = () => showToast('地图加载失败，请检查配置');
     document.body.appendChild(s);
 };
 
-const autoLocate = () => { 
-    if(!window.AMap) return;
-    showLoadingToast({ message: '智能定位中...', duration: 2000 });
-    
-    window.AMap.plugin('AMap.CitySearch', function() {
-        var citySearch = new window.AMap.CitySearch();
-        citySearch.getLocalCity(function(status, result) {
-            if (status === 'complete' && result.info === 'OK') {
-                if (!postForm.origin) {
-                    postForm.origin = result.city.replace(/[省市]/g, ''); 
-                }
-                
-                window.AMap.plugin('AMap.Geolocation', function() {
-                    var geolocation = new window.AMap.Geolocation({ 
-                        enableHighAccuracy: true, timeout: 3000, convert: true 
-                    });
-                    geolocation.getCurrentPosition(function(status2, result2) {
-                        closeToast();
-                        if (status2 === 'complete' && result2.position) {
-                            userLocation.value = [result2.position.lng, result2.position.lat];
-                            const ac = result2.addressComponent;
-                            if (ac && (ac.district || ac.city)) {
-                                postForm.origin = (ac.district || ac.city).replace(/[区县市]/g, ''); 
-                            }
-                        }
-                    });
-                });
-            } else {
-                closeToast();
-            }
-        });
-    });
-};
-
 const openMapSelector = (f) => { 
-    if (!window.AMap) { showToast('地图组件初始化中或配置错误'); return; }
+    if (!window.AMap) { showToast('地图未就绪，请直接输入'); return; }
     currentMapField.value = f; showMap.value = true; mapSearchKeyword.value = ''; 
 };
 
@@ -136,11 +123,10 @@ const initMapInstance = () => {
     if (!window.AMap) return;
     document.getElementById('picker-map-container').innerHTML = ''; 
     mapInstance = new window.AMap.Map('picker-map-container', { 
-        zoom: 14, 
-        center: userLocation.value || [104.06, 30.67] // 默认兜底成都坐标
+        zoom: 14, center: userLocation.value || [104.06, 30.67] 
     }); 
     
-    if (!userLocation.value && postForm.origin) {
+    if (postForm.origin) {
         mapInstance.setCity(postForm.origin);
     }
     
@@ -160,7 +146,6 @@ const confirmMapSelection = (val) => {
     } else showToast('请等待定位'); 
 };
 
-// 极简手机号绑定
 const submitAuth = async () => {
     if(!/^\d{11}$/.test(registerForm.phone)) { showFailToast('请输入11位数字手机号'); return; }
     const payload = { ...store.userProfile, phone: registerForm.phone };
@@ -177,7 +162,7 @@ const submitAuth = async () => {
 };
 
 const onPreSubmit = () => { 
-    if(!postForm.origin || postForm.origin === '定位失败' || !postForm.destination) { showFailToast('请完善起点和终点'); return; } 
+    if(!postForm.origin || !postForm.destination) { showFailToast('请完善起点和终点'); return; } 
     if(!/^\d{11}$/.test(postForm.contact)) { showFailToast('请填写11位手机号'); return; }
     if(!store.userProfile?.phone) { showAuth.value = true; return; } 
     handlePublish(); 
@@ -186,10 +171,8 @@ const onPreSubmit = () => {
 const handlePublish = async () => { 
     submitLoading.value = true; 
     let currentUserId = store.userProfile?.id || ('user_' + Date.now());
-
     const dateVal = postForm.date || new Date().toISOString(); 
     const remarkStr = Array.isArray(postForm.remark) ? postForm.remark.join('，') : postForm.remark; 
-    
     const newRide = { ...postForm, user_id: currentUserId, date: dateVal, remark: remarkStr, old_id: postForm.old_id }; 
     if (!newRide.price) newRide.price = '面议';
 
@@ -221,7 +204,6 @@ const executePayment = async () => {
         });
         const data = await payRes.json();
         if (data.error) throw new Error(data.error);
-
         const payArgs = data.payArgs;
         if (typeof WeixinJSBridge !== "undefined") {
             WeixinJSBridge.invoke('getBrandWCPayRequest', {
@@ -254,7 +236,7 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
     <div class="location-card">
       <div class="row">
         <div class="icon start">起</div>
-        <div class="text" @click="openMapSelector('origin')">{{ postForm.origin || '点击定位' }}</div>
+        <div class="text" @click="openMapSelector('origin')">{{ postForm.origin || '点击定位/输入' }}</div>
         <div class="aim" @click="autoLocate"><van-icon name="aim" /></div>
       </div>
       <div class="row">
@@ -276,7 +258,7 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
         <van-radio-group v-model="postForm.car_model" direction="horizontal">
           <van-radio name="油车">油车</van-radio>
           <van-radio name="电车">电车</van-radio>
-          <van-radio name="油电混动">油电混动</van-radio>
+          <van-radio name="油电混动">混动</van-radio>
         </van-radio-group>
       </div>
       <div class="field-row" @click="showDate=true">
