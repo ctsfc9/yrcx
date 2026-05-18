@@ -7,11 +7,9 @@ const route = useRoute();
 const router = useRouter();
 const rideInfo = ref(null);
 
-// 标识是否被劫持了历史记录
-let isHistoryInjected = false;
-
-// 👉 核心修复：物理返回键劫持，强制留在本站主页
+// 👉 核心修复：微信环境专用的物理返回键劫持机制
 const handlePopstate = () => {
+    // 监听到物理返回键按下，强制跳往首页
     router.replace('/');
 };
 
@@ -19,14 +17,12 @@ onMounted(async () => {
   const id = route.query.id;
   if (!id) return router.replace('/');
   
-  // 👉 浏览器历史记录欺骗技术：
-  // 如果用户是直接从外部点链接进来的（没上一页），我们强行把首页塞进他的历史记录底部
-  if (window.history.length <= 2) {
-      const currentUrl = window.location.href;
-      window.history.replaceState(null, null, '/'); 
-      window.history.pushState(null, null, currentUrl); 
-      isHistoryInjected = true;
-      window.addEventListener('popstate', handlePopstate, { once: true });
+  // 👉 历史记录欺骗：针对微信直接打开链接（无上一页）
+  if (window.history.length <= 2 || document.referrer === '') {
+      // 压入一个假的历史状态
+      window.history.pushState({ page: 'detail_fake' }, null, window.location.href);
+      // 监听返回动作，一旦触发，执行 handlePopstate
+      window.addEventListener('popstate', handlePopstate, false);
   }
   
   showLoadingToast({ message: '加载中...', forbidClick: true });
@@ -57,9 +53,9 @@ const formatDate = (str) => {
   return str;
 };
 
-// 页面左上角导航栏返回
+// 左上角导航栏返回
 const onClickLeft = () => {
-    if (isHistoryInjected || window.history.length <= 2) {
+    if (window.history.length <= 2 || document.referrer === '') {
         router.replace('/'); // 直接跳首页
     } else {
         router.back();
@@ -72,7 +68,6 @@ const handleCall = () => {
     }
 };
 
-// 生成精美排版文案
 const handleCopyText = () => {
     const url = window.location.href; 
     const dateStr = formatDate(rideInfo.value.date);
