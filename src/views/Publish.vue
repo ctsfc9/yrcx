@@ -76,7 +76,6 @@ onMounted(async () => {
     loadMapScript();
 });
 
-// 👉 锁定修复版：完美解析父子城市（如：上海长宁），解决同名错乱
 const parseLocationName = (addressComp) => {
     if (!addressComp) return '';
     let province = addressComp.province || '';
@@ -89,7 +88,7 @@ const parseLocationName = (addressComp) => {
     if (!district || city === district) {
         return city;
     } else {
-        return city + district; // 合并：上海 + 长宁 = 上海长宁
+        return city + district;
     }
 };
 
