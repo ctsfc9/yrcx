@@ -35,7 +35,7 @@ const formatDate = (str) => {
   return str;
 };
 
-// 左上角返回逻辑（常规返回）
+// 常规的左上角返回
 const onClickLeft = () => {
     if (window.history.length <= 1) {
         router.replace('/'); 
@@ -138,9 +138,9 @@ const fallbackCopy = (text) => {
         </div>
     </div>
 
-    <div @click="router.replace('/')" style="position: fixed; bottom: 85px; right: 15px; width: 50px; height: 50px; background: #fff; border-radius: 50%; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 99; cursor: pointer; border: 1px solid #ffe8d6;">
-        <van-icon name="wap-home-o" size="24" color="#ff6600" />
-        <span style="font-size: 10px; color: #ff6600; margin-top: 2px; font-weight: bold;">首页</span>
+    <div @click="router.replace('/')" style="position: fixed; bottom: 120px; right: 15px; width: 65px; height: 65px; background: linear-gradient(135deg, #ff9000, #ff5c00); border-radius: 50%; box-shadow: 0 6px 16px rgba(255,102,0,0.5); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 99; cursor: pointer; border: 2px solid #fff;">
+        <van-icon name="wap-home-o" size="28" color="#fff" />
+        <span style="font-size: 13px; color: #fff; margin-top: 2px; font-weight: 900; letter-spacing: 1px;">首页</span>
     </div>
 
     <div style="position: fixed; bottom: 0; left: 0; right: 0; background: #fff; padding: 10px 15px; box-shadow: 0 -2px 10px rgba(0,0,0,0.05); z-index: 98; display: flex; gap: 10px;">
