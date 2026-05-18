@@ -76,50 +76,43 @@ onMounted(async () => {
     loadMapScript();
 });
 
-// 👉 核心修复：完全回归高德官方方案（先尝试GPS高精度，失败立刻兜底城市IP搜索）
+// 👉 核心修复：纯净且稳定的高德原生定位，不再混用外部接口
 const autoLocate = () => { 
     if (postForm.origin) return; 
-    showLoadingToast({ message: '智能定位中...', duration: 2500 });
+    if (!window.AMap) return;
+
+    showLoadingToast({ message: '城市定位中...', duration: 2000 });
     
-    if (window.AMap) {
-        window.AMap.plugin(['AMap.Geolocation', 'AMap.CitySearch'], function() {
-            // 第一步：尝试高精度 GPS
-            var geolocation = new window.AMap.Geolocation({
-                enableHighAccuracy: true,
-                timeout: 3000, // 3秒没拿到就果断降级
-                maximumAge: 0,
-                convert: true
-            });
-            
-            geolocation.getCurrentPosition(function(status, result) {
-                if (status === 'complete' && result.position) {
-                    // GPS 定位成功
-                    userLocation.value = [result.position.lng, result.position.lat];
-                    if (result.addressComponent) {
-                        let city = result.addressComponent.city || result.addressComponent.province;
-                        let district = result.addressComponent.district;
-                        postForm.origin = (district || city).replace(/[省市]/g, '');
-                        closeToast();
-                    }
-                } else {
-                    // 第二步：GPS 被拒绝或失败，立即启用高德 IP 城市兜底
-                    var citySearch = new window.AMap.CitySearch();
-                    citySearch.getLocalCity(function(status2, result2) {
-                        closeToast();
-                        if (status2 === 'complete' && result2.info === 'OK') {
-                            postForm.origin = result2.city.replace(/[省市]/g, '');
-                        } else {
-                            showToast('定位权限受限，请手动输入');
-                        }
-                    });
+    // 第一步：直接用最快的 AMap.CitySearch (根据网络IP无感查城市，成功率极高)
+    window.AMap.plugin('AMap.CitySearch', function () {
+        var citySearch = new window.AMap.CitySearch();
+        citySearch.getLocalCity(function (status, result) {
+            if (status === 'complete' && result.info === 'OK') {
+                if (!postForm.origin) {
+                    postForm.origin = result.city.replace(/[省市]/g, '');
                 }
-            });
+            }
+            closeToast();
         });
-    } else {
-        closeToast();
-    }
+    });
+
+    // 第二步：同时在后台发起精确 GPS 定位。如果有区县信息，则覆盖刚才查到的市
+    window.AMap.plugin('AMap.Geolocation', function() {
+        var geolocation = new window.AMap.Geolocation({
+            enableHighAccuracy: true, timeout: 5000, convert: true
+        });
+        geolocation.getCurrentPosition(function(status, result) {
+            if (status === 'complete' && result.addressComponent) {
+                userLocation.value = [result.position.lng, result.position.lat];
+                let city = result.addressComponent.city || result.addressComponent.province;
+                let district = result.addressComponent.district;
+                postForm.origin = (district || city).replace(/[省市区县]/g, '');
+            }
+        });
+    });
 };
 
+// 👉 核心修复：降级加载高德地图 1.4.15 稳定版，彻底摒弃安全密钥限制
 const loadMapScript = () => {
     if (window.AMap) {
         autoLocate();
@@ -128,18 +121,17 @@ const loadMapScript = () => {
     const key = store.sysConfig.amap_key;
     if (!key) return;
     
-    window._AMapSecurityConfig = { securityJsCode: '' }; 
+    // 删除所有 2.0 相关的安全拦截代码，回归最稳定的 1.4 老版本
     const s = document.createElement('script');
-    s.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.CitySearch,AMap.Geolocation,AMap.Geocoder`;
+    s.src = `https://webapi.amap.com/maps?v=1.4.15&key=${key}&plugin=AMap.CitySearch,AMap.Geolocation,AMap.Geocoder`;
     s.onload = () => {
-        // 脚本加载完毕后延迟一小会儿执行定位，确保插件就绪
-        setTimeout(autoLocate, 600);
+        setTimeout(autoLocate, 300);
     };
     document.body.appendChild(s);
 };
 
 const openMapSelector = (f) => { 
-    if (!window.AMap) { showToast('地图加载中，请直接输入'); return; }
+    if (!window.AMap) { showToast('地图加载中，请稍后再试或手动输入'); return; }
     currentMapField.value = f; showMap.value = true; mapSearchKeyword.value = ''; 
 };
 
