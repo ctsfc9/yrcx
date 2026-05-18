@@ -9,9 +9,7 @@ const router = useRouter();
 const store = useAppStore();
 const rideList = ref([]);
 const loading = ref(true);
-
-const showExpired = ref(false);
-const showAuthGuide = ref(false); // 授权弹窗状态
+const showAuthGuide = ref(false);
 
 let exitTime = 0;
 const handlePopstate = () => {
@@ -30,12 +28,11 @@ onMounted(async () => {
   history.pushState(null, null, document.URL);
   window.addEventListener('popstate', handlePopstate);
 
-  if(!store.sysConfig.amap_key) await store.loadConfig();
+  await store.loadConfig();
 
   const urlParams = new URLSearchParams(window.location.search);
   const code = urlParams.get('code');
 
-  // 👉 核心逻辑：如果用户没有 OpenID，且当前不是刚从微信带 code 回来的状态，就弹出授权引导
   if (!store.userProfile.openid && !code) {
       showAuthGuide.value = true;
   }
@@ -44,63 +41,45 @@ onMounted(async () => {
     const res = await fetch('/api/rides');
     const data = await res.json();
     if (data.results) rideList.value = data.results;
-  } catch (e) {
-    showToast('数据加载失败');
-  } finally {
+  } catch (e) {} finally {
     loading.value = false;
   }
 });
 
-onUnmounted(() => {
-  window.removeEventListener('popstate', handlePopstate);
-});
+onUnmounted(() => window.removeEventListener('popstate', handlePopstate));
 
 const processedRides = computed(() => {
     const now = new Date();
-    let arr = rideList.value.map(item => {
-        const isExp = new Date(item.date) < now;
-        return { ...item, is_expired: isExp };
-    });
-    if (!showExpired.value) arr = arr.filter(item => !item.is_expired);
+    let arr = rideList.value.map(item => ({ ...item, is_expired: new Date(item.date) < now }));
+    // 读取后台的 show_expired 开关
+    if (!store.sysConfig.show_expired) arr = arr.filter(item => !item.is_expired);
     return arr;
 });
 
 const formatDate = (str) => {
-  if (!str) return '时间待定';
+  if (!str) return '';
   const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})[T\s](\d{1,2}):(\d{1,2})/);
   if (match) return `${match[2]}月${match[3]}日 ${match[4]}:${match[5]}`;
   return str;
 };
 
-// 👉 核心修复：点击授权后，真实跳转到微信官方带头像的授权界面
 const goToAuth = () => {
     const appId = store.sysConfig.wx_appid;
-    if (!appId) {
-        showToast('请联系管理员在后台配置微信AppID');
-        return;
-    }
+    if (!appId) { showToast('后台未配置微信AppID'); return; }
     const redirectUri = encodeURIComponent(window.location.origin + '/');
-    // 使用 snsapi_userinfo，这才会弹出绿色的授权确认页并获取头像！
     window.location.href = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_userinfo&state=STATE#wechat_redirect`;
 };
 </script>
 
 <template>
   <div style="padding-bottom: 80px; min-height: 100vh; background: #f7f8fa;">
-    
     <van-swipe class="my-swipe" :autoplay="3000" indicator-color="white" style="height: 160px;">
       <van-swipe-item><img src="https://fastly.jsdelivr.net/npm/@vant/assets/apple-1.jpeg" style="width: 100%; height: 100%; object-fit: cover;" /></van-swipe-item>
       <van-swipe-item><img src="https://fastly.jsdelivr.net/npm/@vant/assets/apple-2.jpeg" style="width: 100%; height: 100%; object-fit: cover;" /></van-swipe-item>
     </van-swipe>
 
-    <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 15px; background: #fff;">
-        <div style="color: #ff6600; font-size: 14px; font-weight: bold;">
-            <van-icon name="volume-o" /> {{ store.sysConfig.notice || '老乡互助，共享出行' }}
-        </div>
-        <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #666;">
-            显示已过期
-            <van-switch v-model="showExpired" size="18px" active-color="#ff6600" />
-        </div>
+    <div style="padding: 10px 15px; background: #fff; color: #ff6600; font-size: 14px; font-weight: bold; border-bottom: 1px solid #eee;">
+        <van-icon name="volume-o" /> {{ store.sysConfig.notice || '老乡互助，共享出行' }}
     </div>
 
     <div style="padding: 10px;">
@@ -144,37 +123,13 @@ const goToAuth = () => {
 
 <style scoped>
 .my-swipe .van-swipe-item { color: #fff; text-align: center; background-color: #39a9ed; }
-
-.ride-card {
-  position: relative;
-  background: #fff;
-  margin-bottom: 12px;
-  padding: 15px;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-  cursor: pointer;
-  transition: all 0.2s;
-  overflow: hidden;
-}
-.ride-card:active { background: #f9f9f9; }
-
-.is-expired-card {
-    opacity: 0.7;
-    filter: grayscale(100%);
-}
+.ride-card { position: relative; background: #fff; margin-bottom: 12px; padding: 15px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); cursor: pointer; overflow: hidden; }
+/* 过期印章样式加强 */
+.is-expired-card { opacity: 0.6; filter: grayscale(100%); }
 .expired-stamp {
-    position: absolute;
-    top: 25px;
-    right: 20px;
-    font-size: 24px;
-    font-weight: bold;
-    color: #cc0000;
-    border: 3px solid #cc0000;
-    padding: 5px 10px;
-    transform: rotate(-25deg);
-    border-radius: 8px;
-    opacity: 0.6;
-    letter-spacing: 2px;
-    pointer-events: none;
+    position: absolute; top: 15px; right: 15px; font-size: 22px; font-weight: 900;
+    color: #c00; border: 4px solid #c00; padding: 4px 12px; transform: rotate(-20deg);
+    border-radius: 8px; opacity: 0.8; letter-spacing: 4px; pointer-events: none;
+    box-shadow: 0 0 0 2px #fff inset;
 }
 </style>
