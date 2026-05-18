@@ -1,28 +1,34 @@
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { showToast, showLoadingToast, closeToast, showSuccessToast, showFailToast } from 'vant';
 
 const route = useRoute();
 const router = useRouter();
 const rideInfo = ref(null);
+let isDirectEntry = false;
+
+// 👉 终极物理返回拦截：基于 History State 注入，微信 100% 无法无视
+const handlePopstate = (e) => {
+    // 当检测到是按了返回，退到了我们预埋的垫底状态时
+    if (e.state && e.state.wechat_back_trap) {
+        window.location.href = '/'; 
+    }
+};
 
 onMounted(async () => {
   const id = route.query.id;
   if (!id) return router.replace('/');
   
-  // 👉 核心修复：微信内置浏览器最底层的真实历史记录覆写技术
-  // 必须直接使用真实地址推入栈，否则微信不买账
-  if (window.history.length <= 1 || document.referrer === '') {
-      // 第一步：把历史记录的当前页替换为网站根目录 /
-      window.history.replaceState({ name: 'home' }, 'home', '/');
-      // 第二步：再把原本要看的详情页重新压入最顶层
-      window.history.pushState({ name: 'detail' }, 'detail', window.location.href);
-      
-      // 第三步：监听返回。用户一按返回，顶层被弹掉，露出的是 /，我们直接硬跳转
-      window.addEventListener('popstate', () => {
-          window.location.href = '/';
-      }, { once: true });
+  // 👉 判断如果用户是直接点别人发来的链接进来的
+  if (window.history.length <= 1 || !document.referrer) {
+      isDirectEntry = true;
+      // 1. 先把当前页替换成一个“退网陷阱”状态
+      window.history.replaceState({ wechat_back_trap: true }, '', window.location.href);
+      // 2. 再往上推一层“正常”状态
+      window.history.pushState({ current_detail: true }, '', window.location.href);
+      // 3. 监听返回动作
+      window.addEventListener('popstate', handlePopstate);
   }
   
   showLoadingToast({ message: '加载中...', forbidClick: true });
@@ -42,6 +48,10 @@ onMounted(async () => {
   }
 });
 
+onUnmounted(() => {
+    window.removeEventListener('popstate', handlePopstate);
+});
+
 const formatDate = (str) => {
   if (!str) return '';
   const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})[T\s](\d{1,2}):(\d{1,2})/);
@@ -49,8 +59,9 @@ const formatDate = (str) => {
   return str;
 };
 
+// 左上角按钮控制
 const onClickLeft = () => {
-    if (window.history.length <= 2 || document.referrer === '') {
+    if (isDirectEntry) {
         window.location.href = '/'; 
     } else {
         router.back();
@@ -64,7 +75,8 @@ const handleCall = () => {
 };
 
 const handleCopyText = () => {
-    const url = window.location.href.split('#')[0]; 
+    // 👉 修复分享Bug：完美取用原汁原味的URL，不再任何切割，分享出去绝不乱跳首页！
+    const url = window.location.href; 
     const dateStr = formatDate(rideInfo.value.date);
     const priceStr = rideInfo.value.price === '面议' ? '面议' : `¥${rideInfo.value.price}`;
     const typeStr = rideInfo.value.type === 'driver' ? '车主找人' : '乘客找车';
