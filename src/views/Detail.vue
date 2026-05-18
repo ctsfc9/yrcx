@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { showToast, showLoadingToast, closeToast } from 'vant';
+import { initWeChatShare } from '../utils/wxShare';
 
 const route = useRoute();
 const router = useRouter();
@@ -17,6 +18,15 @@ onMounted(async () => {
     const data = await res.json();
     if (res.ok) {
       rideInfo.value = data;
+      
+      // 👉 配置详情页专属的引流分享卡片
+      initWeChatShare({
+          title: `【顺风车】${data.origin} ➔ ${data.destination}`,
+          desc: `出发时间: ${formatDate(data.date)} | 剩余座位: ${data.seats}个 (点击查看安全合乘详情)`,
+          link: window.location.href, // 分享当前详情页
+          imgUrl: 'http://b191.photo.store.qq.com/psb?/V12OmDno0wX8Ar/DmRefUWYmAAeBoH8HXzWBy8wls.qQhylKwvryEgeH7Q!/c/dL8AAAAAAAAA&bo=wAPAA8ADwAMBACc!&rf=mood_app'
+      });
+      
     } else {
       showToast(data.error || '行程不存在');
       setTimeout(() => router.replace('/'), 1500);
@@ -65,7 +75,14 @@ const handleCall = () => {
             <van-cell title="出发时间" icon="clock-o" :value="formatDate(rideInfo.date)" value-class="bold-text" />
             <van-cell title="提供座位" icon="friends-o" :value="rideInfo.seats + ' 座'" />
             <van-cell title="行程分摊" icon="gold-coin-o" :value="rideInfo.price === '面议' ? '面议' : '¥' + rideInfo.price" value-class="price-text" />
-            <van-cell v-if="rideInfo.type === 'driver'" title="车辆类型" icon="logistics" :value="rideInfo.car_model || '小汽车'" />
+            
+            <van-cell v-if="rideInfo.type === 'driver'" title="车辆类型" icon="logistics">
+               <template #value>
+                  <span :class="{'car-gas': rideInfo.car_model==='油车', 'car-ev': rideInfo.car_model==='电车', 'car-hybrid': rideInfo.car_model==='油电混动'}" class="car-tag">
+                      {{ rideInfo.car_model || '小汽车' }}
+                  </span>
+               </template>
+            </van-cell>
         </van-cell-group>
 
         <div style="margin-top: 15px; padding-top: 15px; border-top: 1px dashed #eee;">
@@ -86,4 +103,10 @@ const handleCall = () => {
 <style scoped>
 :deep(.bold-text) { font-weight: bold; color: #333; }
 :deep(.price-text) { font-weight: bold; color: #ee0a24; font-size: 16px; }
+
+/* 车型彩色标签样式 */
+.car-tag { padding: 3px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+.car-gas { background: #ffebee; color: #d32f2f; }      /* 油车：红色系 */
+.car-ev { background: #e8f5e9; color: #2e7d32; }       /* 电车：绿色系 */
+.car-hybrid { background: #e3f2fd; color: #1565c0; }   /* 混动：蓝色系 */
 </style>
