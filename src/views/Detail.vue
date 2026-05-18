@@ -35,18 +35,28 @@ const formatDate = (str) => {
   return str;
 };
 
+// 👉 核心修复：智能返回。如果直接打开链接没有上一页，强行跳转首页
+const onClickLeft = () => {
+    if (window.history.length <= 2) {
+        router.replace('/');
+    } else {
+        router.back();
+    }
+};
+
 const handleCall = () => {
     if (rideInfo.value?.contact) {
         window.location.href = `tel:${rideInfo.value.contact}`;
     }
 };
 
-// 👉 一键生成并复制精美排版的拼车文案
+// 👉 核心完善：文案包含所有内容（独缺电话号码）
 const handleCopyText = () => {
     const url = window.location.href; 
     const dateStr = formatDate(rideInfo.value.date);
     const priceStr = rideInfo.value.price === '面议' ? '面议' : `¥${rideInfo.value.price}`;
     const typeStr = rideInfo.value.type === 'driver' ? '车主找人' : '乘客找车';
+    const carStr = rideInfo.value.type === 'driver' && rideInfo.value.car_model ? `\n🚗 车型：${rideInfo.value.car_model}` : '';
     const remarkStr = rideInfo.value.remark ? `\n🏷️ 备注：${rideInfo.value.remark}` : '';
     
     const textToCopy = `【宜人出行 · 顺风车】
@@ -54,7 +64,7 @@ const handleCopyText = () => {
 📍 路线：${rideInfo.value.origin} ➔ ${rideInfo.value.destination}
 🕒 时间：${dateStr}
 💺 余座：${rideInfo.value.seats}座
-💰 分摊：${priceStr}${remarkStr}
+💰 分摊：${priceStr}${carStr}${remarkStr}
 👇 点击链接查看详情并联系TA：
 ${url}`;
 
@@ -90,7 +100,7 @@ const fallbackCopy = (text) => {
 
 <template>
   <div style="background: #f7f8fa; min-height: 100vh; padding-bottom: 100px;" v-if="rideInfo">
-    <van-nav-bar title="行程详情" left-arrow @click-left="router.back()" />
+    <van-nav-bar title="行程详情" left-arrow @click-left="onClickLeft" />
     
     <div style="background: #fff; padding: 20px; text-align: center; border-bottom: 1px solid #eee;">
         <img :src="rideInfo.publisher?.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" style="width: 60px; height: 60px; border-radius: 50%; margin-bottom: 10px;" />
