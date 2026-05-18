@@ -7,23 +7,25 @@ const route = useRoute();
 const router = useRouter();
 const rideInfo = ref(null);
 
-// 👉 终极物理返回键防退策略：Hash Trap (哈希陷阱)
+// 标识是否触发了防退陷阱
+let isTrapped = false;
+
+// 👉 终极物理返回键防退策略：监听到退掉 #trap 时，强跳首页
 const handlePopstate = () => {
-    // 只要触发了返回键，强制回到首页
-    router.replace('/');
+    if (isTrapped) {
+        router.replace('/');
+    }
 };
 
 onMounted(async () => {
   const id = route.query.id;
   if (!id) return router.replace('/');
   
-  // 判断是否为外部直接进入（历史记录为空）
+  // 👉 核心修复：微信会强制关闭只有一个记录的网页。必须用 Hash Trap 强行撑开历史栈！
   if (window.history.length <= 2 || document.referrer === '') {
-      // 核心修复：微信会忽略同 URL 的历史注入，必须加一个无害的 # 锚点才能100%生效
-      if (window.location.hash !== '#/detail_view') {
-          window.history.replaceState(null, null, window.location.href);
-          window.history.pushState(null, null, window.location.href + '#/detail_view');
-      }
+      isTrapped = true;
+      // 在当前链接末尾悄悄塞入一个 #trap
+      window.history.pushState({ trap: true }, null, window.location.href + '#trap');
       window.addEventListener('popstate', handlePopstate);
   }
   
@@ -57,7 +59,7 @@ const formatDate = (str) => {
 
 // 页面左上角导航栏返回
 const onClickLeft = () => {
-    if (window.history.length <= 2 || document.referrer === '') {
+    if (isTrapped || window.history.length <= 2 || document.referrer === '') {
         router.replace('/'); // 外部跳入的，按左上角也强制回首页
     } else {
         router.back();
@@ -71,7 +73,8 @@ const handleCall = () => {
 };
 
 const handleCopyText = () => {
-    const url = window.location.href.split('#')[0]; // 复制出去的链接去掉伪装锚点
+    // 复制出去的链接自动剥离掉 #trap 尾巴，保持纯净
+    const url = window.location.href.split('#')[0]; 
     const dateStr = formatDate(rideInfo.value.date);
     const priceStr = rideInfo.value.price === '面议' ? '面议' : `¥${rideInfo.value.price}`;
     const typeStr = rideInfo.value.type === 'driver' ? '车主找人' : '乘客找车';
