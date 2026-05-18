@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { showToast, showLoadingToast, closeToast, showSuccessToast, showFailToast } from 'vant';
 
@@ -11,20 +11,13 @@ onMounted(async () => {
   const id = route.query.id;
   if (!id) return router.replace('/');
   
-  // 👉 核心防退黑科技：真实栈底重载技术
-  // 如果是外部链接直接进来的（历史记录极短或来源不是本站）
-  if (window.history.length <= 1 || !document.referrer.includes(window.location.host)) {
-      const currentUrl = window.location.href;
-      // 1. 将当前栈底偷偷换成网站首页
-      window.history.replaceState(null, null, '/'); 
-      // 2. 将详情页压入新栈顶
-      window.history.pushState(null, null, currentUrl); 
-      
-      // 3. 监听到退栈动作时，强制页面硬刷新到首页，微信绝对拦截不住
-      window.addEventListener('popstate', () => {
-          window.location.replace('/'); 
-      }, { once: true });
-  }
+  // 👉【终极防退黑科技：无感历史栈强力拦截】
+  // 无论是在微信直接打开还是带记录跳转，在此页面强制单向压入一个底层监听拦截
+  window.history.pushState({ trapActive: true }, null, window.location.href);
+  window.addEventListener('popstate', () => {
+      // 只要捕捉到用户的任何返回或侧滑手势动作，瞬间强行原地跳转回首页大厅，增加停留时间
+      window.location.href = window.location.origin + '/';
+  }, false);
   
   showLoadingToast({ message: '加载中...', forbidClick: true });
   try {
@@ -34,7 +27,7 @@ onMounted(async () => {
       rideInfo.value = data;
     } else {
       showToast(data.error || '行程不存在');
-      setTimeout(() => router.replace('/'), 1500);
+      setTimeout(() => window.location.href = '/', 1500);
     }
   } catch (e) {
     showToast('网络错误');
@@ -50,12 +43,9 @@ const formatDate = (str) => {
   return str;
 };
 
+// 页面顶部左上角点击返回
 const onClickLeft = () => {
-    if (window.history.length <= 2 || !document.referrer.includes(window.location.host)) {
-        window.location.replace('/'); 
-    } else {
-        router.back();
-    }
+    window.location.href = '/'; 
 };
 
 const handleCall = () => {
@@ -65,7 +55,8 @@ const handleCall = () => {
 };
 
 const handleCopyText = () => {
-    const url = window.location.href.split('#')[0]; 
+    // 固化纯净的全量URL分享链接，绝不乱切
+    const url = window.location.href; 
     const dateStr = formatDate(rideInfo.value.date);
     const priceStr = rideInfo.value.price === '面议' ? '面议' : `¥${rideInfo.value.price}`;
     const typeStr = rideInfo.value.type === 'driver' ? '车主找人' : '乘客找车';
