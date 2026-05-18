@@ -1,111 +1,89 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { showLoadingToast, closeToast, showFailToast, showSuccessToast } from 'vant';
-import { useAppStore } from '../store';
+import { showToast, showLoadingToast, closeToast } from 'vant';
 
 const route = useRoute();
 const router = useRouter();
-const store = useAppStore();
-const ride = ref(null);
-const showShare = ref(false);
+const rideInfo = ref(null);
+
+onMounted(async () => {
+  const id = route.query.id;
+  if (!id) return router.replace('/');
+  
+  showLoadingToast({ message: '加载中...', forbidClick: true });
+  try {
+    const res = await fetch(`/api/rides?id=${id}`);
+    const data = await res.json();
+    if (res.ok) {
+      rideInfo.value = data;
+    } else {
+      showToast(data.error || '行程不存在');
+      setTimeout(() => router.replace('/'), 1500);
+    }
+  } catch (e) {
+    showToast('网络错误');
+  } finally {
+    closeToast();
+  }
+});
 
 const formatDate = (str) => {
-  if (!str) return '待定';
-  const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2})[:](\d{1,2}))?/);
-  if (match) return `${match[1]}年${match[2]}月${match[3]}日 ${match[4]?match[4]:'0'}点`;
+  if (!str) return '';
+  const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})[T\s](\d{1,2}):(\d{1,2})/);
+  if (match) return `${match[2]}月${match[3]}日 ${match[4]}:${match[5]}`;
   return str;
 };
 
-onMounted(async () => {
-    showLoadingToast({ message: '加载中...', duration: 0 });
-    try {
-        const res = await fetch(`/api/rides?id=${route.params.id}`);
-        const data = await res.json();
-        if (data.ride) {
-            ride.value = data.ride;
-            closeToast();
-            initWeChatShare(data.ride);
-        } else { closeToast(); showFailToast('行程不存在'); router.replace('/'); }
-    } catch(e) { closeToast(); router.replace('/'); }
-});
-
-const initWeChatShare = async (data) => {
-    if (!navigator.userAgent.toLowerCase().includes('micromessenger')) return;
-    if (!window.wx) {
-        const s = document.createElement('script');
-        s.src = 'https://res.wx.qq.com/open/js/jweixin-1.6.0.js';
-        s.onload = () => configWx(data);
-        document.body.appendChild(s);
-    } else configWx(data);
-};
-
-const configWx = async (data) => {
-    try {
-        const url = encodeURIComponent(window.location.href.split('#')[0]);
-        const res = await fetch(`/api/wechat/sign?url=${url}`);
-        const config = await res.json();
-        window.wx.config({
-            debug: false, appId: config.appId, timestamp: config.timestamp, nonceStr: config.nonceStr, signature: config.signature,
-            jsApiList: ['updateAppMessageShareData', 'updateTimelineShareData']
-        });
-        window.wx.ready(() => {
-            const shareData = {
-                title: `【${store.sysConfig.platform_name}】${data.origin} ➔ ${data.destination}`,
-                desc: `出发：${formatDate(data.date)} | 余座：${data.seats}`,
-                link: `${window.location.origin}/ride/${data.id}`,
-                imgUrl: 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'
-            };
-            window.wx.updateAppMessageShareData(shareData);
-            window.wx.updateTimelineShareData(shareData);
-        });
-    } catch(e) {}
-};
-
-const handleCopyShare = () => {
-    const text = `【${store.sysConfig.platform_name}】${ride.value.origin} -> ${ride.value.destination}\n时间：${formatDate(ride.value.date)}\n点击查看详情: ${window.location.origin}/ride/${ride.value.id}`;
-    const textArea = document.createElement("textarea");
-    textArea.value = text;
-    textArea.style.position = "fixed"; textArea.style.left = "-9999px";
-    document.body.appendChild(textArea);
-    textArea.select();
-    try { document.execCommand('copy'); showSuccessToast('复制成功，去粘贴给好友吧'); } catch (err) {}
-    document.body.removeChild(textArea);
-    showShare.value = false;
+const handleCall = () => {
+    if (rideInfo.value?.contact) {
+        window.location.href = `tel:${rideInfo.value.contact}`;
+    }
 };
 </script>
 
 <template>
-  <div class="detail-page" v-if="ride" style="min-height: 100vh; background: #f7f8fa;">
+  <div style="background: #f7f8fa; min-height: 100vh; padding-bottom: 80px;" v-if="rideInfo">
     <van-nav-bar title="行程详情" left-arrow @click-left="router.back()" />
-    <div style="padding: 15px;">
-      <div style="background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
-        <div style="display: flex; align-items: center; margin-bottom: 15px;">
-            <span style="padding: 4px 8px; font-size: 14px; color: #fff; border-radius: 4px; font-weight: bold; margin-right: 10px;" :style="{background: ride.type==='driver'?'#07c160':'orange'}">{{ ride.type==='driver'?'车主':'乘客' }}</span>
-            <span style="font-size: 22px; font-weight: bold; color: #333;">{{ ride.origin }} → {{ ride.destination }}</span>
+    
+    <div style="background: #fff; padding: 20px; text-align: center; border-bottom: 1px solid #eee;">
+        <img :src="rideInfo.publisher?.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" style="width: 60px; height: 60px; border-radius: 50%; margin-bottom: 10px;" />
+        <div style="font-size: 16px; font-weight: bold;">{{ rideInfo.publisher?.nickname || '热心老乡' }}</div>
+        <div style="margin-top: 8px;">
+            <span :style="{background: rideInfo.type==='driver'?'#eaf5ff':'#fff2e8', color: rideInfo.type==='driver'?'#1989fa':'#ff7700'}" style="font-size:12px; padding:2px 8px; border-radius:4px;">
+                {{ rideInfo.type === 'driver' ? '车主找人' : '乘客找车' }}
+            </span>
         </div>
-        <van-divider />
-        <div style="font-size: 16px; margin-bottom: 12px; color: #666; display: flex; align-items: center;"><van-icon name="clock-o" style="margin-right:8px;"/> 时间：{{ formatDate(ride.date) }}</div>
-        <div style="font-size: 16px; margin-bottom: 12px; color: #666; display: flex; align-items: center;"><van-icon name="friends-o" style="margin-right:8px;"/> 数量：{{ ride.seats }}座</div>
-        <div v-if="ride.type==='driver'" style="font-size: 16px; margin-bottom: 12px; color: #666; display: flex; align-items: center;"><van-icon name="logistics" style="margin-right:8px;"/> 车型：{{ ride.car_model || '未填写' }}</div>
-        <div style="font-size: 16px; margin-bottom: 12px; color: #666; display: flex; align-items: center;"><van-icon name="gold-coin-o" style="margin-right:8px;"/> 费用：<span style="color:red;font-size:20px;font-weight:bold;margin-left:5px;">¥{{ ride.price || '面议' }}</span></div>
-        <div v-if="ride.remark" style="font-size: 16px; margin-bottom: 12px; color: #666; display: flex; align-items: flex-start;"><van-icon name="label-o" style="margin-right:8px; margin-top:3px;"/> 备注：{{ ride.remark }}</div>
-      </div>
-      
-      <div style="display:flex; gap:15px; margin-top:30px;">
-        <van-button block round type="primary" color="#ff6600" @click="()=>window.location.href=`tel:${ride.contact}`" style="flex:1; box-shadow: 0 4px 10px rgba(255,102,0,0.3);">拨打电话联系</van-button>
-        <van-button block round type="warning" @click="showShare=true" style="flex:1; box-shadow: 0 4px 10px rgba(255,151,106,0.3);">分享给朋友</van-button>
-      </div>
     </div>
 
-    <div v-if="showShare" @click="showShare=false" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; display: flex; justify-content: center;">
-      <div style="position: absolute; right: 20px; top: 20px; font-size: 60px; color: #fff;">↗</div>
-      <div style="margin-top: 100px; color: #fff; text-align: center; font-size: 18px; line-height: 1.8;">
-        <p>已为您生成专属精美分享卡片</p>
-        <p>请点击右上角 <b>...</b></p>
-        <p>选择 <b>【发送给朋友】</b></p>
-        <van-button type="default" size="small" style="margin-top:20px; background: transparent; color: #fff; border-color: #fff;" @click.stop="handleCopyShare">或者点我复制链接</van-button>
-      </div>
+    <div style="margin: 15px; background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+        <div style="font-size: 20px; font-weight: bold; text-align: center; margin-bottom: 20px; color: #333;">
+            {{ rideInfo.origin }} <van-icon name="arrow" color="#ccc" style="margin: 0 10px;" /> {{ rideInfo.destination }}
+        </div>
+        
+        <van-cell-group :border="false">
+            <van-cell title="出发时间" icon="clock-o" :value="formatDate(rideInfo.date)" value-class="bold-text" />
+            <van-cell title="提供座位" icon="friends-o" :value="rideInfo.seats + ' 座'" />
+            <van-cell title="行程分摊" icon="gold-coin-o" :value="rideInfo.price === '面议' ? '面议' : '¥' + rideInfo.price" value-class="price-text" />
+            <van-cell v-if="rideInfo.type === 'driver'" title="车辆类型" icon="logistics" :value="rideInfo.car_model || '小汽车'" />
+        </van-cell-group>
+
+        <div style="margin-top: 15px; padding-top: 15px; border-top: 1px dashed #eee;">
+            <div style="color: #666; font-size: 14px; margin-bottom: 8px;">补充备注：</div>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                <span v-for="tag in (rideInfo.remark || '').split('，').filter(Boolean)" :key="tag" style="background: #f0f4f8; color: #555; padding: 4px 10px; border-radius: 4px; font-size: 13px;">{{ tag }}</span>
+                <span v-if="!rideInfo.remark" style="color: #999; font-size: 14px;">无补充信息</span>
+            </div>
+        </div>
+    </div>
+
+    <div style="position: fixed; bottom: 0; left: 0; right: 0; background: #fff; padding: 10px 20px; box-shadow: 0 -2px 10px rgba(0,0,0,0.05); z-index: 99;">
+        <van-button block round type="primary" color="#07c160" icon="phone-o" @click="handleCall">立即联系TA</van-button>
     </div>
   </div>
 </template>
+
+<style scoped>
+:deep(.bold-text) { font-weight: bold; color: #333; }
+:deep(.price-text) { font-weight: bold; color: #ee0a24; font-size: 16px; }
+</style>
