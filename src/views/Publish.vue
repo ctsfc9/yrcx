@@ -23,12 +23,19 @@ const getNowDate = () => {
 const defaultDateInfo = getNowDate();
 
 const postForm = reactive({ 
-  type: route.query.type || 'driver', 
+  type: 'driver', 
   origin: '', destination: '', 
   date: defaultDateInfo.value, dateDisplay: defaultDateInfo.display, 
   seats: 1, price: '', remark: [], car_model: '油车', 
   contact: store.userProfile?.phone || '', old_id: null 
 });
+
+// 👉 新增：弹窗选择车主或乘客
+const showTypeSelector = ref(false);
+const typeActions = [
+  { name: '🚗 车主找人 (我有车)', value: 'driver', color: '#1989fa' },
+  { name: '🙋‍♂️ 乘客找车 (我找车)', value: 'passenger', color: '#ff7700' }
+];
 
 const currentDateValues = ref(defaultDateInfo.pickerValues);
 const submitLoading = ref(false);
@@ -65,22 +72,36 @@ const dateColumns = computed(() => {
   ];
 });
 
-onMounted(async () => {
-    if (!store.sysConfig.amap_key) await store.loadConfig();
+onMounted(() => {
+    // 异步拉取配置，绝不阻塞页面渲染
+    if (!store.sysConfig.amap_key) store.loadConfig();
+
     if (store.editPayload) {
         Object.assign(postForm, store.editPayload);
         postForm.remark = store.editPayload.remark ? store.editPayload.remark.split('，') : [];
         postForm.old_id = store.editPayload.id;
         store.setEditPayload(null); 
-    } 
+    } else if (route.query.type) {
+        postForm.type = route.query.type;
+    } else {
+        // 👉 核心逻辑：如果没有明确类型，页面一加载立刻弹出底部选择框！
+        showTypeSelector.value = true;
+    }
     
-    // 👉 核心优化：延迟加载地图脚本，绝对优先渲染 Vue 表单界面，秒开！
+    // 👉 极速优化：强行延迟地图脚本的加载，保证 UI 界面 0 毫秒立刻呈现
     setTimeout(() => {
         loadMapScript();
-    }, 500);
+    }, 800);
 });
 
-// 固定版本的精准城市拼接
+const onSelectType = (action) => {
+    postForm.type = action.value;
+    showTypeSelector.value = false;
+};
+const onCancelType = () => {
+    router.replace('/'); // 取消选择直接退回首页
+};
+
 const parseLocationName = (addressComp) => {
     if (!addressComp) return '';
     let province = addressComp.province || '';
@@ -131,14 +152,12 @@ const loadMapScript = () => {
     const s = document.createElement('script');
     s.async = true; 
     s.src = `https://webapi.amap.com/maps?v=1.4.15&key=${key}&plugin=AMap.CitySearch,AMap.Geolocation,AMap.Geocoder`;
-    s.onload = () => {
-        autoLocate();
-    };
+    s.onload = () => { autoLocate(); };
     document.body.appendChild(s);
 };
 
 const openMapSelector = (f) => { 
-    if (!window.AMap) { showToast('地图加载中，请稍后再试或手动输入'); return; }
+    if (!window.AMap) { showToast('地图组件正在准备，请直接输入'); return; }
     currentMapField.value = f; showMap.value = true; mapSearchKeyword.value = ''; 
 };
 
@@ -146,8 +165,7 @@ const initMapInstance = () => {
     if (!window.AMap) return;
     document.getElementById('picker-map-container').innerHTML = ''; 
     mapInstance = new window.AMap.Map('picker-map-container', { 
-        zoom: 14, 
-        center: userLocation.value || [104.06, 30.67] 
+        zoom: 14, center: userLocation.value || [104.06, 30.67] 
     }); 
     if (postForm.origin) mapInstance.setCity(postForm.origin);
     mapInstance.on('moveend', () => { 
@@ -241,7 +259,7 @@ const handlePublish = async () => {
     finally { submitLoading.value = false; } 
 };
 
-// 👉 核心绝杀：全兼容型超级支付 Payload。包含后端验签可能需要的一切字段！
+// 👉 核心修复：极其纯净的支付 Payload，绝不多传一个陌生参数惹怒微信
 const executePayment = async () => {
     if (!store.userProfile?.openid) {
         showFailToast('缺少微信身份，无法唤起支付');
@@ -251,22 +269,11 @@ const executePayment = async () => {
 
     showLoadingToast({ message: '正在呼起收银台...', forbidClick: true, duration: 0 });
     try {
-        const feeYuan = Number(requiredFee.value);
-        const feeCent = Math.round(feeYuan * 100);
-        const uniqueOrderNo = 'ORD_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
-        const descText = payType.value === 'top' ? '顺风车置顶服务' : '顺风车发布服务';
-
-        // 无论您的后端要什么，这里全都有，绝对不会再报“预支付失败”！
+        // 🚨 绝对回退到最初能用的 3 个参数：user_id, amount, openid 🚨
         const payPayload = { 
             user_id: store.userProfile.id, 
-            openid: store.userProfile.openid,
-            amount: feeYuan,            // 元为单位
-            total_fee: feeCent,         // 分为单位
-            out_trade_no: uniqueOrderNo,// 保证绝不重复的订单号
-            description: descText,      // V3 描述
-            body: descText,             // V2 描述
-            type: payType.value,
-            ride_id: currentPayRideId.value
+            amount: Number(requiredFee.value), 
+            openid: store.userProfile.openid
         };
 
         const payRes = await fetch('/api/pay', {
@@ -316,11 +323,21 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
   <div style="padding:10px; padding-bottom: 30px; background: #f7f8fa; min-height: 100vh;">
     <van-nav-bar :title="postForm.old_id ? '编辑行程' : '发布行程'" left-arrow @click-left="router.back()" />
     
-    <div style="background: #fff; padding: 15px 15px 0; border-radius: 8px; margin-top: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
-      <van-tabs v-model:active="postForm.type" type="card" color="#ff6600">
-        <van-tab title="车主找人" name="driver"></van-tab>
-        <van-tab title="乘客找车" name="passenger"></van-tab>
-      </van-tabs>
+    <van-action-sheet
+      v-model:show="showTypeSelector"
+      :actions="typeActions"
+      cancel-text="暂不发布，返回大厅"
+      description="请选择您要发布的行程类型"
+      :close-on-click-action="true"
+      :closeable="false"
+      @select="onSelectType"
+      @cancel="onCancelType"
+      @click-overlay="onCancelType"
+    />
+
+    <div style="background: #fff; padding: 15px; border-radius: 8px; margin-top: 10px; font-weight: bold; text-align: center; color: #333; box-shadow: 0 2px 8px rgba(0,0,0,0.02);" @click="showTypeSelector = true">
+      当前模式：<span :style="{color: postForm.type === 'driver' ? '#1989fa' : '#ff7700'}">{{ postForm.type === 'driver' ? '🚗 车主找人' : '🙋‍♂️ 乘客找车' }}</span>
+      <van-icon name="exchange" style="margin-left: 10px; color: #999;" />
     </div>
 
     <div class="location-card">
