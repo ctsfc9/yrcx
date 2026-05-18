@@ -76,43 +76,60 @@ onMounted(async () => {
     loadMapScript();
 });
 
-// 👉 核心修复：纯净且稳定的高德原生定位，不再混用外部接口
+// 👉 核心修复：精准解析父子城市（如：上海长宁），解决同名地点的困扰
+const parseLocationName = (addressComp) => {
+    if (!addressComp) return '';
+    let province = addressComp.province || '';
+    let city = addressComp.city || province;
+    let district = addressComp.district || '';
+
+    // 清洗掉“省、市、区、县”等冗余字眼
+    city = city.replace(/[省市]/g, '');
+    district = district.replace(/[区县市]/g, '');
+
+    // 智能拼接判定
+    if (!district || city === district) {
+        return city; // 如果没有区，或者市区同名，直接返回市
+    } else {
+        return city + district; // 完美拼接，如 "上海长宁"
+    }
+};
+
 const autoLocate = () => { 
     if (postForm.origin) return; 
     if (!window.AMap) return;
 
     showLoadingToast({ message: '城市定位中...', duration: 2000 });
     
-    // 第一步：直接用最快的 AMap.CitySearch (根据网络IP无感查城市，成功率极高)
-    window.AMap.plugin('AMap.CitySearch', function () {
-        var citySearch = new window.AMap.CitySearch();
-        citySearch.getLocalCity(function (status, result) {
-            if (status === 'complete' && result.info === 'OK') {
-                if (!postForm.origin) {
-                    postForm.origin = result.city.replace(/[省市]/g, '');
-                }
-            }
-            closeToast();
-        });
-    });
-
-    // 第二步：同时在后台发起精确 GPS 定位。如果有区县信息，则覆盖刚才查到的市
-    window.AMap.plugin('AMap.Geolocation', function() {
+    window.AMap.plugin(['AMap.Geolocation', 'AMap.CitySearch'], function() {
+        // 首选：高精度 GPS 包含最详细的市区信息
         var geolocation = new window.AMap.Geolocation({
-            enableHighAccuracy: true, timeout: 5000, convert: true
+            enableHighAccuracy: true, timeout: 3500, convert: true
         });
+        
         geolocation.getCurrentPosition(function(status, result) {
             if (status === 'complete' && result.addressComponent) {
                 userLocation.value = [result.position.lng, result.position.lat];
-                let city = result.addressComponent.city || result.addressComponent.province;
-                let district = result.addressComponent.district;
-                postForm.origin = (district || city).replace(/[省市区县]/g, '');
+                // 走我们自己写的解析方法，确保组合成 "上海长宁"
+                postForm.origin = parseLocationName(result.addressComponent);
+                closeToast();
+            } else {
+                // 备选：GPS被拒或信号弱时，用IP兜底
+                var citySearch = new window.AMap.CitySearch();
+                citySearch.getLocalCity(function(status2, result2) {
+                    closeToast();
+                    if (status2 === 'complete' && result2.info === 'OK') {
+                        // IP定位通常只有市级，但至少确保不出错
+                        postForm.origin = result2.city.replace(/[省市]/g, '');
+                    } else {
+                        showToast('定位权限受限，请手动输入');
+                    }
+                });
             }
         });
     });
 };
 
-// 👉 核心修复：降级加载高德地图 1.4.15 稳定版，彻底摒弃安全密钥限制
 const loadMapScript = () => {
     if (window.AMap) {
         autoLocate();
@@ -121,11 +138,11 @@ const loadMapScript = () => {
     const key = store.sysConfig.amap_key;
     if (!key) return;
     
-    // 删除所有 2.0 相关的安全拦截代码，回归最稳定的 1.4 老版本
+    window._AMapSecurityConfig = { securityJsCode: '' }; 
     const s = document.createElement('script');
     s.src = `https://webapi.amap.com/maps?v=1.4.15&key=${key}&plugin=AMap.CitySearch,AMap.Geolocation,AMap.Geocoder`;
     s.onload = () => {
-        setTimeout(autoLocate, 300);
+        setTimeout(autoLocate, 600);
     };
     document.body.appendChild(s);
 };
