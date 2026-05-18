@@ -41,7 +41,7 @@ const handleCall = () => {
     }
 };
 
-// 👉 核心新增：生成精美分享文案并一键复制
+// 👉 一键生成并复制精美排版的拼车文案
 const handleCopyText = () => {
     const url = window.location.href; 
     const dateStr = formatDate(rideInfo.value.date);
@@ -49,7 +49,6 @@ const handleCopyText = () => {
     const typeStr = rideInfo.value.type === 'driver' ? '车主找人' : '乘客找车';
     const remarkStr = rideInfo.value.remark ? `\n🏷️ 备注：${rideInfo.value.remark}` : '';
     
-    // 精心设计的拼车排版文案
     const textToCopy = `【宜人出行 · 顺风车】
 📢 ${typeStr}
 📍 路线：${rideInfo.value.origin} ➔ ${rideInfo.value.destination}
@@ -59,7 +58,6 @@ const handleCopyText = () => {
 👇 点击链接查看详情并联系TA：
 ${url}`;
 
-    // 剪贴板写入逻辑 (兼容现代浏览器与微信内置浏览器)
     if (navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(textToCopy).then(() => {
             showSuccessToast('✅ 文案已复制，快去发微信群吧！');
@@ -69,11 +67,9 @@ ${url}`;
     }
 };
 
-// 微信环境下的降级复制方案（极其重要，防止复制失败）
 const fallbackCopy = (text) => {
     const textArea = document.createElement("textarea");
     textArea.value = text;
-    // 隐藏文本域，防止页面滚动跳跃
     textArea.style.position = "fixed"; 
     textArea.style.top = "-9999px";
     textArea.style.left = "-9999px";
@@ -83,11 +79,8 @@ const fallbackCopy = (text) => {
     textArea.select();
     try {
         const successful = document.execCommand('copy');
-        if (successful) {
-            showSuccessToast('✅ 文案已复制，快去粘贴分享吧！');
-        } else {
-            showFailToast('复制失败，请手动截屏分享');
-        }
+        if (successful) showSuccessToast('✅ 文案已复制，快去粘贴分享吧！');
+        else showFailToast('复制失败，请手动截屏分享');
     } catch (err) {
         showFailToast('当前环境不支持一键复制');
     }
