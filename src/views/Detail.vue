@@ -6,7 +6,7 @@ import { showToast, showSuccessToast, showFailToast } from 'vant';
 const route = useRoute();
 const router = useRouter();
 const rideInfo = ref(null);
-const pageLoading = ref(true); // 控制骨架屏的状态
+const pageLoading = ref(true); // 控制骨架屏
 
 onMounted(async () => {
   const id = route.query.id;
@@ -24,7 +24,7 @@ onMounted(async () => {
   } catch (e) {
     showToast('网络错误');
   } finally {
-    pageLoading.value = false; // 请求结束，关闭骨架屏
+    pageLoading.value = false; // 无论成功失败，瞬间关闭加载骨架
   }
 });
 
@@ -100,9 +100,9 @@ const fallbackCopy = (text) => {
   <div style="background: #f7f8fa; min-height: 100vh; padding-bottom: 100px;">
     <van-nav-bar title="行程详情" left-arrow @click-left="onClickLeft" />
     
-    <div v-if="pageLoading" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 60vh; color: #999;">
-        <van-loading type="spinner" color="#ff6600" size="36px" />
-        <div style="margin-top: 15px; font-size: 14px; letter-spacing: 1px;">急速加载中...</div>
+    <div v-if="pageLoading" style="padding: 20px;">
+        <van-skeleton title avatar :row="3" style="margin-bottom: 20px;" />
+        <van-skeleton title :row="4" />
     </div>
 
     <div v-else-if="rideInfo">
