@@ -11,6 +11,15 @@ onMounted(async () => {
   const id = route.query.id;
   if (!id) return router.replace('/');
   
+  // 👉 核心修复：微信物理返回键防退拦截 (静默历史栈压入)
+  if (window.history.length <= 1 || !document.referrer) {
+      window.history.pushState({ trap: 'wechat' }, '', window.location.href);
+      window.addEventListener('popstate', () => {
+          // 监听到物理返回，强行原地重载跳转到首页
+          window.location.replace('/');
+      }, { once: true });
+  }
+  
   showLoadingToast({ message: '加载中...', forbidClick: true });
   try {
     const res = await fetch(`/api/rides?id=${id}`);
@@ -35,9 +44,9 @@ const formatDate = (str) => {
   return str;
 };
 
-// 常规的左上角返回
+// 左上角返回逻辑
 const onClickLeft = () => {
-    if (window.history.length <= 1) {
+    if (window.history.length <= 2 || !document.referrer) {
         router.replace('/'); 
     } else {
         router.back();
@@ -51,7 +60,7 @@ const handleCall = () => {
 };
 
 const handleCopyText = () => {
-    const url = window.location.href; 
+    const url = window.location.href.split('#')[0]; 
     const dateStr = formatDate(rideInfo.value.date);
     const priceStr = rideInfo.value.price === '面议' ? '面议' : `¥${rideInfo.value.price}`;
     const typeStr = rideInfo.value.type === 'driver' ? '车主找人' : '乘客找车';
@@ -138,9 +147,9 @@ const fallbackCopy = (text) => {
         </div>
     </div>
 
-    <div @click="router.replace('/')" style="position: fixed; bottom: 120px; right: 15px; width: 65px; height: 65px; background: linear-gradient(135deg, #ff9000, #ff5c00); border-radius: 50%; box-shadow: 0 6px 16px rgba(255,102,0,0.5); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 99; cursor: pointer; border: 2px solid #fff;">
-        <van-icon name="wap-home-o" size="28" color="#fff" />
-        <span style="font-size: 13px; color: #fff; margin-top: 2px; font-weight: 900; letter-spacing: 1px;">首页</span>
+    <div @click="router.replace('/')" style="position: fixed; bottom: 180px; right: 20px; width: 75px; height: 75px; background: linear-gradient(135deg, #ff8c00, #ff5000); border-radius: 50%; box-shadow: 0 6px 20px rgba(255,102,0,0.6); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; cursor: pointer; border: 3px solid #fff;">
+        <van-icon name="wap-home-o" size="32" color="#fff" />
+        <span style="font-size: 14px; color: #fff; margin-top: 2px; font-weight: 900; letter-spacing: 1px; text-shadow: 1px 1px 2px rgba(0,0,0,0.3);">回首页</span>
     </div>
 
     <div style="position: fixed; bottom: 0; left: 0; right: 0; background: #fff; padding: 10px 15px; box-shadow: 0 -2px 10px rgba(0,0,0,0.05); z-index: 98; display: flex; gap: 10px;">
