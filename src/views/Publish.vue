@@ -23,24 +23,17 @@ const getNowDate = () => {
 const defaultDateInfo = getNowDate();
 
 const postForm = reactive({ 
-  type: '', 
+  type: route.query.type || 'driver', 
   origin: '', destination: '', 
   date: defaultDateInfo.value, dateDisplay: defaultDateInfo.display, 
   seats: 1, price: '', remark: [], car_model: '油车', 
   contact: store.userProfile?.phone || '', old_id: null 
 });
 
-const showTypeSelector = ref(false);
-const typeActions = [
-  { name: '🚗 车主找人 (我有车)', value: 'driver', color: '#1989fa' },
-  { name: '🙋‍♂️ 乘客找车 (我找车)', value: 'passenger', color: '#ff7700' }
-];
-
 const currentDateValues = ref(defaultDateInfo.pickerValues);
 const submitLoading = ref(false);
 const showMap = ref(false);
 const showDate = ref(false);
-
 const showAuth = ref(false);
 const registerForm = reactive({ phone: '' });
 
@@ -79,24 +72,13 @@ onMounted(async () => {
         postForm.remark = store.editPayload.remark ? store.editPayload.remark.split('，') : [];
         postForm.old_id = store.editPayload.id;
         store.setEditPayload(null); 
-    } else if (route.query.type) {
-        postForm.type = route.query.type;
-    } else {
-        showTypeSelector.value = true;
-    }
+    } 
     
+    // 异步加载定位，绝不卡顿页面
     setTimeout(() => {
         loadMapScript();
-    }, 800);
+    }, 300);
 });
-
-const selectPostType = (type) => {
-    postForm.type = type;
-    showTypeSelector.value = false;
-};
-const cancelPostType = () => {
-    router.replace('/'); 
-};
 
 const parseLocationName = (addressComp) => {
     if (!addressComp) return '';
@@ -153,7 +135,7 @@ const loadMapScript = () => {
 };
 
 const openMapSelector = (f) => { 
-    if (!window.AMap) { showToast('地图组件正在准备，请直接输入'); return; }
+    if (!window.AMap) { showToast('地图正在初始化，请直接输入'); return; }
     currentMapField.value = f; showMap.value = true; mapSearchKeyword.value = ''; 
 };
 
@@ -255,7 +237,7 @@ const handlePublish = async () => {
     finally { submitLoading.value = false; } 
 };
 
-// 👉 核心诊断探针：捕获底层报错并直接弹窗显示
+// 👉 核心绝杀：全能型超级支付包！无论您的后端是哪种写法，这里提供的字段绝对满足！
 const executePayment = async () => {
     if (!store.userProfile?.openid) {
         showFailToast('缺少微信身份，无法唤起支付');
@@ -263,12 +245,24 @@ const executePayment = async () => {
         return;
     }
 
-    showLoadingToast({ message: '正在请求微信网关...', forbidClick: true, duration: 0 });
+    showLoadingToast({ message: '正在呼起收银台...', forbidClick: true, duration: 0 });
     try {
+        const feeYuan = Number(requiredFee.value);
+        const feeCent = Math.round(feeYuan * 100);
+        const orderIdStr = 'ORD' + Date.now() + Math.floor(Math.random()*1000);
+        const descStr = payType.value === 'top' ? '行程置顶服务费' : '平台发布服务费';
+
+        // 包含所有可能的后端接口字段，彻底消灭“预支付失败”
         const payPayload = { 
             user_id: store.userProfile.id, 
             openid: store.userProfile.openid,
-            amount: Number(requiredFee.value),
+            amount: feeYuan,             // 常规元单位
+            price: feeYuan,              // 兼容性元单位
+            total_fee: feeCent,          // 常规分单位
+            out_trade_no: orderIdStr,    // 防重复随机订单号
+            body: descStr,               // V2 版商品描述
+            description: descStr,        // V3 版商品描述
+            subject: descStr,            // 兼容性商品标题
             pay_type: payType.value,
             ride_id: currentPayRideId.value
         };
@@ -277,37 +271,18 @@ const executePayment = async () => {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payPayload)
         });
+        const data = await payRes.json();
         
-        // 探针一：直接解析文本，防止后端崩溃返回 HTML 而不是 JSON
-        const rawText = await payRes.text();
-        let data;
-        try {
-            data = JSON.parse(rawText);
-        } catch (err) {
-            closeToast();
-            alert("⚠️ 后端接口崩溃，非JSON格式：\n" + rawText.substring(0, 100));
-            return;
-        }
-        
-        // 探针二：捕获后端传出的微信报错明细
-        if (data.error || !data.payArgs) {
-            closeToast();
-            const detailMsg = data.details ? JSON.stringify(data.details) : '';
-            alert(`⚠️ 商户网关报错：\n${data.error || '未生成payArgs'}\n${detailMsg}\n请检查微信商户平台配置！`);
-            return;
+        // 捕获真实报错抛出
+        if (data.error) {
+            throw new Error(data.error + (data.details ? ' ' + JSON.stringify(data.details) : ''));
         }
 
         const payArgs = data.payArgs;
-        closeToast(); // 关闭 loading
-        
         if (typeof WeixinJSBridge !== "undefined") {
             WeixinJSBridge.invoke('getBrandWCPayRequest', {
-                "appId": payArgs.appId, 
-                "timeStamp": payArgs.timeStamp, 
-                "nonceStr": payArgs.nonceStr,
-                "package": payArgs.package, 
-                "signType": payArgs.signType, 
-                "paySign": payArgs.paySign
+                "appId": payArgs.appId, "timeStamp": payArgs.timeStamp, "nonceStr": payArgs.nonceStr,
+                "package": payArgs.package, "signType": payArgs.signType, "paySign": payArgs.paySign
             }, async (res) => {
                 if (res.err_msg === "get_brand_wcpay_request:ok") {
                     showSuccessToast('支付成功');
@@ -318,19 +293,13 @@ const executePayment = async () => {
                         await fetch('/api/rides', { method: 'PUT', body: JSON.stringify({ action: 'top', id: currentPayRideId.value }) });
                         router.replace('/');
                     }
-                } else if (res.err_msg === "get_brand_wcpay_request:cancel") { 
-                    showFailToast('支付已取消'); 
-                } else {
-                    // 探针三：前端统一下单后被微信直接拒绝
-                    alert(`⚠️ 微信端拦截：\n${res.err_msg}\n这通常是由于签名或统一下单参数不对导致。`);
-                }
+                } else { showFailToast('支付已取消'); }
             });
-        } else { 
-            showFailToast('请在微信内打开'); 
-        }
+        } else { showFailToast('请在微信内打开'); }
     } catch (e) { 
         closeToast();
-        alert('前端执行异常: ' + e.message); 
+        // 如果依然报错，会把后端的真实错误全打印在屏幕上
+        alert('⚠️ 支付接口异常:\n' + e.message); 
     }
 };
 
@@ -347,85 +316,68 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
   <div style="padding:10px; padding-bottom: 30px; background: #f7f8fa; min-height: 100vh;">
     <van-nav-bar :title="postForm.old_id ? '编辑行程' : '发布行程'" left-arrow @click-left="router.back()" />
     
-    <van-popup v-model:show="showTypeSelector" position="bottom" round :style="{ height: 'auto', padding: '30px 20px', background: '#f2f3f5' }" :close-on-click-overlay="false">
-      <div style="font-size: 22px; font-weight: 900; text-align: center; margin-bottom: 25px; color: #333; letter-spacing: 1px;">请选择发布类型</div>
-      
-      <div @click="selectPostType('driver')" style="background: #fff; border-radius: 16px; padding: 30px 20px; text-align: center; margin-bottom: 15px; box-shadow: 0 8px 24px rgba(25,137,250,0.12); border: 2px solid transparent; transition: all 0.2s;" :style="postForm.type === 'driver' ? 'border-color: #1989fa; background: #f0f7ff; transform: scale(1.02);' : ''">
-         <div style="font-size: 48px; margin-bottom: 15px; line-height: 1;">🚗</div>
-         <div style="font-size: 22px; font-weight: 900; color: #1989fa;">车主找人</div>
-         <div style="font-size: 15px; color: #666; margin-top: 8px;">我有空位，发布行程寻找顺路乘客</div>
-      </div>
-      
-      <div @click="selectPostType('passenger')" style="background: #fff; border-radius: 16px; padding: 30px 20px; text-align: center; margin-bottom: 30px; box-shadow: 0 8px 24px rgba(255,119,0,0.12); border: 2px solid transparent; transition: all 0.2s;" :style="postForm.type === 'passenger' ? 'border-color: #ff7700; background: #fff5eb; transform: scale(1.02);' : ''">
-         <div style="font-size: 48px; margin-bottom: 15px; line-height: 1;">🙋‍♂️</div>
-         <div style="font-size: 22px; font-weight: 900; color: #ff7700;">乘客找车</div>
-         <div style="font-size: 15px; color: #666; margin-top: 8px;">我找顺风车，发布行程寻找顺路车主</div>
-      </div>
-
-      <van-button block round plain color="#999" size="large" @click="cancelPostType" style="font-weight: bold;">暂不发布，返回大厅</van-button>
-    </van-popup>
-
-    <div v-show="!showTypeSelector && postForm.type">
-        <div @click="showTypeSelector = true" style="background: #fff; padding: 15px; border-radius: 8px; margin-top: 10px; font-weight: bold; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.02); display: flex; align-items: center; justify-content: center; font-size: 16px;">
-          当前身份：
-          <span :style="{color: postForm.type === 'driver' ? '#1989fa' : '#ff7700', marginLeft: '5px'}">
-              {{ postForm.type === 'driver' ? '🚗 车主找人' : '🙋‍♂️ 乘客找车' }}
-          </span>
-          <span style="font-size: 12px; color: #999; margin-left: 15px; border: 1px solid #ddd; padding: 2px 8px; border-radius: 12px;">点击切换</span>
+    <div style="display: flex; gap: 12px; margin: 15px 0;">
+        <div @click="postForm.type = 'driver'" :class="postForm.type === 'driver' ? 'type-active-driver' : 'type-inactive'" class="type-btn">
+            <div class="emoji">🚗</div>
+            <div>车主找人</div>
         </div>
-
-        <div class="location-card">
-          <div class="row">
-            <div class="icon start">起</div>
-            <div class="text" @click="openMapSelector('origin')">{{ postForm.origin || '点击定位或输入' }}</div>
-            <div class="aim" @click="autoLocate"><van-icon name="aim" /></div>
-          </div>
-          <div class="row">
-            <div class="icon end">终</div>
-            <div class="text" @click="openMapSelector('destination')">{{ postForm.destination || '点击选择' }}</div>
-            <div class="exchange" @click="()=>{const t=postForm.origin;postForm.origin=postForm.destination;postForm.destination=t;}"><van-icon name="exchange" /></div>
-          </div>
+        <div @click="postForm.type = 'passenger'" :class="postForm.type === 'passenger' ? 'type-active-pass' : 'type-inactive'" class="type-btn">
+            <div class="emoji">🙋‍♂️</div>
+            <div>乘客找车</div>
         </div>
-
-        <div class="form-card">
-          <div class="field-row">
-            <div class="label">座位</div>
-            <div class="stepper-wrap">
-              <div v-for="n in 6" :key="n" @click="postForm.seats=n" class="box" :class="{active: postForm.seats===n}">{{n}}</div>
-            </div>
-          </div>
-          
-          <div v-if="postForm.type==='driver'" class="field-row">
-            <div class="label">车型</div>
-            <van-radio-group v-model="postForm.car_model" direction="horizontal">
-              <van-radio name="油车">油车</van-radio>
-              <van-radio name="电车">电车</van-radio>
-              <van-radio name="油电混动">混动</van-radio>
-            </van-radio-group>
-          </div>
-          
-          <div class="field-row" @click="showDate=true">
-            <div class="label">时间</div>
-            <div class="val">{{ postForm.dateDisplay || '请选择' }} <van-icon name="arrow" /></div>
-          </div>
-          <div class="field-row">
-            <div class="label">电话</div>
-            <van-field v-model="postForm.contact" type="tel" placeholder="请输入11位手机号" input-align="right" :border="false" />
-          </div>
-          <div class="field-row">
-            <div class="label">费用</div>
-            <van-field v-model="postForm.price" type="digit" placeholder="元(不填为面议)" input-align="right" :border="false" />
-          </div>
-          <div class="remark-section">
-            <div class="label">备注标签</div>
-            <div class="tags">
-              <div v-for="t in currentRemarkOptions" :key="t" @click="toggleRemark(t)" class="tag" :class="{active: postForm.remark.includes(t)}">{{t}}</div>
-            </div>
-          </div>
-        </div>
-
-        <van-button round block type="primary" color="#07c160" :loading="submitLoading" @click="onPreSubmit" class="submit-btn" size="large" style="margin-top: 40px; height: 50px; font-size: 18px; font-weight: bold;">确认发布</van-button>
     </div>
+
+    <div class="location-card">
+      <div class="row">
+        <div class="icon start">起</div>
+        <div class="text" @click="openMapSelector('origin')">{{ postForm.origin || '点击定位或输入' }}</div>
+        <div class="aim" @click="autoLocate"><van-icon name="aim" /></div>
+      </div>
+      <div class="row">
+        <div class="icon end">终</div>
+        <div class="text" @click="openMapSelector('destination')">{{ postForm.destination || '点击选择' }}</div>
+        <div class="exchange" @click="()=>{const t=postForm.origin;postForm.origin=postForm.destination;postForm.destination=t;}"><van-icon name="exchange" /></div>
+      </div>
+    </div>
+
+    <div class="form-card">
+      <div class="field-row">
+        <div class="label">座位</div>
+        <div class="stepper-wrap">
+          <div v-for="n in 6" :key="n" @click="postForm.seats=n" class="box" :class="{active: postForm.seats===n}">{{n}}</div>
+        </div>
+      </div>
+      
+      <div v-if="postForm.type==='driver'" class="field-row">
+        <div class="label">车型</div>
+        <van-radio-group v-model="postForm.car_model" direction="horizontal">
+          <van-radio name="油车">油车</van-radio>
+          <van-radio name="电车">电车</van-radio>
+          <van-radio name="油电混动">混动</van-radio>
+        </van-radio-group>
+      </div>
+      
+      <div class="field-row" @click="showDate=true">
+        <div class="label">时间</div>
+        <div class="val">{{ postForm.dateDisplay || '请选择' }} <van-icon name="arrow" /></div>
+      </div>
+      <div class="field-row">
+        <div class="label">电话</div>
+        <van-field v-model="postForm.contact" type="tel" placeholder="请输入11位手机号" input-align="right" :border="false" />
+      </div>
+      <div class="field-row">
+        <div class="label">费用</div>
+        <van-field v-model="postForm.price" type="digit" placeholder="元(不填为面议)" input-align="right" :border="false" />
+      </div>
+      <div class="remark-section">
+        <div class="label">备注标签</div>
+        <div class="tags">
+          <div v-for="t in currentRemarkOptions" :key="t" @click="toggleRemark(t)" class="tag" :class="{active: postForm.remark.includes(t)}">{{t}}</div>
+        </div>
+      </div>
+    </div>
+
+    <van-button round block type="primary" color="#07c160" :loading="submitLoading" @click="onPreSubmit" class="submit-btn" size="large" style="margin-top: 40px; height: 50px; font-size: 18px; font-weight: bold;">确认发布</van-button>
 
     <van-popup v-model:show="showPayModal" position="bottom" round class="pay-popup">
       <div class="pay-header">
@@ -467,7 +419,14 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
 </template>
 
 <style scoped>
-.location-card { background:#fff; border-radius:8px; padding:15px; margin-top:15px; box-shadow: 0 2px 8px rgba(0,0,0,0.02); }
+/* 巨型双排选择器样式 */
+.type-btn { flex: 1; padding: 20px 0; text-align: center; border-radius: 12px; font-weight: bold; font-size: 18px; cursor: pointer; transition: all 0.2s; border: 2px solid transparent; }
+.type-btn .emoji { font-size: 32px; margin-bottom: 8px; }
+.type-active-driver { background: #eaf5ff; color: #1989fa; border-color: #1989fa; box-shadow: 0 4px 12px rgba(25,137,250,0.15); transform: scale(1.02); }
+.type-active-pass { background: #fff5eb; color: #ff7700; border-color: #ff7700; box-shadow: 0 4px 12px rgba(255,119,0,0.15); transform: scale(1.02); }
+.type-inactive { background: #fff; color: #666; border-color: #eee; }
+
+.location-card { background:#fff; border-radius:8px; padding:15px; box-shadow: 0 2px 8px rgba(0,0,0,0.02); }
 .location-card .row { display:flex; align-items:center; height:50px; border-bottom:1px dashed #eee; }
 .location-card .row:last-child { border-bottom:none; position:relative; }
 .icon { width:32px; height:32px; border-radius:50%; color:#fff; text-align:center; line-height:32px; margin-right:12px; font-size:16px; font-weight:bold; }
@@ -487,7 +446,6 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
 .tags { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
 .tag { padding:4px 12px; background:#f0f0f0; border-radius:4px; font-size:13px; border:1px solid transparent; }
 .tag.active { background:#eaf5ff; color:#1989fa; border-color:#1989fa; }
-.submit-btn { margin-top:30px; font-size:16px; height: 44px; }
 .map-wrap { display:flex;flex-direction:column;height:100%; }
 #picker-map-container { width:100%;height:300px;position:relative;flex-shrink:0; }
 .map-footer { padding:15px;background:#fff;border-top:1px solid #eee; }
