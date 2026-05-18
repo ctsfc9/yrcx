@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { showToast, showLoadingToast, closeToast, showSuccessToast, showFailToast } from 'vant';
+import { showToast, showSuccessToast, showFailToast } from 'vant';
 
 const route = useRoute();
 const router = useRouter();
@@ -11,16 +11,7 @@ onMounted(async () => {
   const id = route.query.id;
   if (!id) return router.replace('/');
   
-  // 👉 核心修复：微信物理返回键防退拦截 (静默历史栈压入)
-  if (window.history.length <= 1 || !document.referrer) {
-      window.history.pushState({ trap: 'wechat' }, '', window.location.href);
-      window.addEventListener('popstate', () => {
-          // 监听到物理返回，强行原地重载跳转到首页
-          window.location.replace('/');
-      }, { once: true });
-  }
-  
-  showLoadingToast({ message: '加载中...', forbidClick: true });
+  // 👉 核心优化：不再使用任何阻塞式 Loading 弹窗，实现真正的毫秒级秒开
   try {
     const res = await fetch(`/api/rides?id=${id}`);
     const data = await res.json();
@@ -32,8 +23,6 @@ onMounted(async () => {
     }
   } catch (e) {
     showToast('网络错误');
-  } finally {
-    closeToast();
   }
 });
 
@@ -44,9 +33,9 @@ const formatDate = (str) => {
   return str;
 };
 
-// 左上角返回逻辑
+// 常规的左上角返回
 const onClickLeft = () => {
-    if (window.history.length <= 2 || !document.referrer) {
+    if (window.history.length <= 1) {
         router.replace('/'); 
     } else {
         router.back();
@@ -60,7 +49,7 @@ const handleCall = () => {
 };
 
 const handleCopyText = () => {
-    const url = window.location.href.split('#')[0]; 
+    const url = window.location.href; 
     const dateStr = formatDate(rideInfo.value.date);
     const priceStr = rideInfo.value.price === '面议' ? '面议' : `¥${rideInfo.value.price}`;
     const typeStr = rideInfo.value.type === 'driver' ? '车主找人' : '乘客找车';
