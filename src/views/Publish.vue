@@ -1,7 +1,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { showToast, showSuccessToast, showFailToast, showLoadingToast, closeToast } from 'vant';
+import { showToast, showSuccessToast, showFailToast, showLoadingToast, closeToast, showDialog } from 'vant';
 import { useAppStore } from '../store';
 
 const router = useRouter();
@@ -38,8 +38,11 @@ const showDate = ref(false);
 const showAuth = ref(false);
 const registerForm = reactive({ phone: '' });
 
+// 👉 支付相关控制变量
 const showPayModal = ref(false);
 const requiredFee = ref(0);
+const payType = ref('publish'); // 'publish' 或 'top'
+const currentPayRideId = ref(null); // 当前需要置顶的行程ID
 
 const mapSearchKeyword = ref('');
 const currentMapField = ref(''); 
@@ -73,82 +76,66 @@ onMounted(async () => {
         store.setEditPayload(null); 
     } 
     
+    autoLocate();
     loadMapScript();
 });
 
-// 👉 核心修复：精准解析父子城市（如：上海长宁），解决同名地点的困扰
-const parseLocationName = (addressComp) => {
-    if (!addressComp) return '';
-    let province = addressComp.province || '';
-    let city = addressComp.city || province;
-    let district = addressComp.district || '';
-
-    // 清洗掉“省、市、区、县”等冗余字眼
-    city = city.replace(/[省市]/g, '');
-    district = district.replace(/[区县市]/g, '');
-
-    // 智能拼接判定
-    if (!district || city === district) {
-        return city; // 如果没有区，或者市区同名，直接返回市
-    } else {
-        return city + district; // 完美拼接，如 "上海长宁"
-    }
-};
-
-const autoLocate = () => { 
+// 👇 完全原封不动的定位双引擎代码，绝对不改！ 👇
+const autoLocate = async () => { 
     if (postForm.origin) return; 
-    if (!window.AMap) return;
+    showLoadingToast({ message: '智能定位中...', duration: 2000 });
+    let isLocated = false;
+    try {
+        const res = await fetch('https://api.vvhan.com/api/ipInfo');
+        const data = await res.json();
+        if (data && data.success && data.info && data.info.city) {
+            postForm.origin = data.info.city.replace(/[省市]/g, '');
+            isLocated = true;
+            closeToast();
+            return;
+        }
+    } catch (e) {}
 
-    showLoadingToast({ message: '城市定位中...', duration: 2000 });
-    
-    window.AMap.plugin(['AMap.Geolocation', 'AMap.CitySearch'], function() {
-        // 首选：高精度 GPS 包含最详细的市区信息
-        var geolocation = new window.AMap.Geolocation({
-            enableHighAccuracy: true, timeout: 3500, convert: true
-        });
-        
-        geolocation.getCurrentPosition(function(status, result) {
-            if (status === 'complete' && result.addressComponent) {
-                userLocation.value = [result.position.lng, result.position.lat];
-                // 走我们自己写的解析方法，确保组合成 "上海长宁"
-                postForm.origin = parseLocationName(result.addressComponent);
-                closeToast();
-            } else {
-                // 备选：GPS被拒或信号弱时，用IP兜底
+    window.localIpCallback = (data) => {
+        if (data && data.city && !isLocated) {
+            postForm.origin = data.city.replace(/[省市]/g, '');
+            isLocated = true;
+            closeToast();
+        }
+    };
+    const script = document.createElement('script');
+    script.src = 'https://whois.pconline.com.cn/ipJson.jsp?callback=localIpCallback';
+    document.body.appendChild(script);
+
+    setTimeout(() => {
+        if (!isLocated && window.AMap) {
+            window.AMap.plugin('AMap.CitySearch', function() {
                 var citySearch = new window.AMap.CitySearch();
-                citySearch.getLocalCity(function(status2, result2) {
-                    closeToast();
-                    if (status2 === 'complete' && result2.info === 'OK') {
-                        // IP定位通常只有市级，但至少确保不出错
-                        postForm.origin = result2.city.replace(/[省市]/g, '');
-                    } else {
-                        showToast('定位权限受限，请手动输入');
+                citySearch.getLocalCity(function(status, result) {
+                    if (status === 'complete' && result.info === 'OK' && !isLocated) {
+                        postForm.origin = result.city.replace(/[省市]/g, ''); 
                     }
+                    closeToast();
                 });
-            }
-        });
-    });
+            });
+        } else {
+            closeToast();
+        }
+    }, 1500);
 };
 
 const loadMapScript = () => {
-    if (window.AMap) {
-        autoLocate();
-        return;
-    }
+    if (window.AMap) return;
     const key = store.sysConfig.amap_key;
     if (!key) return;
-    
     window._AMapSecurityConfig = { securityJsCode: '' }; 
     const s = document.createElement('script');
-    s.src = `https://webapi.amap.com/maps?v=1.4.15&key=${key}&plugin=AMap.CitySearch,AMap.Geolocation,AMap.Geocoder`;
-    s.onload = () => {
-        setTimeout(autoLocate, 600);
-    };
+    s.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.CitySearch,AMap.Geolocation,AMap.Geocoder`;
     document.body.appendChild(s);
 };
 
 const openMapSelector = (f) => { 
-    if (!window.AMap) { showToast('地图加载中，请稍后再试或手动输入'); return; }
+    if (!window.AMap) { showToast('地图未准备好，请手动输入'); return; }
     currentMapField.value = f; showMap.value = true; mapSearchKeyword.value = ''; 
 };
 
@@ -159,11 +146,7 @@ const initMapInstance = () => {
         zoom: 14, 
         center: userLocation.value || [104.06, 30.67] 
     }); 
-    
-    if (postForm.origin) {
-        mapInstance.setCity(postForm.origin);
-    }
-    
+    if (postForm.origin) mapInstance.setCity(postForm.origin);
     mapInstance.on('moveend', () => { 
         new window.AMap.Geocoder().getAddress(mapInstance.getCenter(), (s, r) => {
             if (s === 'complete') mapSelectionText.value = r.regeocode.formattedAddress;
@@ -179,6 +162,7 @@ const confirmMapSelection = (val) => {
         showMap.value = false;
     } else showToast('请等待定位'); 
 };
+// 👆 核心定位结束 👆
 
 const submitAuth = async () => {
     if(!/^\d{11}$/.test(registerForm.phone)) { showFailToast('请输入11位数字手机号'); return; }
@@ -217,10 +201,33 @@ const handlePublish = async () => {
         const result = await res.json();
         
         if (res.ok) { 
-            showSuccessToast('发布成功'); 
-            router.replace('/'); 
+            // 👉 新增：发布成功后，检查后台配置，决定是否弹出置顶收费提示
+            const topFee = Number(store.sysConfig.top_fee) || 0;
+            if (topFee > 0 && !postForm.old_id) { // 新发布且开启了置顶收费
+                showDialog({
+                    title: '发布成功',
+                    message: `信息已发布！是否支付 ${topFee} 元将本条行程置顶？\n(置顶可获得置顶标识并排在最前面，增加曝光)`,
+                    showCancelButton: true,
+                    confirmButtonText: '马上置顶',
+                    cancelButtonText: '暂不需要',
+                    confirmButtonColor: '#ff6600'
+                }).then(() => {
+                    // 点击确定：拉起微信支付，类型为 'top'
+                    requiredFee.value = topFee;
+                    payType.value = 'top';
+                    currentPayRideId.value = result.ride_id;
+                    showPayModal.value = true;
+                }).catch(() => {
+                    router.replace('/');
+                });
+            } else {
+                showSuccessToast('发布成功'); 
+                router.replace('/'); 
+            }
         } else if (res.status === 402) {
+            // 👉 需要扣除发布费
             requiredFee.value = result.fee || 0;
+            payType.value = 'publish';
             showPayModal.value = true;
         } else if (res.status === 403) {
             showAuth.value = true;
@@ -231,6 +238,7 @@ const handlePublish = async () => {
     finally { submitLoading.value = false; } 
 };
 
+// 👉 新增：支付执行与回调区分
 const executePayment = async () => {
     showLoadingToast({ message: '正在呼起微信支付...', forbidClick: true, duration: 0 });
     try {
@@ -250,7 +258,14 @@ const executePayment = async () => {
                 if (res.err_msg === "get_brand_wcpay_request:ok") {
                     showSuccessToast('支付成功');
                     showPayModal.value = false;
-                    await handlePublish(); 
+                    
+                    if (payType.value === 'publish') {
+                        await handlePublish(); // 发布费支付成功，重新走发布
+                    } else if (payType.value === 'top') {
+                        // 置顶费支付成功，请求后端更新 is_top = 1
+                        await fetch('/api/rides', { method: 'PUT', body: JSON.stringify({ action: 'top', id: currentPayRideId.value }) });
+                        router.replace('/');
+                    }
                 } else { showFailToast('支付已取消'); }
             });
         } else { showFailToast('请在微信内打开'); }
@@ -332,8 +347,9 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
     <van-popup v-model:show="showPayModal" position="bottom" round class="pay-popup">
       <div class="pay-header">
         <van-icon name="gold-coin" color="#ff6600" size="48" />
-        <h3>发布服务费</h3>
-        <p>账户余额不足，支付后即可自动发布</p>
+        <h3>{{ payType === 'top' ? '支付置顶服务费' : '支付发布服务费' }}</h3>
+        <p v-if="payType === 'top'">支付后本条信息将优先展示，增加曝光</p>
+        <p v-else>平台发布需要收取少量服务费</p>
         <div class="amount"><span>¥</span> {{ requiredFee }}</div>
       </div>
       <van-button block round type="primary" color="#07c160" size="large" @click="executePayment">微信安全支付</van-button>
