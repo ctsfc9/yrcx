@@ -6,29 +6,24 @@ import { showToast, showLoadingToast, closeToast, showSuccessToast, showFailToas
 const route = useRoute();
 const router = useRouter();
 const rideInfo = ref(null);
-let isDirectEntry = false;
-
-// 👉 终极物理返回拦截：基于 History State 注入，微信 100% 无法无视
-const handlePopstate = (e) => {
-    // 当检测到是按了返回，退到了我们预埋的垫底状态时
-    if (e.state && e.state.wechat_back_trap) {
-        window.location.href = '/'; 
-    }
-};
 
 onMounted(async () => {
   const id = route.query.id;
   if (!id) return router.replace('/');
   
-  // 👉 判断如果用户是直接点别人发来的链接进来的
-  if (window.history.length <= 1 || !document.referrer) {
-      isDirectEntry = true;
-      // 1. 先把当前页替换成一个“退网陷阱”状态
-      window.history.replaceState({ wechat_back_trap: true }, '', window.location.href);
-      // 2. 再往上推一层“正常”状态
-      window.history.pushState({ current_detail: true }, '', window.location.href);
-      // 3. 监听返回动作
-      window.addEventListener('popstate', handlePopstate);
+  // 👉 核心防退黑科技：真实栈底重载技术
+  // 如果是外部链接直接进来的（历史记录极短或来源不是本站）
+  if (window.history.length <= 1 || !document.referrer.includes(window.location.host)) {
+      const currentUrl = window.location.href;
+      // 1. 将当前栈底偷偷换成网站首页
+      window.history.replaceState(null, null, '/'); 
+      // 2. 将详情页压入新栈顶
+      window.history.pushState(null, null, currentUrl); 
+      
+      // 3. 监听到退栈动作时，强制页面硬刷新到首页，微信绝对拦截不住
+      window.addEventListener('popstate', () => {
+          window.location.replace('/'); 
+      }, { once: true });
   }
   
   showLoadingToast({ message: '加载中...', forbidClick: true });
@@ -48,10 +43,6 @@ onMounted(async () => {
   }
 });
 
-onUnmounted(() => {
-    window.removeEventListener('popstate', handlePopstate);
-});
-
 const formatDate = (str) => {
   if (!str) return '';
   const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})[T\s](\d{1,2}):(\d{1,2})/);
@@ -59,10 +50,9 @@ const formatDate = (str) => {
   return str;
 };
 
-// 左上角按钮控制
 const onClickLeft = () => {
-    if (isDirectEntry) {
-        window.location.href = '/'; 
+    if (window.history.length <= 2 || !document.referrer.includes(window.location.host)) {
+        window.location.replace('/'); 
     } else {
         router.back();
     }
@@ -75,8 +65,7 @@ const handleCall = () => {
 };
 
 const handleCopyText = () => {
-    // 👉 修复分享Bug：完美取用原汁原味的URL，不再任何切割，分享出去绝不乱跳首页！
-    const url = window.location.href; 
+    const url = window.location.href.split('#')[0]; 
     const dateStr = formatDate(rideInfo.value.date);
     const priceStr = rideInfo.value.price === '面议' ? '面议' : `¥${rideInfo.value.price}`;
     const typeStr = rideInfo.value.type === 'driver' ? '车主找人' : '乘客找车';
