@@ -74,7 +74,7 @@ const handleCopyText = () => {
     const carStr = rideInfo.value.type === 'driver' && rideInfo.value.car_model ? `\n🚗 车型：${rideInfo.value.car_model}` : '';
     const remarkStr = rideInfo.value.remark ? `\n🏷️ 备注：${rideInfo.value.remark}` : '';
     
-    const textToCopy = `【宜人出行 · 顺风车】
+    const textToCopy = `【宜人出行 · 长途合乘拼车】
 📢 ${typeStr}
 📍 路线：${rideInfo.value.origin} ➔ ${rideInfo.value.destination}
 🕒 时间：${dateStr}
