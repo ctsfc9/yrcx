@@ -11,14 +11,6 @@ onMounted(async () => {
   const id = route.query.id;
   if (!id) return router.replace('/');
   
-  // 👉【终极防退黑科技：无感历史栈强力拦截】
-  // 无论是在微信直接打开还是带记录跳转，在此页面强制单向压入一个底层监听拦截
-  window.history.pushState({ trapActive: true }, null, window.location.href);
-  window.addEventListener('popstate', () => {
-      // 只要捕捉到用户的任何返回或侧滑手势动作，瞬间强行原地跳转回首页大厅，增加停留时间
-      window.location.href = window.location.origin + '/';
-  }, false);
-  
   showLoadingToast({ message: '加载中...', forbidClick: true });
   try {
     const res = await fetch(`/api/rides?id=${id}`);
@@ -27,7 +19,7 @@ onMounted(async () => {
       rideInfo.value = data;
     } else {
       showToast(data.error || '行程不存在');
-      setTimeout(() => window.location.href = '/', 1500);
+      setTimeout(() => router.replace('/'), 1500);
     }
   } catch (e) {
     showToast('网络错误');
@@ -43,9 +35,13 @@ const formatDate = (str) => {
   return str;
 };
 
-// 页面顶部左上角点击返回
+// 左上角返回逻辑（常规返回）
 const onClickLeft = () => {
-    window.location.href = '/'; 
+    if (window.history.length <= 1) {
+        router.replace('/'); 
+    } else {
+        router.back();
+    }
 };
 
 const handleCall = () => {
@@ -55,7 +51,6 @@ const handleCall = () => {
 };
 
 const handleCopyText = () => {
-    // 固化纯净的全量URL分享链接，绝不乱切
     const url = window.location.href; 
     const dateStr = formatDate(rideInfo.value.date);
     const priceStr = rideInfo.value.price === '面议' ? '面议' : `¥${rideInfo.value.price}`;
@@ -143,7 +138,12 @@ const fallbackCopy = (text) => {
         </div>
     </div>
 
-    <div style="position: fixed; bottom: 0; left: 0; right: 0; background: #fff; padding: 10px 15px; box-shadow: 0 -2px 10px rgba(0,0,0,0.05); z-index: 99; display: flex; gap: 10px;">
+    <div @click="router.replace('/')" style="position: fixed; bottom: 85px; right: 15px; width: 50px; height: 50px; background: #fff; border-radius: 50%; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 99; cursor: pointer; border: 1px solid #ffe8d6;">
+        <van-icon name="wap-home-o" size="24" color="#ff6600" />
+        <span style="font-size: 10px; color: #ff6600; margin-top: 2px; font-weight: bold;">首页</span>
+    </div>
+
+    <div style="position: fixed; bottom: 0; left: 0; right: 0; background: #fff; padding: 10px 15px; box-shadow: 0 -2px 10px rgba(0,0,0,0.05); z-index: 98; display: flex; gap: 10px;">
         <van-button round plain type="primary" color="#ff6600" icon="orders-o" style="flex: 1;" @click="handleCopyText">复制分享文案</van-button>
         <van-button round type="primary" color="#07c160" icon="phone-o" style="flex: 1.5;" @click="handleCall">立即联系TA</van-button>
     </div>
