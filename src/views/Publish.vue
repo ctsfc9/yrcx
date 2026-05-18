@@ -33,9 +33,14 @@ const currentDateValues = ref(defaultDateInfo.pickerValues);
 const submitLoading = ref(false);
 const showMap = ref(false);
 const showDate = ref(false);
+
+// 极简手机号绑定
 const showAuth = ref(false);
-// 极简绑定，只要手机号
 const registerForm = reactive({ phone: '' });
+
+// 支付收银台状态
+const showPayModal = ref(false);
+const requiredFee = ref(0);
 
 const mapSearchKeyword = ref('');
 const currentMapField = ref(''); 
@@ -72,57 +77,73 @@ onMounted(async () => {
     loadMapScript();
 });
 
-// 彻底修复高德加载逻辑
+// 彻底修复高德地图动态加载逻辑
 const loadMapScript = () => {
     if (window.AMap) { setTimeout(autoLocate, 300); return; }
     const key = store.sysConfig.amap_key;
     if (!key) {
-        showToast('后台未配置高德Key，请联系管理员');
+        showToast('后台未配置高德Key，无法自动定位');
         return;
     }
-    // 强制声明高德配置，避免拦截
     window._AMapSecurityConfig = { securityJsCode: '' }; 
     const s = document.createElement('script');
     s.src = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.CitySearch,AMap.Geolocation,AMap.Geocoder`;
     s.onload = () => setTimeout(autoLocate, 500);
-    s.onerror = () => showToast('地图加载失败，请检查Key');
+    s.onerror = () => showToast('地图加载失败，请检查配置');
     document.body.appendChild(s);
 };
 
 const autoLocate = () => { 
     if(!window.AMap) return;
     showLoadingToast({ message: '智能定位中...', duration: 2000 });
-    window.AMap.plugin(['AMap.CitySearch', 'AMap.Geolocation'], function() {
+    
+    window.AMap.plugin('AMap.CitySearch', function() {
         var citySearch = new window.AMap.CitySearch();
         citySearch.getLocalCity(function(status, result) {
-            if (status === 'complete' && result.info === 'OK' && !postForm.origin) {
-                postForm.origin = result.city.replace(/[省市]/g, ''); 
-            }
-            var geolocation = new window.AMap.Geolocation({ enableHighAccuracy: true, timeout: 3500 });
-            geolocation.getCurrentPosition(function(status2, result2) {
-                closeToast();
-                if (status2 === 'complete' && result2.addressComponent) {
-                    userLocation.value = [result2.position.lng, result2.position.lat];
-                    const ac = result2.addressComponent;
-                    if (ac.district) postForm.origin = ac.district.replace(/[区县市]/g, ''); 
-                    else if (ac.city) postForm.origin = ac.city.replace(/[省市]/g, '');
+            if (status === 'complete' && result.info === 'OK') {
+                if (!postForm.origin) {
+                    postForm.origin = result.city.replace(/[省市]/g, ''); 
                 }
-            });
+                
+                window.AMap.plugin('AMap.Geolocation', function() {
+                    var geolocation = new window.AMap.Geolocation({ 
+                        enableHighAccuracy: true, timeout: 3000, convert: true 
+                    });
+                    geolocation.getCurrentPosition(function(status2, result2) {
+                        closeToast();
+                        if (status2 === 'complete' && result2.position) {
+                            userLocation.value = [result2.position.lng, result2.position.lat];
+                            const ac = result2.addressComponent;
+                            if (ac && (ac.district || ac.city)) {
+                                postForm.origin = (ac.district || ac.city).replace(/[区县市]/g, ''); 
+                            }
+                        }
+                    });
+                });
+            } else {
+                closeToast();
+            }
         });
     });
 };
 
 const openMapSelector = (f) => { 
-    if (!window.AMap) { showToast('地图组件初始化失败'); return; }
+    if (!window.AMap) { showToast('地图组件初始化中或配置错误'); return; }
     currentMapField.value = f; showMap.value = true; mapSearchKeyword.value = ''; 
 };
 
 const initMapInstance = () => {
     if (!window.AMap) return;
     document.getElementById('picker-map-container').innerHTML = ''; 
-    const center = userLocation.value || [116.397428, 39.90923];
-    mapInstance = new window.AMap.Map('picker-map-container', { zoom: 14, center: center }); 
-    if (!userLocation.value && postForm.origin) mapInstance.setCity(postForm.origin);
+    mapInstance = new window.AMap.Map('picker-map-container', { 
+        zoom: 14, 
+        center: userLocation.value || [104.06, 30.67] // 默认兜底成都坐标
+    }); 
+    
+    if (!userLocation.value && postForm.origin) {
+        mapInstance.setCity(postForm.origin);
+    }
+    
     mapInstance.on('moveend', () => { 
         new window.AMap.Geocoder().getAddress(mapInstance.getCenter(), (s, r) => {
             if (s === 'complete') mapSelectionText.value = r.regeocode.formattedAddress;
@@ -141,8 +162,7 @@ const confirmMapSelection = (val) => {
 
 // 极简手机号绑定
 const submitAuth = async () => {
-    if(!/^\d{11}$/.test(registerForm.phone)) { showFailToast('请输入11位手机号'); return; }
-    // 保留原有的 nickname，只更新手机号
+    if(!/^\d{11}$/.test(registerForm.phone)) { showFailToast('请输入11位数字手机号'); return; }
     const payload = { ...store.userProfile, phone: registerForm.phone };
     try {
         const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -170,7 +190,6 @@ const handlePublish = async () => {
     const dateVal = postForm.date || new Date().toISOString(); 
     const remarkStr = Array.isArray(postForm.remark) ? postForm.remark.join('，') : postForm.remark; 
     
-    // 携带 old_id 用于编辑时删除旧数据
     const newRide = { ...postForm, user_id: currentUserId, date: dateVal, remark: remarkStr, old_id: postForm.old_id }; 
     if (!newRide.price) newRide.price = '面议';
 
@@ -181,6 +200,9 @@ const handlePublish = async () => {
         if (res.ok) { 
             showSuccessToast('发布成功'); 
             router.replace('/'); 
+        } else if (res.status === 402) {
+            requiredFee.value = result.fee || 0;
+            showPayModal.value = true;
         } else if (res.status === 403) {
             showAuth.value = true;
         } else {
@@ -188,6 +210,32 @@ const handlePublish = async () => {
         }
     } catch(e) { showFailToast('请求异常，请重试'); } 
     finally { submitLoading.value = false; } 
+};
+
+const executePayment = async () => {
+    showLoadingToast({ message: '正在呼起微信支付...', forbidClick: true, duration: 0 });
+    try {
+        const payRes = await fetch('/api/pay', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: store.userProfile.id, amount: requiredFee.value, openid: store.userProfile.openid })
+        });
+        const data = await payRes.json();
+        if (data.error) throw new Error(data.error);
+
+        const payArgs = data.payArgs;
+        if (typeof WeixinJSBridge !== "undefined") {
+            WeixinJSBridge.invoke('getBrandWCPayRequest', {
+                "appId": payArgs.appId, "timeStamp": payArgs.timeStamp, "nonceStr": payArgs.nonceStr,
+                "package": payArgs.package, "signType": payArgs.signType, "paySign": payArgs.paySign
+            }, async (res) => {
+                if (res.err_msg === "get_brand_wcpay_request:ok") {
+                    showSuccessToast('支付成功');
+                    showPayModal.value = false;
+                    await handlePublish(); 
+                } else { showFailToast('支付已取消'); }
+            });
+        } else { showFailToast('请在微信内打开'); }
+    } catch (e) { showFailToast('支付失败: ' + e.message); }
 };
 
 const onConfirmDate = ({selectedOptions}) => { 
@@ -253,6 +301,17 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
 
     <van-button round block type="primary" color="#07c160" :loading="submitLoading" @click="onPreSubmit" class="submit-btn">确认发布</van-button>
 
+    <van-popup v-model:show="showPayModal" position="bottom" round class="pay-popup">
+      <div class="pay-header">
+        <van-icon name="gold-coin" color="#ff6600" size="48" />
+        <h3>发布服务费</h3>
+        <p>账户余额不足，支付后即可自动发布</p>
+        <div class="amount"><span>¥</span> {{ requiredFee }}</div>
+      </div>
+      <van-button block round type="primary" color="#07c160" size="large" @click="executePayment">微信安全支付</van-button>
+      <van-button block round plain class="cancel-btn" @click="showPayModal = false">取消支付</van-button>
+    </van-popup>
+
     <van-popup v-model:show="showMap" position="bottom" :style="{height:'90%'}" round @opened="initMapInstance">
         <div class="map-wrap">
           <van-search v-model="mapSearchKeyword" show-action placeholder="搜索地点" @search="confirmMapSelection()"><template #action><div @click="showMap=false">取消</div></template></van-search>
@@ -274,7 +333,7 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
     <van-popup v-model:show="showAuth" position="bottom" class="auth-popup" :close-on-click-overlay="false">
         <h3 style="margin-bottom: 20px;">补充联系方式</h3>
         <p style="color:#666; font-size:14px; margin-bottom: 25px;">请留下手机号，方便司乘人员与您沟通</p>
-        <van-field v-model="registerForm.phone" type="tel" placeholder="请输入11位真实手机号" border style="background: #f5f5f5; border-radius: 8px;" />
+        <van-field v-model="registerForm.phone" type="tel" placeholder="请输入11位数字手机号" border style="background: #f5f5f5; border-radius: 8px;" />
         <van-button block round type="primary" color="#ff6600" @click="submitAuth" style="margin-top:30px;">确认绑定</van-button>
     </van-popup>
   </div>
@@ -309,4 +368,10 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
 .hots { display:flex;gap:10px;flex-wrap:wrap;margin-bottom:15px; }
 .h-city { padding:4px 10px;background:#f2f3f5;border-radius:4px;font-size:12px; }
 .auth-popup { padding: 30px 20px; text-align:center; }
+.pay-popup { padding: 30px 20px; text-align: center; }
+.pay-header h3 { margin: 15px 0 5px; }
+.pay-header p { color: #999; font-size: 14px; margin:0 0 20px; }
+.pay-header .amount { font-size: 36px; font-weight: bold; color: #333; margin: 10px 0 25px; }
+.pay-header .amount span { font-size: 20px; vertical-align: middle; }
+.cancel-btn { margin-top: 15px; border: none; color: #999; }
 </style>
