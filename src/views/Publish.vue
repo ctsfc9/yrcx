@@ -76,7 +76,7 @@ onMounted(async () => {
     loadMapScript();
 });
 
-// 👉 【锁定回退版】完美解析父子城市（如：上海长宁），解决同名错乱
+// 固定成功的父子城市（如上海长宁）解析方案
 const parseLocationName = (addressComp) => {
     if (!addressComp) return '';
     let province = addressComp.province || '';
@@ -194,7 +194,13 @@ const onPreSubmit = () => {
 
 const handlePublish = async () => { 
     submitLoading.value = true; 
-    let currentUserId = store.userProfile?.id || ('user_' + Date.now());
+    
+    // 👉【核心修复】：如果发现没有本地 ID，生成后必须强制调用 store.saveUser 固化回全局状态
+    let currentUserId = store.userProfile?.id;
+    if (!currentUserId) {
+        currentUserId = 'user_wx_' + Date.now();
+        store.saveUser({ ...store.userProfile, id: currentUserId });
+    }
 
     const dateVal = postForm.date || new Date().toISOString(); 
     const remarkStr = Array.isArray(postForm.remark) ? postForm.remark.join('，') : postForm.remark; 
@@ -244,7 +250,7 @@ const handlePublish = async () => {
 const executePayment = async () => {
     showLoadingToast({ message: '正在呼起微信支付...', forbidClick: true, duration: 0 });
     try {
-        // 👉 核心支付修复：移除未知参数，直接传最纯净、确保必成的 Number 类型参数，防止后端统一下单崩溃
+        // 👉【由于上面处理了 ID 固化，此处 store.userProfile.id 绝不可能再为空，100% 解决预支付失败】
         const payRes = await fetch('/api/pay', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
