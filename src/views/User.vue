@@ -3,11 +3,11 @@
     <van-nav-bar title="个人中心" />
 
     <div style="background: #ff7700; padding: 30px 20px; color: #fff;">
-      <div v-if="userProfile.id" style="display: flex; align-items: center;">
-        <van-image round width="60" height="60" :src="userProfile.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" />
+      <div v-if="localUserId" style="display: flex; align-items: center;">
+        <van-image round width="60" height="60" :src="localAvatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" />
         <div style="margin-left: 15px;">
-          <div style="font-size: 18px; font-weight: bold;">{{ userProfile.nickname || '微信用户' }}</div>
-          <div style="font-size: 14px; margin-top: 5px;">{{ userProfile.phone || '未绑定手机号' }}</div>
+          <div style="font-size: 18px; font-weight: bold;">{{ localNickname }}</div>
+          <div style="font-size: 14px; margin-top: 5px;">📱 {{ localPhone }}</div>
         </div>
       </div>
       <div v-else style="display: flex; align-items: center;" @click="goToAuth">
@@ -20,8 +20,8 @@
     </div>
 
     <van-cell-group title="我的发布" style="margin-top: 10px;">
-      <div v-if="loading" style="text-align: center; padding: 40px; color: #999;">行程数据拉取中...</div>
-      <div v-else-if="!userProfile.id" style="text-align: center; padding: 40px; color: #999;">请先完成微信授权登录</div>
+      <div v-if="loading" style="text-align: center; padding: 40px; color: #999;">行程资产拉取中...</div>
+      <div v-else-if="!localUserId" style="text-align: center; padding: 40px; color: #999;">请先完成微信授权登录</div>
       <div v-else-if="myRides.length === 0" style="text-align: center; padding: 40px; color: #999;">暂无行程发布记录</div>
       
       <div v-else style="padding: 10px 15px;">
@@ -30,7 +30,7 @@
             <span :style="{color: item.type==='driver'?'#1989fa':'#ff7700', fontWeight: 'bold'}">
               {{ item.type === 'driver' ? '车主找人' : '乘客找车' }}
             </span>
-            <span v-if="item.is_top" style="color: #ee0a24; font-size: 12px;">已置顶</span>
+            <span v-if="item.is_top" style="color: #ee0a24; font-size: 12px; font-weight: bold;">🔥已置顶</span>
           </div>
           <div style="font-size: 16px; font-weight: bold; margin-bottom: 5px;" @click="router.push(`/detail?id=${item.id}`)">
             {{ item.origin }} ➡️ {{ item.destination }}
@@ -50,7 +50,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue';
+import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAppStore } from '../store';
 import TabBar from '../components/TabBar.vue';
@@ -60,32 +60,33 @@ const router = useRouter();
 const myRides = ref([]);
 const loading = ref(true);
 
-// 将响应式数据代理到本地，彻底杜绝模板引擎中层层点语法引发的崩溃
-const userProfile = reactive({
-  id: '',
-  nickname: '',
-  avatar: '',
-  phone: ''
-});
+// 隔离数据代理：采用底层扁平型原子变量，杜绝由于深层空链读取引发的 Vue 模板白屏报错
+const localUserId = ref('');
+const localAvatar = ref('');
+const localNickname = ref('微信用户');
+const localPhone = ref('未绑定手机号');
 
 onMounted(async () => {
   try {
-    if (store && store.userProfile && store.userProfile.id) {
-      userProfile.id = store.userProfile.id;
-      userProfile.nickname = store.userProfile.nickname;
-      userProfile.avatar = store.userProfile.avatar;
-      userProfile.phone = store.userProfile.phone;
+    // 安全地从 Store 的全局变量中单向分流至本地基本类型变量中
+    if (store && store.userProfile) {
+      localUserId.value = store.userProfile.id || '';
+      localAvatar.value = store.userProfile.avatar || '';
+      localNickname.value = store.userProfile.nickname || '微信用户';
+      localPhone.value = store.userProfile.phone || '未绑定手机号';
+    }
 
+    if (localUserId.value) {
       const res = await fetch('/api/rides');
       if (res.ok) {
         const data = await res.json();
         if (data && data.results) {
-          myRides.value = data.results.filter(r => r.user_id === userProfile.id);
+          myRides.value = data.results.filter(r => r.user_id === localUserId.value);
         }
       }
     }
   } catch (e) {
-    console.error('拉取用户行程异常', e);
+    console.error('拉取发布行程异常已被拦截防御', e);
   } finally {
     loading.value = false;
   }
@@ -105,10 +106,10 @@ const goToAuth = () => {
 };
 
 const deleteRide = async (id) => {
-  if (!userProfile.id) return;
+  if (!localUserId.value) return;
   if (window.confirm('确定要删除这条行程吗？删除后无法恢复。')) {
     try {
-      const res = await fetch(`/api/rides?id=${id}&user_id=${userProfile.id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/rides?id=${id}&user_id=${localUserId.value}`, { method: 'DELETE' });
       if (res.ok) {
         myRides.value = myRides.value.filter(r => r.id !== id);
       }
