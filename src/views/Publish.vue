@@ -23,7 +23,7 @@ const getNowDate = () => {
 const defaultDateInfo = getNowDate();
 
 const postForm = reactive({ 
-  type: '', 
+  type: route.query.type || 'driver', 
   origin: '', destination: '', 
   date: defaultDateInfo.value, dateDisplay: defaultDateInfo.display, 
   seats: 1, price: '', remark: [], car_model: '油车', 
@@ -80,9 +80,10 @@ onMounted(async () => {
         showTypeSelector.value = true;
     }
     
+    // 👉 核心优化：延迟 800ms 后静默加载地图组件，保障首屏表单立刻渲染不白屏
     setTimeout(() => {
         loadMapScript();
-    }, 300);
+    }, 800);
 });
 
 const selectPostType = (type) => {
@@ -106,6 +107,7 @@ const parseLocationName = (addressComp) => {
     return city + district;
 };
 
+// 移除 Loading，实现真正的静默定位
 const autoLocate = () => { 
     if (postForm.origin) return; 
     if (!window.AMap) return;
@@ -250,7 +252,6 @@ const handlePublish = async () => {
     finally { submitLoading.value = false; } 
 };
 
-// 👉 核心净化：极致精简 Payload。这说明是您的后端拦截了，请后端查日志！
 const executePayment = async () => {
     if (!store.userProfile?.openid) {
         showFailToast('缺少微信身份，无法唤起支付');
@@ -258,15 +259,31 @@ const executePayment = async () => {
         return;
     }
 
-    showLoadingToast({ message: '正在请求后端统一下单...', forbidClick: true, duration: 0 });
+    showLoadingToast({ message: '安全支付环境中...', forbidClick: true, duration: 0 });
     try {
+        const feeYuan = Number(requiredFee.value);
+        const feeCent = Math.round(feeYuan * 100);
+        const orderIdStr = 'ORD' + Date.now() + Math.floor(Math.random()*10000);
+        const descStr = payType.value === 'top' ? '顺风车置顶' : '顺风车发布';
+
+        const payPayload = { 
+            user_id: String(store.userProfile.id), 
+            openid: String(store.userProfile.openid),
+            amount: feeYuan,            
+            price: feeYuan,            
+            total_fee: feeCent,         
+            out_trade_no: orderIdStr, 
+            body: descStr,
+            description: descStr,
+            subject: descStr,
+            pay_type: payType.value,
+            type: payType.value,
+            ride_id: String(currentPayRideId.value)
+        };
+
         const payRes = await fetch('/api/pay', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                user_id: store.userProfile.id,
-                openid: store.userProfile.openid,
-                amount: requiredFee.value
-            })
+            body: JSON.stringify(payPayload)
         });
         
         const rawText = await payRes.text();
@@ -275,13 +292,13 @@ const executePayment = async () => {
             data = JSON.parse(rawText);
         } catch (err) {
             closeToast();
-            alert("⚠️ 您的后端接口崩溃，未返回JSON数据:\n" + rawText.substring(0,100));
+            alert("⚠️ 接口响应非JSON:\n" + rawText.substring(0,100));
             return;
         }
         
         if (data.error || !data.payArgs) {
             closeToast();
-            alert(`⚠️ 您后端的统一下单请求被微信拦截:\n${data.error || '未返回 payArgs'}\n提示：请后端检查 API Key 签名或金额转换！`);
+            alert(`⚠️ 商户统一下单拦截:\n${data.error || '未返回 payArgs'}`);
             return;
         }
 
@@ -305,7 +322,7 @@ const executePayment = async () => {
                 } else if (res.err_msg === "get_brand_wcpay_request:cancel") { 
                     showFailToast('支付已取消'); 
                 } else {
-                    alert(`⚠️ 微信内唤起失败：\n${res.err_msg}`);
+                    alert(`⚠️ 支付唤起失败：\n${res.err_msg}`);
                 }
             });
         } else { 
