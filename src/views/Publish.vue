@@ -27,7 +27,7 @@ const postForm = reactive({
   origin: '', destination: '', 
   date: defaultDateInfo.value, dateDisplay: defaultDateInfo.display, 
   seats: 1, price: '', remark: [], car_model: '油车', 
-  contact: store.userProfile?.phone || '', old_id: null 
+  contact: store?.userProfile?.phone || '', old_id: null 
 });
 
 const showTypeSelector = ref(false);
@@ -49,20 +49,20 @@ const mapSelectionText = ref('定位中...');
 let mapInstance = null;
 const userLocation = ref(null); 
 
-// 👉 【功能恢复 1】：从后台系统配置动态计算快捷备注标签
+// 👉 快捷备注：后台配置或默认
 const currentRemarkOptions = computed(() => {
-  const str = postForm.type === 'driver' ? store.sysConfig?.tags_driver : store.sysConfig?.tags_passenger;
-  return (str || '有空位,走高速,不绕路,少带行李').split(',').filter(Boolean);
+  const str = postForm.type === 'driver' ? store?.sysConfig?.tags_driver : store?.sysConfig?.tags_passenger;
+  return (str || '有空位,走高速,不绕路,少带行李,可带宠物,准时出发').split(',').filter(Boolean);
 });
 
-// 👉 【功能恢复 2】：从后台系统配置动态载入预设热门城市，若无则完美地方城市兜底
+// 👉 定制版热门城市：浙江/上海/江苏/广东/福建 + 宜宾地区
 const computedHotCities = computed(() => {
-  const str = store.sysConfig?.hot_cities;
-  if (str && str.trim()) {
-    return str.split(',').filter(Boolean);
-  }
-  // 经典顺风车高频老乡城市兜底
-  return ['宜宾', '成都', '重庆', '泸州', '自贡', '内江', '叙州区', '翠屏区'];
+  const str = store?.sysConfig?.hot_cities;
+  if (str && str.trim()) return str.split(',').filter(Boolean);
+  return [
+    '上海', '杭州', '宁波', '温州', '南京', '苏州', '无锡', '广州', '深圳', '东莞', 
+    '佛山', '福州', '厦门', '泉州', '宜宾', '翠屏区', '叙州区', '南溪区', '江安县', '长宁县', '高县'
+  ];
 });
 
 const dateColumns = computed(() => {
@@ -76,7 +76,7 @@ const dateColumns = computed(() => {
 });
 
 onMounted(async () => {
-    if (!store.sysConfig?.amap_key) await store.loadConfig();
+    if (!store?.sysConfig?.amap_key) await store?.loadConfig();
     if (route.query.type) {
         postForm.type = route.query.type;
     } else {
@@ -116,7 +116,7 @@ const autoLocate = () => {
 
 const loadMapScript = () => {
     if (window.AMap) { autoLocate(); return; }
-    const key = store.sysConfig?.amap_key;
+    const key = store?.sysConfig?.amap_key;
     if (!key) return;
     window._AMapSecurityConfig = { securityJsCode: '' }; 
     const s = document.createElement('script');
@@ -143,7 +143,6 @@ const initMapInstance = () => {
     }); 
 };
 
-// 👉 【优化】：支持热门城市快捷直接点选并填入
 const confirmMapSelection = (directValue) => { 
     const finalVal = directValue || mapSearchKeyword.value || mapSelectionText.value;
     if (finalVal && finalVal !== '定位中...') {
@@ -156,14 +155,14 @@ const confirmMapSelection = (directValue) => {
 const onPreSubmit = () => { 
     if(!postForm.origin || !postForm.destination) { showFailToast('请完善起点和终点'); return; } 
     if(!/^\d{11}$/.test(postForm.contact)) { showFailToast('请填写11位手机号'); return; }
-    if(!store.userProfile?.phone) { showAuth.value = true; return; } 
+    if(!store?.userProfile?.phone) { showAuth.value = true; return; } 
     handlePublish(); 
 };
 
 const handlePublish = async () => { 
     submitLoading.value = true; 
-    let currentUserId = store.userProfile?.id || ('user_' + Date.now());
-    if(!store.userProfile?.id) store.saveUser({ ...store.userProfile, id: currentUserId });
+    let currentUserId = store?.userProfile?.id || ('user_' + Date.now());
+    if(!store?.userProfile?.id) store?.saveUser({ ...(store?.userProfile||{}), id: currentUserId });
 
     const newRide = { ...postForm, user_id: currentUserId, date: postForm.date, remark: postForm.remark.join('，') }; 
     if (!newRide.price) newRide.price = '面议';
@@ -173,10 +172,10 @@ const handlePublish = async () => {
         const result = await res.json();
         
         if (res.ok) { 
-            const topFee = Number(store.sysConfig?.top_fee) || 0;
+            const topFee = Number(store?.sysConfig?.top_fee) || 0;
             if (topFee > 0) { 
                 showDialog({
-                    title: '发布成功', message: `信息已发布！是否支付 ${topFee} 元将本条行程置顶增加曝光？`,
+                    title: '发布成功', message: `信息已发布！是否支付 ${topFee} 元置顶增加曝光？`,
                     showCancelButton: true, confirmButtonText: '马上置顶', cancelButtonText: '暂不需要', confirmButtonColor: '#ff6600'
                 }).then(() => {
                     requiredFee.value = topFee; payType.value = 'top'; currentPayRideId.value = result.ride_id; showPayModal.value = true;
@@ -190,7 +189,7 @@ const handlePublish = async () => {
 };
 
 const executePayment = async () => {
-    if (!store.userProfile?.openid) { showFailToast('缺少微信身份'); showPayModal.value = false; return; }
+    if (!store?.userProfile?.openid) { showFailToast('缺少微信身份'); showPayModal.value = false; return; }
     showLoadingToast({ message: '请求支付...', forbidClick: true, duration: 0 });
     try {
         const payRes = await fetch('/api/pay', {
@@ -231,7 +230,7 @@ const toggleRemark = (t) => {
 
 const submitAuth = async () => {
     if(!/^\d{11}$/.test(registerForm.phone)) { showFailToast('请输入11位数字手机号'); return; }
-    store.saveUser({ ...store.userProfile, phone: registerForm.phone });
+    store?.saveUser({ ...store.userProfile, phone: registerForm.phone });
     showAuth.value = false;
     postForm.contact = registerForm.phone;
     handlePublish();
@@ -239,7 +238,7 @@ const submitAuth = async () => {
 </script>
 
 <template>
-  <div style="padding-bottom: 120px; background: #f7f8fa; min-height: 100vh; position: relative;">
+  <div style="padding-bottom: 140px; background: #f7f8fa; min-height: 100vh; position: relative;">
     <van-nav-bar title="发布行程" left-arrow @click-left="router.back()" />
     
     <van-popup v-model:show="showTypeSelector" position="bottom" round style="padding: 30px 20px; background: #f2f3f5;" :close-on-click-overlay="false">
@@ -254,14 +253,6 @@ const submitAuth = async () => {
     </van-popup>
 
     <div v-show="!showTypeSelector && postForm.type" style="padding: 15px;">
-        <div @click="showTypeSelector = true" style="background: #fff; padding: 15px; border-radius: 12px; margin-bottom: 15px; font-weight: bold; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.04); display: flex; align-items: center; justify-content: center; font-size: 16px;">
-          当前身份：
-          <span :style="{color: postForm.type === 'driver' ? '#1989fa' : '#ff7700', marginLeft: '5px'}">
-              {{ postForm.type === 'driver' ? '🚗 车主找人' : '🙋‍♂️ 乘客找车' }}
-          </span>
-          <span style="font-size: 12px; color: #999; margin-left: 15px; border: 1px solid #ddd; padding: 2px 8px; border-radius: 12px;">点击切换</span>
-        </div>
-
         <div style="background:#fff; border-radius:12px; padding:15px; margin-bottom:15px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
           <div style="display:flex; align-items:center; border-bottom:1px solid #f5f5f5; padding-bottom:15px; margin-bottom:15px;">
             <div style="width:30px; height:30px; border-radius:50%; background:#07c160; color:#fff; text-align:center; line-height:30px; font-weight:bold; margin-right:10px;">起</div>
@@ -275,17 +266,22 @@ const submitAuth = async () => {
 
         <div style="background:#fff; border-radius:12px; padding:5px 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); margin-bottom: 15px;">
           <van-field v-model="postForm.dateDisplay" label="出发时间" readonly is-link @click="showDate = true" />
-          <van-field label="座位数" readonly>
-            <template #input>
-              <van-stepper v-model="postForm.seats" min="1" max="6" />
-            </template>
-          </van-field>
+          
+          <div style="display: flex; align-items: center; padding: 10px 16px;">
+            <div style="font-weight: bold; color: #333; width: 4.5em;">座位数</div>
+            <div style="flex: 1; display: flex; gap: 8px; overflow-x: auto; padding: 5px 0;">
+                <div v-for="n in 6" :key="n" @click="postForm.seats = n" class="seat-box" :class="{active: postForm.seats === n}">
+                    {{ n }}
+                </div>
+            </div>
+          </div>
+
           <van-field v-if="postForm.type==='driver'" label="车型" readonly>
             <template #input>
               <van-radio-group v-model="postForm.car_model" direction="horizontal">
-                <van-radio name="油车" style="margin-bottom: 5px;">油车</van-radio>
-                <van-radio name="电车" style="margin-bottom: 5px;">电车</van-radio>
-                <van-radio name="油电混动">油电混动</van-radio>
+                <van-radio name="油车" style="margin-right: 15px;">油车</van-radio>
+                <van-radio name="电车" style="margin-right: 15px;">电车</van-radio>
+                <van-radio name="混动">混动</van-radio>
               </van-radio-group>
             </template>
           </van-field>
@@ -294,7 +290,7 @@ const submitAuth = async () => {
         </div>
 
         <div style="background:#fff; border-radius:12px; padding:15px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
-          <div style="font-weight: bold; color: #333; margin-bottom: 12px; font-size: 15px;">快捷备注标签点选</div>
+          <div style="font-weight: bold; color: #333; margin-bottom: 12px; font-size: 15px;">快捷备注标签</div>
           <div style="display: flex; flex-wrap: wrap; gap: 8px;">
             <div v-for="t in currentRemarkOptions" :key="t" @click="toggleRemark(t)" class="tag" :class="{active: postForm.remark.includes(t)}">
               {{ t }}
@@ -303,10 +299,11 @@ const submitAuth = async () => {
         </div>
     </div>
 
-    <div style="position: fixed; bottom: 50px; left: 0; right: 0; padding: 15px; background: rgba(247,248,250,0.95); z-index: 100; box-shadow: 0 -4px 10px rgba(0,0,0,0.02);">
-         <van-button round block type="primary" size="large" color="#07c160" :loading="submitLoading" @click="onPreSubmit" style="font-weight: 900; font-size: 18px; height: 50px; box-shadow: 0 4px 14px rgba(7,193,96,0.45);">
-             确认发布行程
-         </van-button>
+    <div v-if="!showTypeSelector" class="float-btn-wrapper" @click="!submitLoading && onPreSubmit()">
+        <div class="float-btn-circle">
+            <span v-if="submitLoading">发布中...</span>
+            <span v-else>确认发布</span>
+        </div>
     </div>
 
     <van-popup v-model:show="showPayModal" position="bottom" round style="padding: 20px; text-align: center;">
@@ -318,19 +315,16 @@ const submitAuth = async () => {
 
     <van-popup v-model:show="showMap" position="bottom" :style="{height:'90%'}" round @opened="initMapInstance">
         <div style="display:flex;flex-direction:column;height:100%;">
-          <van-search v-model="mapSearchKeyword" show-action placeholder="输入商圈/小区/大楼精准搜索" @search="confirmMapSelection()"><template #action><div @click="showMap=false">取消</div></template></van-search>
+          <van-search v-model="mapSearchKeyword" show-action placeholder="输入地点精准搜索" @search="confirmMapSelection()"><template #action><div @click="showMap=false">取消</div></template></van-search>
           <div id="picker-map-container" style="width:100%; height:280px; position:relative;"></div>
-          
           <div style="padding:15px; flex:1; display:flex; flex-direction:column; background:#fff;">
             <div style="margin-bottom:12px;font-size:14px;font-weight:bold;color:#333;">当前选定：<span style="color:#ff6600;">{{ mapSelectionText }}</span></div>
-            
-            <div style="font-size:13px; color:#666; margin-bottom:8px; font-weight:bold;">快捷预设热门城市点选：</div>
-            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:20px; max-height:80px; overflow-y:auto;">
-                <div v-for="c in computedHotCities" :key="c" @click="confirmMapSelection(c)" style="padding:6px 12px; background:#f5f5f5; border-radius:6px; font-size:13px; color:#444; font-weight:bold; border:1px solid #eee;">
+            <div style="font-size:13px; color:#666; margin-bottom:8px; font-weight:bold;">快捷预设热门城市：</div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:20px; max-height:120px; overflow-y:auto;">
+                <div v-for="c in computedHotCities" :key="c" @click="confirmMapSelection(c)" style="padding:6px 12px; background:#f5f5f5; border-radius:6px; font-size:13px; color:#333; border:1px solid #eee;">
                     {{ c }}
                 </div>
             </div>
-            
             <van-button block type="primary" color="#1989fa" round @click="confirmMapSelection()">确定当前位置</van-button>
           </div>
         </div>
@@ -339,7 +333,6 @@ const submitAuth = async () => {
     <van-popup v-model:show="showDate" position="bottom">
         <van-picker v-model="currentDateValues" :columns="dateColumns" @confirm="onConfirmDate" @cancel="showDate=false"/>
     </van-popup>
-    
     <van-popup v-model:show="showAuth" position="bottom" round style="padding: 30px 20px; text-align:center;" :close-on-click-overlay="false">
         <h3 style="margin-bottom: 20px;">补充联系方式</h3>
         <van-field v-model="registerForm.phone" type="tel" placeholder="请输入11位手机号" style="background: #f5f5f5; border-radius: 8px;" />
@@ -350,6 +343,17 @@ const submitAuth = async () => {
 
 <style scoped>
 :deep(.van-field__label) { font-weight: bold; color: #333; width: 4.5em; }
+
+/* 座位点选样式 */
+.seat-box { flex-shrink: 0; width: 36px; height: 36px; border-radius: 8px; background: #f2f3f5; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: bold; color: #666; border: 1px solid transparent; transition: all 0.2s; }
+.seat-box.active { background: #1989fa; color: #fff; box-shadow: 0 4px 8px rgba(25,137,250,0.3); }
+
+/* 备注标签样式 */
 .tag { padding: 6px 14px; background: #f2f3f5; border-radius: 6px; font-size: 13px; border: 1px solid transparent; transition: all 0.15s; color:#555; }
 .tag.active { background: #eaf5ff; color: #1989fa; border-color: #1989fa; font-weight: bold; }
+
+/* 悬浮超大发布按钮样式 */
+.float-btn-wrapper { position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; justify-content: center; width: 100%; pointer-events: none; }
+.float-btn-circle { pointer-events: auto; width: 240px; height: 56px; background: linear-gradient(135deg, #07c160, #06ad56); border-radius: 28px; display: flex; align-items: center; justify-content: center; color: white; font-size: 20px; font-weight: 900; letter-spacing: 2px; box-shadow: 0 8px 24px rgba(7, 193, 96, 0.45); transition: transform 0.1s; cursor: pointer; border: 2px solid rgba(255,255,255,0.2); }
+.float-btn-circle:active { transform: scale(0.95); }
 </style>
