@@ -49,11 +49,8 @@ const mapSelectionText = ref('定位中...');
 let mapInstance = null;
 const userLocation = ref(null); 
 
-// 👉 独立存储的热门城市变量，避免 computed 失效
-const localHotCities = ref([
-  '上海', '嘉兴', '杭州', '宁波', '台州', '海宁', '绍兴', '温州', '南京', '苏州', '无锡', '广州', '深圳', '东莞', 
-  '佛山', '福州', '厦门', '泉州', '宜宾', '高县', '筠连', '南溪区', '江安县', '长宁县', '珙县', '翠屏区', '叙州区', '屏山'
-]);
+// 👉 完全由后端自定义的热门城市列表
+const backendHotCities = ref([]);
 
 const currentRemarkOptions = computed(() => {
   const str = postForm.type === 'driver' ? (store.sysConfig && store.sysConfig.tags_driver) : (store.sysConfig && store.sysConfig.tags_passenger);
@@ -74,20 +71,15 @@ const dateColumns = computed(() => {
 });
 
 onMounted(async () => {
-    // 强制加载一次配置
     if (store && typeof store.loadConfig === 'function') {
         await store.loadConfig();
     }
     
-    // 👉 强制解析后台配置的 hot_cities
+    // 👉 核心：严格只读取后端的 system_config.hot_cities
     if (store && store.sysConfig && store.sysConfig.hot_cities) {
         const rawCities = store.sysConfig.hot_cities;
         if (typeof rawCities === 'string' && rawCities.trim() !== '') {
-            // 将中文逗号替换为英文逗号并转为数组
-            const parsedCities = rawCities.replace(/，/g, ',').split(',').filter(item => item.trim() !== '');
-            if (parsedCities.length > 0) {
-                localHotCities.value = parsedCities;
-            }
+            backendHotCities.value = rawCities.replace(/，/g, ',').split(',').filter(item => item.trim() !== '');
         }
     }
 
@@ -347,12 +339,14 @@ const submitAuth = async () => {
           <div style="padding:15px; flex:1; display:flex; flex-direction:column; background:#fff;">
             <div style="margin-bottom:12px;font-size:14px;font-weight:bold;color:#333;">当前选定：<span style="color:#ff6600;">{{ mapSelectionText }}</span></div>
             
-            <div style="font-size:13px; color:#666; margin-bottom:8px; font-weight:bold;">快捷预设热门城市：</div>
-            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:20px; max-height:120px; overflow-y:auto;">
-                <div v-for="c in localHotCities" :key="c" @click="confirmMapSelection(c)" style="padding:6px 12px; background:#f5f5f5; border-radius:6px; font-size:13px; color:#333; border:1px solid #eee; cursor: pointer;">
-                    {{ c }}
+            <template v-if="backendHotCities.length > 0">
+                <div style="font-size:13px; color:#666; margin-bottom:8px; font-weight:bold;">快捷预设热门城市：</div>
+                <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:20px; max-height:120px; overflow-y:auto;">
+                    <div v-for="c in backendHotCities" :key="c" @click="confirmMapSelection(c)" style="padding:6px 12px; background:#f5f5f5; border-radius:6px; font-size:13px; color:#333; border:1px solid #eee; cursor: pointer;">
+                        {{ c }}
+                    </div>
                 </div>
-            </div>
+            </template>
             
             <van-button block type="primary" color="#1989fa" round @click="confirmMapSelection()">确定当前位置</van-button>
           </div>
