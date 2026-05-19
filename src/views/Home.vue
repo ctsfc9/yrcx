@@ -16,9 +16,9 @@
       v-model:loading="loading"
       :finished="finished"
       finished-text="没有更多行程了"
-      @load="loadRides"
+      @load="appendNextChunk"
     >
-      <div v-for="item in rides" :key="item.id" style="background: #fff; padding: 15px; margin: 12px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.02);">
+      <div v-for="item in displayedRides" :key="item.id" style="background: #fff; padding: 15px; margin: 12px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.02);">
         <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
           <span :style="{color: item.type === 'driver' ? '#1989fa' : '#ff7700', fontWeight: 'bold', fontSize: '13px'}">
             {{ item.type === 'driver' ? '🚗 车主找人' : '🙋‍♂️ 乘客找车' }}
@@ -52,11 +52,13 @@ import TabBar from '../components/TabBar.vue';
 
 const store = useAppStore();
 const router = useRouter();
-const rides = ref([]);
+
+const allRides = ref([]);         // 缓存全量数据资产
+const displayedRides = ref([]);   // 当前视口实际渲染的数据
 const loading = ref(false);
 const finished = ref(false);
-const page = ref(1);
-const limit = 8; 
+const pointer = ref(0);
+const limit = 8;                  // 严格限制单次增量为8条
 
 const bannerList = computed(() => {
   if (store && store.sysConfig && store.sysConfig.banners) {
@@ -65,22 +67,36 @@ const bannerList = computed(() => {
   return [];
 });
 
-const loadRides = async () => {
-    if (loading.value || finished.value) return;
+// 从全量资产中动态切片追加，秒开不卡顿
+const appendNextChunk = () => {
+    if (allRides.value.length === 0) return;
     loading.value = true;
+    
+    const start = pointer.value;
+    const end = start + limit;
+    const chunk = allRides.value.slice(start, end);
+    
+    if (chunk.length > 0) {
+        displayedRides.value = [...displayedRides.value, ...chunk];
+        pointer.value = end;
+    }
+    
+    loading.value = false;
+    if (displayedRides.value.length >= allRides.value.length) {
+        finished.value = true;
+    }
+};
+
+const fetchAllRides = async () => {
     try {
-        const res = await fetch(`/api/rides?page=${page.value}&limit=${limit}`);
+        const res = await fetch('/api/rides');
         if (res.ok) {
             const data = await res.json();
-            const newRides = data.results || [];
-            rides.value = [...rides.value, ...newRides];
-            if (newRides.length < limit) finished.value = true; 
-            else page.value++;
+            allRides.value = data.results || [];
+            appendNextChunk(); // 灌入首屏8条
         } else { finished.value = true; }
     } catch (e) {
         finished.value = true;
-    } finally {
-        loading.value = false;
     }
 };
 
@@ -94,29 +110,25 @@ const formatDate = (str) => {
     return String(str).replace('T', ' ').substring(0, 16);
 };
 
-// 👉 核心恢复：双击退出防误触逻辑
 let clickTime = 0;
 const handlePopstate = () => {
   const now = new Date().getTime();
   if (now - clickTime < 2000) {
-    // 允许退出（如果在微信内直接关闭页面）
     if (typeof WeixinJSBridge !== 'undefined') {
       WeixinJSBridge.call('closeWindow');
     }
   } else {
     clickTime = now;
     showToast('再按一次退出宜人出行');
-    history.pushState(null, null, document.URL); // 再次拦截
+    history.pushState(null, null, document.URL);
   }
 };
 
 onMounted(() => {
-    // 异步加载配置，绝不阻塞首页行程列表渲染，提速10倍
     if (store && typeof store.loadConfig === 'function') {
         store.loadConfig().catch(()=>{});
     }
-    
-    // 初始化双击退出拦截
+    fetchAllRides();
     history.pushState(null, null, document.URL);
     window.addEventListener('popstate', handlePopstate);
 });
