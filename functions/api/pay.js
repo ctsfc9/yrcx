@@ -3,12 +3,12 @@ export async function onRequest(context) {
   try {
     const data = await request.json();
     const config = await env.DB.prepare("SELECT wx_appid FROM system_config LIMIT 1").first();
+    const nonce_str = Math.random().toString(36).substring(2, 15);
     
-    // 强制使用环境变量，确保后台配置生效
     const params = {
       appid: config.wx_appid,
-      mch_id: env.WX_MCH_ID, 
-      nonce_str: Math.random().toString(36).substring(2, 15),
+      mch_id: env.WX_MCH_ID,
+      nonce_str: nonce_str,
       body: '宜人出行充值',
       out_trade_no: 'R' + Date.now(),
       total_fee: Math.round(parseFloat(data.amount) * 100),
@@ -18,21 +18,23 @@ export async function onRequest(context) {
       openid: data.openid
     };
 
-    // 调试：打印关键参数，供您排查
-    const debugInfo = `AppID:${params.appid}|MchID:${params.mch_id}|OpenID:${params.openid}`;
-
     const signStr = Object.keys(params).sort().map(k => `${k}=${params[k]}`).join('&') + `&key=${env.WX_API_KEY}`;
-    const hashBuffer = await crypto.subtle.digest('MD5', new TextEncoder().encode(signStr));
+    const encoder = new TextEncoder();
+    const hashBuffer = await crypto.subtle.digest('MD5', encoder.encode(signStr));
     params.sign = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
 
     const xml = `<xml>${Object.keys(params).map(k => `<${k}><![CDATA[${params[k]}]]></${k}>`).join('')}</xml>`;
     const response = await fetch('https://api.mch.weixin.qq.com/pay/unifiedorder', { method: 'POST', body: xml });
     const respText = await response.text();
     
-    if (!respText.includes('<prepay_id>')) {
-        return new Response(JSON.stringify({ error: "失败！检查配置: " + debugInfo + " | 微信返回: " + respText }), { status: 500 });
-    }
-    // ... 后续逻辑不变
-    return new Response(JSON.stringify({ success: true, payArgs: { /*...*/ } }));
+    const prepay_id = respText.match(/<prepay_id><!\[CDATA\[(.*)\]\]><\/prepay_id>/)?.[1];
+    if (!prepay_id) return new Response(JSON.stringify({ error: 'FAILED' }), { status: 500 });
+
+    const payArgs = { appId: config.wx_appid, timeStamp: Math.floor(Date.now() / 1000).toString(), nonceStr: nonce_str, package: `prepay_id=${prepay_id}`, signType: 'MD5' };
+    const paySignStr = Object.keys(payArgs).sort().map(k => `${k}=${payArgs[k]}`).join('&') + `&key=${env.WX_API_KEY}`;
+    const paySignBuffer = await crypto.subtle.digest('MD5', encoder.encode(paySignStr));
+    payArgs.paySign = Array.from(new Uint8Array(paySignBuffer)).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+
+    return new Response(JSON.stringify({ success: true, payArgs }), { headers: { 'Content-Type': 'application/json' } });
   } catch (e) { return new Response(JSON.stringify({ error: e.message }), { status: 500 }); }
 }
