@@ -1,9 +1,8 @@
 <script setup>
-// 去除复杂的监听拦截，直接依托 Vue Router
 </script>
 
 <template>
-  <van-tabbar route safe-area-inset-bottom active-color="#ff6600">
+  <van-tabbar route safe-area-inset-bottom active-color="#ff6600" :z-index="999">
     <van-tabbar-item replace to="/" icon="wap-home-o">首页大厅</van-tabbar-item>
     <van-tabbar-item replace to="/publish" icon="add-circle-o">发布行程</van-tabbar-item>
     <van-tabbar-item replace to="/user" icon="manager-o">个人中心</van-tabbar-item>
