@@ -31,7 +31,6 @@ const postForm = reactive({
 });
 
 const showTypeSelector = ref(false);
-
 const currentDateValues = ref(defaultDateInfo.pickerValues);
 const submitLoading = ref(false);
 const showMap = ref(false);
@@ -80,9 +79,7 @@ onMounted(async () => {
         showTypeSelector.value = true;
     }
     
-    setTimeout(() => {
-        loadMapScript();
-    }, 300);
+    setTimeout(() => { loadMapScript(); }, 300);
 });
 
 const selectPostType = (type) => {
@@ -98,10 +95,8 @@ const parseLocationName = (addressComp) => {
     let province = addressComp.province || '';
     let city = addressComp.city || province;
     let district = addressComp.district || '';
-
     city = city.replace(/[省市]/g, '');
     district = district.replace(/[区县市]/g, '');
-
     if (!district || city === district) return city;
     return city + district;
 };
@@ -132,13 +127,9 @@ const autoLocate = () => {
 };
 
 const loadMapScript = () => {
-    if (window.AMap) {
-        autoLocate();
-        return;
-    }
+    if (window.AMap) { autoLocate(); return; }
     const key = store.sysConfig.amap_key;
     if (!key) return;
-    
     window._AMapSecurityConfig = { securityJsCode: '' }; 
     const s = document.createElement('script');
     s.async = true; 
@@ -250,23 +241,33 @@ const handlePublish = async () => {
     finally { submitLoading.value = false; } 
 };
 
-// 👉 极简版支付：只传最基础的 3 个参数，避免干扰后端 V2 签名验证
 const executePayment = async () => {
     if (!store.userProfile?.openid) {
-        showFailToast('缺少微信身份，无法唤起支付');
+        showFailToast('缺少微信身份');
         showPayModal.value = false;
         return;
     }
 
-    showLoadingToast({ message: '请求微信网关...', forbidClick: true, duration: 0 });
+    showLoadingToast({ message: '请求支付网关...', forbidClick: true, duration: 0 });
     try {
+        const feeYuan = Number(requiredFee.value);
+        const feeCent = Math.round(feeYuan * 100);
+
+        // 终极兼容包：元和分、两种格式描述全部传，避免后端报错
+        const payPayload = { 
+            user_id: String(store.userProfile.id), 
+            openid: String(store.userProfile.openid),
+            amount: feeYuan,            
+            total_fee: feeCent,         
+            out_trade_no: 'O' + Date.now(), 
+            body: '行程服务',
+            type: payType.value,
+            ride_id: String(currentPayRideId.value)
+        };
+
         const payRes = await fetch('/api/pay', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                user_id: String(store.userProfile.id),
-                openid: String(store.userProfile.openid),
-                amount: Number(requiredFee.value)
-            })
+            body: JSON.stringify(payPayload)
         });
         
         const rawText = await payRes.text();
@@ -280,8 +281,7 @@ const executePayment = async () => {
         
         if (data.error || !data.payArgs) {
             closeToast();
-            // 如果后端被微信拦截，把真实原因报出来。请检查 AppID 是否对应！
-            alert(`⚠️ 微信预支付拦截:\n${data.error || '未返回参数'}`);
+            alert(`⚠️ 预支付失败（微信官方拦截）\n错误详情: ${data.error || '未返回 payArgs'}\n👉 解决办法：请去微信商户平台检查【AppID绑定】和【API秘钥】是否正确！`);
             return;
         }
 
@@ -305,7 +305,7 @@ const executePayment = async () => {
                 } else if (res.err_msg === "get_brand_wcpay_request:cancel") { 
                     showFailToast('支付已取消'); 
                 } else {
-                    alert(`⚠️ 支付唤起失败：\n${res.err_msg}`);
+                    alert(`⚠️ 微信端报错：\n${res.err_msg}`);
                 }
             });
         } else { 
@@ -313,7 +313,7 @@ const executePayment = async () => {
         }
     } catch (e) { 
         closeToast();
-        alert('前端请求异常: ' + e.message); 
+        alert('执行异常: ' + e.message); 
     }
 };
 
@@ -407,8 +407,8 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
           </div>
         </div>
 
-        <div style="margin-top: 30px;">
-             <van-button round block type="primary" color="#07c160" :loading="submitLoading" @click="onPreSubmit" class="submit-btn">确认发布</van-button>
+        <div style="margin: 30px 15px;">
+            <van-button round block type="primary" color="#07c160" style="height: 44px; font-size: 16px;" :loading="submitLoading" @click="onPreSubmit">确认发布</van-button>
         </div>
     </div>
 
@@ -420,8 +420,10 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
         <p v-else>平台发布需要收取少量服务费</p>
         <div class="amount"><span>¥</span> {{ requiredFee }}</div>
       </div>
-      <van-button block round type="primary" color="#07c160" size="large" @click="executePayment">微信安全支付</van-button>
-      <van-button block round plain class="cancel-btn" @click="showPayModal = false">取消支付</van-button>
+      <div style="padding: 0 15px;">
+          <van-button block round type="primary" color="#07c160" style="height: 44px; font-size: 16px;" @click="executePayment">微信安全支付</van-button>
+          <van-button block round plain class="cancel-btn" @click="showPayModal = false">取消支付</van-button>
+      </div>
     </van-popup>
 
     <van-popup v-model:show="showMap" position="bottom" :style="{height:'90%'}" round @opened="initMapInstance">
@@ -472,8 +474,8 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
 .tags { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
 .tag { padding:4px 12px; background:#f0f0f0; border-radius:4px; font-size:13px; border:1px solid transparent; }
 .tag.active { background:#eaf5ff; color:#1989fa; border-color:#1989fa; }
-/* 纯净按钮样式，高度和大小由原生 size 控制，仅加粗 */
-.submit-btn { font-size:16px; height: 44px; font-weight: bold; }
+
+/* 彻底删除了干扰原生按钮布局的样式 */
 
 .map-wrap { display:flex;flex-direction:column;height:100%; }
 #picker-map-container { width:100%;height:300px;position:relative;flex-shrink:0; }
