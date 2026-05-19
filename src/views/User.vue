@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { showToast, showDialog, showSuccessToast, showLoadingToast, closeToast } from 'vant';
 import { useAppStore } from '../store';
@@ -11,22 +11,19 @@ const myRides = ref([]);
 const pageLoading = ref(true);
 
 onMounted(async () => {
-    // 判空防御：如果未登录，直接停止加载，展示未登录界面
-    if (!store.userProfile?.id) {
-        pageLoading.value = false;
-        return;
-    }
-    
-    // 获取我的行程列表
+    // 极简防御逻辑，防止任何空指针导致白屏
     try {
+        if (!store.userProfile || !store.userProfile.id) {
+            pageLoading.value = false;
+            return;
+        }
         const res = await fetch(`/api/rides`);
         const data = await res.json();
-        if (data.results) {
-            // 在前端过滤出属于自己的行程
+        if (data && data.results) {
             myRides.value = data.results.filter(r => r.user_id === store.userProfile.id);
         }
     } catch(e) {
-        showToast('获取行程失败');
+        console.error('加载行程失败');
     } finally {
         pageLoading.value = false;
     }
@@ -39,15 +36,13 @@ const formatDate = (str) => {
   return str;
 };
 
-// 引导登录授权
 const goToAuth = () => {
-    const appId = store.sysConfig.wx_appid;
+    const appId = store.sysConfig?.wx_appid;
     if (!appId) { showToast('后台未配置微信AppID'); return; }
     const redirectUri = encodeURIComponent(window.location.origin + '/');
     window.location.href = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_userinfo&state=STATE#wechat_redirect`;
 };
 
-// 删除自己的行程
 const deleteRide = (id) => {
     showDialog({
         title: '确认删除',
@@ -77,13 +72,14 @@ const deleteRide = (id) => {
   <div style="min-height: 100vh; background: #f7f8fa; padding-bottom: 80px;">
     <van-nav-bar title="个人中心" />
 
-    <div v-if="pageLoading" style="padding: 20px;">
-        <van-skeleton title avatar :row="3" />
+    <div v-if="pageLoading" style="text-align: center; padding: 50px 0; color: #999;">
+        <van-loading type="spinner" color="#ff6600" />
+        <div style="margin-top: 10px; font-size: 14px;">加载中...</div>
     </div>
 
     <div v-else>
         <div style="background: linear-gradient(135deg, #ff9000, #ff5c00); padding: 30px 20px; color: #fff; display: flex; align-items: center; box-shadow: 0 4px 12px rgba(255,102,0,0.2);">
-            <template v-if="store.userProfile?.id">
+            <template v-if="store.userProfile && store.userProfile.id">
                 <img :src="store.userProfile.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" style="width: 70px; height: 70px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.4); object-fit: cover;" />
                 <div style="margin-left: 15px; flex: 1;">
                     <div style="font-size: 20px; font-weight: bold; margin-bottom: 5px;">{{ store.userProfile.nickname || '顺风车用户' }}</div>
@@ -104,7 +100,6 @@ const deleteRide = (id) => {
 
         <div style="margin: 15px; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.03);">
             <van-cell-group>
-                <van-cell title="账户余额" icon="balance-o" :value="(store.userProfile?.balance || 0) + ' 元'" />
                 <van-cell title="发布新行程" icon="add-square" is-link to="/publish" />
             </van-cell-group>
         </div>
@@ -112,7 +107,7 @@ const deleteRide = (id) => {
         <div style="margin: 15px;">
             <div style="font-size: 16px; font-weight: bold; color: #333; margin-bottom: 10px; padding-left: 5px; border-left: 4px solid #ff6600;">我的发布</div>
             
-            <div v-if="!store.userProfile?.id" style="text-align: center; padding: 40px 0; color: #999; background: #fff; border-radius: 8px;">
+            <div v-if="!store.userProfile || !store.userProfile.id" style="text-align: center; padding: 40px 0; color: #999; background: #fff; border-radius: 8px;">
                 请先登录后查看
             </div>
             
