@@ -86,9 +86,7 @@ const selectPostType = (type) => {
     postForm.type = type;
     showTypeSelector.value = false;
 };
-const cancelPostType = () => {
-    router.replace('/'); 
-};
+const cancelPostType = () => { router.replace('/'); };
 
 const parseLocationName = (addressComp) => {
     if (!addressComp) return '';
@@ -106,10 +104,7 @@ const autoLocate = () => {
     if (!window.AMap) return;
     
     window.AMap.plugin(['AMap.Geolocation', 'AMap.CitySearch'], function() {
-        var geolocation = new window.AMap.Geolocation({
-            enableHighAccuracy: true, timeout: 3500, convert: true
-        });
-        
+        var geolocation = new window.AMap.Geolocation({ enableHighAccuracy: true, timeout: 3500, convert: true });
         geolocation.getCurrentPosition(function(status, result) {
             if (status === 'complete' && result.addressComponent) {
                 userLocation.value = [result.position.lng, result.position.lat];
@@ -146,9 +141,7 @@ const openMapSelector = (f) => {
 const initMapInstance = () => {
     if (!window.AMap) return;
     document.getElementById('picker-map-container').innerHTML = ''; 
-    mapInstance = new window.AMap.Map('picker-map-container', { 
-        zoom: 14, center: userLocation.value || [104.06, 30.67] 
-    }); 
+    mapInstance = new window.AMap.Map('picker-map-container', { zoom: 14, center: userLocation.value || [104.06, 30.67] }); 
     if (postForm.origin) mapInstance.setCity(postForm.origin);
     mapInstance.on('moveend', () => { 
         new window.AMap.Geocoder().getAddress(mapInstance.getCenter(), (s, r) => {
@@ -163,11 +156,11 @@ const confirmMapSelection = (val) => {
         if (currentMapField.value === 'origin') postForm.origin = finalVal; 
         else postForm.destination = finalVal; 
         showMap.value = false;
-    } else showToast('请等待'); 
+    } else showToast('请等待定位'); 
 };
 
 const submitAuth = async () => {
-    if(!/^\d{11}$/.test(registerForm.phone)) { showFailToast('请输入11位手机号'); return; }
+    if(!/^\d{11}$/.test(registerForm.phone)) { showFailToast('请输入11位数字'); return; }
     const payload = { ...store.userProfile, phone: registerForm.phone };
     try {
         const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -183,7 +176,7 @@ const submitAuth = async () => {
 
 const onPreSubmit = () => { 
     if(!postForm.origin || postForm.origin === '定位失败' || !postForm.destination) { showFailToast('请完善起点和终点'); return; } 
-    if(!/^\d{11}$/.test(postForm.contact)) { showFailToast('手机号错误'); return; }
+    if(!/^\d{11}$/.test(postForm.contact)) { showFailToast('手机号有误'); return; }
     if(!store.userProfile?.phone) { showAuth.value = true; return; } 
     handlePublish(); 
 };
@@ -211,102 +204,50 @@ const handlePublish = async () => {
             if (topFee > 0 && !postForm.old_id) { 
                 showDialog({
                     title: '发布成功',
-                    message: `信息已发布！是否支付 ${topFee} 元将本条行程置顶？\n(置顶可排在最前，增加曝光)`,
-                    showCancelButton: true,
-                    confirmButtonText: '马上置顶',
-                    cancelButtonText: '暂不需要',
-                    confirmButtonColor: '#ff6600'
+                    message: `信息已发布！是否支付 ${topFee} 元将本条行程置顶增加曝光？`,
+                    showCancelButton: true, confirmButtonText: '马上置顶', cancelButtonText: '暂不需要', confirmButtonColor: '#ff6600'
                 }).then(() => {
-                    requiredFee.value = topFee;
-                    payType.value = 'top';
-                    currentPayRideId.value = result.ride_id;
-                    showPayModal.value = true;
-                }).catch(() => {
-                    router.replace('/');
-                });
+                    requiredFee.value = topFee; payType.value = 'top'; currentPayRideId.value = result.ride_id; showPayModal.value = true;
+                }).catch(() => { router.replace('/'); });
             } else {
                 showSuccessToast('发布成功'); 
                 router.replace('/'); 
             }
         } else if (res.status === 402) {
-            requiredFee.value = result.fee || 0;
-            payType.value = 'publish';
-            showPayModal.value = true;
-        } else if (res.status === 403) {
-            showAuth.value = true;
-        } else {
-            showFailToast(result.error || '发布失败');
-        }
+            requiredFee.value = result.fee || 0; payType.value = 'publish'; showPayModal.value = true;
+        } else { showFailToast(result.error || '发布失败'); }
     } catch(e) { showFailToast('请求异常'); } 
     finally { submitLoading.value = false; } 
 };
 
-// 👉 极简版支付：绝不传多余参数，纯净数据交给后端，如果依然报错，100%是后端验签配置有误
 const executePayment = async () => {
-    if (!store.userProfile?.openid) {
-        showFailToast('缺少微信标识');
-        showPayModal.value = false;
-        return;
-    }
-
+    if (!store.userProfile?.openid) { showFailToast('缺少微信身份'); showPayModal.value = false; return; }
     showLoadingToast({ message: '请求支付...', forbidClick: true, duration: 0 });
     try {
-        const payPayload = {
-            user_id: store.userProfile.id,
-            openid: store.userProfile.openid,
-            amount: Number(requiredFee.value)
-        };
-
         const payRes = await fetch('/api/pay', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payPayload)
+            body: JSON.stringify({
+                user_id: String(store.userProfile.id), openid: String(store.userProfile.openid), amount: Number(requiredFee.value)
+            })
         });
-        
-        const rawText = await payRes.text();
-        let data;
-        try { data = JSON.parse(rawText); } 
-        catch (err) {
-            closeToast();
-            alert("后端未返回JSON:\n" + rawText.substring(0,100));
-            return;
-        }
-        
+        const data = await payRes.json();
         if (data.error || !data.payArgs) {
-            closeToast();
-            alert(`后端支付接口报错:\n${data.error || '无支付参数'}`);
-            return;
+            closeToast(); alert(`后端网关错误:\n${data.error || '无返回'}\n等待您查出老系统的支付源码！`); return;
         }
 
         const payArgs = data.payArgs;
         closeToast(); 
-        
         if (typeof WeixinJSBridge !== "undefined") {
-            WeixinJSBridge.invoke('getBrandWCPayRequest', {
-                "appId": payArgs.appId, "timeStamp": payArgs.timeStamp, "nonceStr": payArgs.nonceStr,
-                "package": payArgs.package, "signType": payArgs.signType, "paySign": payArgs.paySign
-            }, async (res) => {
+            WeixinJSBridge.invoke('getBrandWCPayRequest', payArgs, async (res) => {
                 if (res.err_msg === "get_brand_wcpay_request:ok") {
-                    showSuccessToast('支付成功');
-                    showPayModal.value = false;
-                    if (payType.value === 'publish') {
-                        await handlePublish(); 
-                    } else if (payType.value === 'top') {
-                        await fetch('/api/rides', { method: 'PUT', body: JSON.stringify({ action: 'top', id: currentPayRideId.value }) });
-                        router.replace('/');
-                    }
-                } else if (res.err_msg === "get_brand_wcpay_request:cancel") { 
-                    showFailToast('取消支付'); 
-                } else {
-                    alert(`支付失败：\n${res.err_msg}`);
-                }
+                    showSuccessToast('支付成功'); showPayModal.value = false;
+                    if (payType.value === 'publish') await handlePublish(); 
+                    else if (payType.value === 'top') { await fetch('/api/rides', { method: 'PUT', body: JSON.stringify({ action: 'top', id: currentPayRideId.value }) }); router.replace('/'); }
+                } else if (res.err_msg === "get_brand_wcpay_request:cancel") { showFailToast('取消支付'); } 
+                else { alert(`支付失败：\n${res.err_msg}`); }
             });
-        } else { 
-            showFailToast('请在微信内打开'); 
-        }
-    } catch (e) { 
-        closeToast();
-        alert('请求异常: ' + e.message); 
-    }
+        } else { showFailToast('请在微信内打开'); }
+    } catch (e) { closeToast(); alert('请求异常: ' + e.message); }
 };
 
 const onConfirmDate = ({selectedOptions}) => { 
@@ -376,7 +317,7 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
           </div>
           <div class="field-row">
             <div class="label">电话</div>
-            <van-field v-model="postForm.contact" type="tel" placeholder="请输入11位手机号" input-align="right" :border="false" />
+            <van-field v-model="postForm.contact" type="tel" placeholder="请输入手机号" input-align="right" :border="false" />
           </div>
           <div class="field-row">
             <div class="label">费用</div>
@@ -390,8 +331,10 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
           </div>
         </div>
 
-        <div style="padding: 20px 10px;">
-             <van-button round block type="primary" color="#07c160" :loading="submitLoading" @click="onPreSubmit">确认发布</van-button>
+        <div style="margin-top: 30px; padding: 0 10px;">
+             <button @click="onPreSubmit" :disabled="submitLoading" style="width: 100%; height: 44px; background-color: #07c160; color: #fff; font-size: 16px; font-weight: bold; border: none; border-radius: 22px; cursor: pointer;">
+                 {{ submitLoading ? '处理中...' : '确认发布' }}
+             </button>
         </div>
     </div>
 
@@ -399,20 +342,17 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
       <van-icon name="gold-coin" color="#ff6600" size="48" style="margin-bottom:10px;" />
       <h3 style="margin:0 0 10px;">服务费</h3>
       <div style="font-size: 32px; font-weight: bold; color: #333; margin-bottom: 20px;">¥ {{ requiredFee }}</div>
-      <van-button block round type="primary" color="#07c160" @click="executePayment">微信安全支付</van-button>
-      <van-button block round plain style="margin-top: 10px; border:none; color:#999;" @click="showPayModal = false">取消</van-button>
+      <button @click="executePayment" style="width: 100%; height: 44px; background-color: #07c160; color: #fff; font-size: 16px; border: none; border-radius: 22px;">微信安全支付</button>
+      <div @click="showPayModal = false" style="margin-top: 15px; color: #999; font-size: 14px;">取消</div>
     </van-popup>
 
     <van-popup v-model:show="showMap" position="bottom" :style="{height:'90%'}" round @opened="initMapInstance">
         <div style="display:flex;flex-direction:column;height:100%;">
-          <van-search v-model="mapSearchKeyword" show-action placeholder="搜索地点" @search="confirmMapSelection()"><template #action><div @click="showMap=false">取消</div></template></van-search>
+          <van-search v-model="mapSearchKeyword" show-action placeholder="搜索" @search="confirmMapSelection()"><template #action><div @click="showMap=false">取消</div></template></van-search>
           <div id="picker-map-container" style="width:100%;height:300px;"></div>
           <div style="padding:15px;background:#fff;border-top:1px solid #eee;">
             <div style="margin-bottom:10px;font-size:14px;color:#333;font-weight:bold;">当前：{{ mapSelectionText }}</div>
-            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:15px;">
-                <div v-for="c in hotCities" :key="c" @click="confirmMapSelection(c)" style="padding:4px 10px;background:#f2f3f5;border-radius:4px;font-size:12px;">{{c}}</div>
-            </div>
-            <van-button block type="primary" @click="confirmMapSelection()">确定选择</van-button>
+            <button @click="confirmMapSelection()" style="width: 100%; height: 44px; background-color: #1989fa; color: #fff; border: none; border-radius: 22px;">确定选择</button>
           </div>
         </div>
     </van-popup>
@@ -424,7 +364,7 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
     <van-popup v-model:show="showAuth" position="bottom" round style="padding: 30px 20px; text-align:center;">
         <h3 style="margin-bottom: 20px;">补充联系方式</h3>
         <van-field v-model="registerForm.phone" type="tel" placeholder="请输入11位数字手机号" border style="background: #f5f5f5; border-radius: 8px;" />
-        <van-button block round type="primary" color="#ff6600" @click="submitAuth" style="margin-top:20px;">确认绑定</van-button>
+        <button @click="submitAuth" style="margin-top: 20px; width: 100%; height: 44px; background-color: #ff6600; color: #fff; border: none; border-radius: 22px;">确认绑定</button>
     </van-popup>
   </div>
 </template>
