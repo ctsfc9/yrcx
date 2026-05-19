@@ -1,9 +1,5 @@
 <template>
   <div style="min-height: 100vh; background: #f7f8fa; padding-bottom: 80px;">
-    <div style="height: 46px; background: #fff; text-align: center; line-height: 46px; font-size: 16px; font-weight: bold; border-bottom: 1px solid #eee; color: #333;">
-      行程大厅
-    </div>
-
     <van-notice-bar v-if="noticeText" left-icon="volume-o" :text="noticeText" />
 
     <div v-if="bannerList && bannerList.length > 0" style="margin: 10px; border-radius: 12px; overflow: hidden; height: 160px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
@@ -60,12 +56,12 @@ const finished = ref(false);
 const page = ref(1);
 const limit = 8; 
 
-// 动态公告栏文本
+// 解析公告
 const noticeText = computed(() => {
   return (store && store.sysConfig && store.sysConfig.notice) ? store.sysConfig.notice : '';
 });
 
-// 动态轮播图
+// 解析轮播图
 const bannerList = computed(() => {
   if (store && store.sysConfig && store.sysConfig.banners) {
     try { return JSON.parse(store.sysConfig.banners); } catch (e) { return []; }
@@ -73,6 +69,7 @@ const bannerList = computed(() => {
   return [];
 });
 
+// 恢复有效的后端加载逻辑
 const loadRides = async () => {
     if (loading.value || finished.value) return;
     loading.value = true;
@@ -102,7 +99,7 @@ const formatDate = (str) => {
     return String(str).replace('T', ' ').substring(0, 16);
 };
 
-// 恢复打磨好的：双击防误触退出逻辑
+// 双击退出
 let clickTime = 0;
 const handlePopstate = () => {
   const now = new Date().getTime();
