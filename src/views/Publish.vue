@@ -8,6 +8,10 @@ const router = useRouter();
 const route = useRoute();
 const store = useAppStore();
 
+// 安全获取 store 数据的辅助函数，彻底规避 ?. 语法带来的编译报错崩溃
+const getSysConfig = () => (store && store.sysConfig) ? store.sysConfig : {};
+const getUserProfile = () => (store && store.userProfile) ? store.userProfile : {};
+
 const getNowDate = () => {
   const now = new Date();
   const y = now.getFullYear();
@@ -27,7 +31,7 @@ const postForm = reactive({
   origin: '', destination: '', 
   date: defaultDateInfo.value, dateDisplay: defaultDateInfo.display, 
   seats: 1, price: '', remark: [], car_model: '油车', 
-  contact: store?.userProfile?.phone || '', old_id: null 
+  contact: getUserProfile().phone || '', old_id: null 
 });
 
 const showTypeSelector = ref(false);
@@ -49,16 +53,24 @@ const mapSelectionText = ref('定位中...');
 let mapInstance = null;
 const userLocation = ref(null); 
 
-// 👉 快捷备注：后台配置或默认
+// 👉 快捷备注：后台配置读取，支持中英文逗号
 const currentRemarkOptions = computed(() => {
-  const str = postForm.type === 'driver' ? store?.sysConfig?.tags_driver : store?.sysConfig?.tags_passenger;
-  return (str || '有空位,走高速,不绕路,少带行李,可带宠物,准时出发').split(',').filter(Boolean);
+  const conf = getSysConfig();
+  const str = postForm.type === 'driver' ? conf.tags_driver : conf.tags_passenger;
+  if (str && typeof str === 'string' && str.trim()) {
+      return str.split(/[,，]/).filter(Boolean);
+  }
+  return ['有空位', '走高速', '不绕路', '少带行李', '可带宠物', '准时出发'];
 });
 
-// 👉 定制版热门城市：浙江/上海/江苏/广东/福建 + 宜宾地区
+// 👉 热门城市：后台配置读取 (system_config 表的 hot_cities 字段)，支持中英文逗号
 const computedHotCities = computed(() => {
-  const str = store?.sysConfig?.hot_cities;
-  if (str && str.trim()) return str.split(',').filter(Boolean);
+  const conf = getSysConfig();
+  const str = conf.hot_cities;
+  if (str && typeof str === 'string' && str.trim()) {
+    return str.split(/[,，]/).filter(Boolean);
+  }
+  // 如果后台没配置，默认兜底城市
   return [
     '上海', '杭州', '宁波', '温州', '南京', '苏州', '无锡', '广州', '深圳', '东莞', 
     '佛山', '福州', '厦门', '泉州', '宜宾', '翠屏区', '叙州区', '南溪区', '江安县', '长宁县', '高县'
@@ -76,8 +88,12 @@ const dateColumns = computed(() => {
 });
 
 onMounted(async () => {
-    if (!store?.sysConfig?.amap_key) await store?.loadConfig();
-    if (route.query.type) {
+    const conf = getSysConfig();
+    if (!conf.amap_key && store && typeof store.loadConfig === 'function') {
+        await store.loadConfig();
+    }
+    
+    if (route.query && route.query.type) {
         postForm.type = route.query.type;
     } else {
         showTypeSelector.value = true;
@@ -116,7 +132,8 @@ const autoLocate = () => {
 
 const loadMapScript = () => {
     if (window.AMap) { autoLocate(); return; }
-    const key = store?.sysConfig?.amap_key;
+    const conf = getSysConfig();
+    const key = conf.amap_key;
     if (!key) return;
     window._AMapSecurityConfig = { securityJsCode: '' }; 
     const s = document.createElement('script');
@@ -127,7 +144,7 @@ const loadMapScript = () => {
 };
 
 const openMapSelector = (f) => { 
-    if (!window.AMap) { showToast('地图正在初始化...'); return; }
+    if (!window.AMap) { showToast('地图正在初始化或后台未配置高德密钥'); return; }
     currentMapField.value = f; showMap.value = true; mapSearchKeyword.value = ''; 
 };
 
@@ -144,27 +161,39 @@ const initMapInstance = () => {
 };
 
 const confirmMapSelection = (directValue) => { 
-    const finalVal = directValue || mapSearchKeyword.value || mapSelectionText.value;
+    const finalVal = typeof directValue === 'string' ? directValue : (mapSearchKeyword.value || mapSelectionText.value);
     if (finalVal && finalVal !== '定位中...') {
         if (currentMapField.value === 'origin') postForm.origin = finalVal; 
         else postForm.destination = finalVal; 
         showMap.value = false;
-    } else showToast('请选择有效位置'); 
+    } else {
+        showToast('请选择有效位置'); 
+    }
 };
 
 const onPreSubmit = () => { 
     if(!postForm.origin || !postForm.destination) { showFailToast('请完善起点和终点'); return; } 
     if(!/^\d{11}$/.test(postForm.contact)) { showFailToast('请填写11位手机号'); return; }
-    if(!store?.userProfile?.phone) { showAuth.value = true; return; } 
+    
+    const user = getUserProfile();
+    if(!user.phone) { showAuth.value = true; return; } 
     handlePublish(); 
 };
 
 const handlePublish = async () => { 
     submitLoading.value = true; 
-    let currentUserId = store?.userProfile?.id || ('user_' + Date.now());
-    if(!store?.userProfile?.id) store?.saveUser({ ...(store?.userProfile||{}), id: currentUserId });
+    const user = getUserProfile();
+    let currentUserId = user.id || ('user_' + Date.now());
+    
+    if(!user.id && store && typeof store.saveUser === 'function') {
+        store.saveUser(Object.assign({}, user, { id: currentUserId }));
+    }
 
-    const newRide = { ...postForm, user_id: currentUserId, date: postForm.date, remark: postForm.remark.join('，') }; 
+    const newRide = Object.assign({}, postForm, { 
+        user_id: currentUserId, 
+        date: postForm.date, 
+        remark: postForm.remark.join('，') 
+    }); 
     if (!newRide.price) newRide.price = '面议';
 
     try { 
@@ -172,7 +201,8 @@ const handlePublish = async () => {
         const result = await res.json();
         
         if (res.ok) { 
-            const topFee = Number(store?.sysConfig?.top_fee) || 0;
+            const conf = getSysConfig();
+            const topFee = Number(conf.top_fee) || 0;
             if (topFee > 0) { 
                 showDialog({
                     title: '发布成功', message: `信息已发布！是否支付 ${topFee} 元置顶增加曝光？`,
@@ -189,12 +219,13 @@ const handlePublish = async () => {
 };
 
 const executePayment = async () => {
-    if (!store?.userProfile?.openid) { showFailToast('缺少微信身份'); showPayModal.value = false; return; }
+    const user = getUserProfile();
+    if (!user.openid) { showFailToast('缺少微信身份'); showPayModal.value = false; return; }
     showLoadingToast({ message: '请求支付...', forbidClick: true, duration: 0 });
     try {
         const payRes = await fetch('/api/pay', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_id: String(store.userProfile.id), openid: String(store.userProfile.openid), amount: Number(requiredFee.value) })
+            body: JSON.stringify({ user_id: String(user.id), openid: String(user.openid), amount: Number(requiredFee.value) })
         });
         const data = await payRes.json();
         
@@ -230,7 +261,10 @@ const toggleRemark = (t) => {
 
 const submitAuth = async () => {
     if(!/^\d{11}$/.test(registerForm.phone)) { showFailToast('请输入11位数字手机号'); return; }
-    store?.saveUser({ ...store.userProfile, phone: registerForm.phone });
+    const user = getUserProfile();
+    if(store && typeof store.saveUser === 'function') {
+        store.saveUser(Object.assign({}, user, { phone: registerForm.phone }));
+    }
     showAuth.value = false;
     postForm.contact = registerForm.phone;
     handlePublish();
@@ -317,14 +351,17 @@ const submitAuth = async () => {
         <div style="display:flex;flex-direction:column;height:100%;">
           <van-search v-model="mapSearchKeyword" show-action placeholder="输入地点精准搜索" @search="confirmMapSelection()"><template #action><div @click="showMap=false">取消</div></template></van-search>
           <div id="picker-map-container" style="width:100%; height:280px; position:relative;"></div>
+          
           <div style="padding:15px; flex:1; display:flex; flex-direction:column; background:#fff;">
             <div style="margin-bottom:12px;font-size:14px;font-weight:bold;color:#333;">当前选定：<span style="color:#ff6600;">{{ mapSelectionText }}</span></div>
+            
             <div style="font-size:13px; color:#666; margin-bottom:8px; font-weight:bold;">快捷预设热门城市：</div>
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:20px; max-height:120px; overflow-y:auto;">
-                <div v-for="c in computedHotCities" :key="c" @click="confirmMapSelection(c)" style="padding:6px 12px; background:#f5f5f5; border-radius:6px; font-size:13px; color:#333; border:1px solid #eee;">
+                <div v-for="c in computedHotCities" :key="c" @click="confirmMapSelection(c)" style="padding:6px 12px; background:#f5f5f5; border-radius:6px; font-size:13px; color:#333; border:1px solid #eee; cursor: pointer;">
                     {{ c }}
                 </div>
             </div>
+            
             <van-button block type="primary" color="#1989fa" round @click="confirmMapSelection()">确定当前位置</van-button>
           </div>
         </div>
@@ -333,6 +370,7 @@ const submitAuth = async () => {
     <van-popup v-model:show="showDate" position="bottom">
         <van-picker v-model="currentDateValues" :columns="dateColumns" @confirm="onConfirmDate" @cancel="showDate=false"/>
     </van-popup>
+    
     <van-popup v-model:show="showAuth" position="bottom" round style="padding: 30px 20px; text-align:center;" :close-on-click-overlay="false">
         <h3 style="margin-bottom: 20px;">补充联系方式</h3>
         <van-field v-model="registerForm.phone" type="tel" placeholder="请输入11位手机号" style="background: #f5f5f5; border-radius: 8px;" />
@@ -344,15 +382,12 @@ const submitAuth = async () => {
 <style scoped>
 :deep(.van-field__label) { font-weight: bold; color: #333; width: 4.5em; }
 
-/* 座位点选样式 */
-.seat-box { flex-shrink: 0; width: 36px; height: 36px; border-radius: 8px; background: #f2f3f5; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: bold; color: #666; border: 1px solid transparent; transition: all 0.2s; }
+.seat-box { flex-shrink: 0; width: 36px; height: 36px; border-radius: 8px; background: #f2f3f5; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: bold; color: #666; border: 1px solid transparent; transition: all 0.2s; cursor: pointer; }
 .seat-box.active { background: #1989fa; color: #fff; box-shadow: 0 4px 8px rgba(25,137,250,0.3); }
 
-/* 备注标签样式 */
-.tag { padding: 6px 14px; background: #f2f3f5; border-radius: 6px; font-size: 13px; border: 1px solid transparent; transition: all 0.15s; color:#555; }
+.tag { padding: 6px 14px; background: #f2f3f5; border-radius: 6px; font-size: 13px; border: 1px solid transparent; transition: all 0.15s; color:#555; cursor: pointer; }
 .tag.active { background: #eaf5ff; color: #1989fa; border-color: #1989fa; font-weight: bold; }
 
-/* 悬浮超大发布按钮样式 */
 .float-btn-wrapper { position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; justify-content: center; width: 100%; pointer-events: none; }
 .float-btn-circle { pointer-events: auto; width: 240px; height: 56px; background: linear-gradient(135deg, #07c160, #06ad56); border-radius: 28px; display: flex; align-items: center; justify-content: center; color: white; font-size: 20px; font-weight: 900; letter-spacing: 2px; box-shadow: 0 8px 24px rgba(7, 193, 96, 0.45); transition: transform 0.1s; cursor: pointer; border: 2px solid rgba(255,255,255,0.2); }
 .float-btn-circle:active { transform: scale(0.95); }
