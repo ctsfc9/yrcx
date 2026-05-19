@@ -13,7 +13,7 @@ export async function onRequest(context) {
       body: '宜人出行充值',
       out_trade_no: out_trade_no,
       total_fee: Math.round(parseFloat(data.amount) * 100),
-      spbill_create_ip: '127.0.0.1',
+      spbill_create_ip: request.headers.get('CF-Connecting-IP') || '127.0.0.1',
       notify_url: `https://${new URL(request.url).hostname}/api/wx_notify`,
       trade_type: 'JSAPI',
       openid: data.openid
@@ -28,8 +28,13 @@ export async function onRequest(context) {
     const response = await fetch('https://api.mch.weixin.qq.com/pay/unifiedorder', { method: 'POST', body: xml });
     const xmlRes = await response.text();
     
-    const prepay_id = xmlRes.match(/<prepay_id><!\[CDATA\[(.*)\]\]><\/prepay_id>/)?.[1];
-    if (!prepay_id) return new Response(JSON.stringify({ error: 'FAILED' }), { status: 500 });
+    const prepay_id = xmlRes.match(/<prepay_id><!\[CDATA\[(.*)\]\]><\/prepay_id>/)?.[1] || xmlRes.match(/<prepay_id>(.*)<\/prepay_id>/)?.[1];
+    
+    // 👉 核心改动：如果没拿到预支付ID，把微信真实的错误原因（err_code_des）提取出来弹窗显示！
+    if (!prepay_id) {
+        const errMsg = xmlRes.match(/<err_code_des><!\[CDATA\[(.*)\]\]><\/err_code_des>/)?.[1] || xmlRes.substring(0, 100);
+        return new Response(JSON.stringify({ error: `微信拦截原因: ${errMsg}` }), { status: 500 });
+    }
 
     const payArgs = { appId: config.wx_appid, timeStamp: Math.floor(Date.now() / 1000).toString(), nonceStr: nonce_str, package: `prepay_id=${prepay_id}`, signType: 'MD5' };
     const paySignStr = Object.keys(payArgs).sort().map(k => `${k}=${payArgs[k]}`).join('&') + `&key=${env.WX_API_KEY}`;
