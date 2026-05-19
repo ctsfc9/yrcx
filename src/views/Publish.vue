@@ -250,6 +250,7 @@ const handlePublish = async () => {
     finally { submitLoading.value = false; } 
 };
 
+// 👉 极简版支付：只传最基础的 3 个参数，避免干扰后端 V2 签名验证
 const executePayment = async () => {
     if (!store.userProfile?.openid) {
         showFailToast('缺少微信身份，无法唤起支付');
@@ -257,46 +258,30 @@ const executePayment = async () => {
         return;
     }
 
-    showLoadingToast({ message: '安全支付环境中...', forbidClick: true, duration: 0 });
+    showLoadingToast({ message: '请求微信网关...', forbidClick: true, duration: 0 });
     try {
-        const feeYuan = Number(requiredFee.value);
-        const feeCent = Math.round(feeYuan * 100);
-        const orderIdStr = 'ORD' + Date.now() + Math.floor(Math.random()*10000);
-        const descStr = payType.value === 'top' ? '顺风车置顶' : '顺风车发布';
-
-        const payPayload = { 
-            user_id: String(store.userProfile.id), 
-            openid: String(store.userProfile.openid),
-            amount: feeYuan,            
-            price: feeYuan,            
-            total_fee: feeCent,         
-            out_trade_no: orderIdStr, 
-            body: descStr,
-            description: descStr,
-            subject: descStr,
-            pay_type: payType.value,
-            type: payType.value,
-            ride_id: String(currentPayRideId.value)
-        };
-
         const payRes = await fetch('/api/pay', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payPayload)
+            body: JSON.stringify({
+                user_id: String(store.userProfile.id),
+                openid: String(store.userProfile.openid),
+                amount: Number(requiredFee.value)
+            })
         });
         
         const rawText = await payRes.text();
         let data;
-        try {
-            data = JSON.parse(rawText);
-        } catch (err) {
+        try { data = JSON.parse(rawText); } 
+        catch (err) {
             closeToast();
-            alert("⚠️ 接口响应非JSON:\n" + rawText.substring(0,100));
+            alert("⚠️ 接口异常:\n" + rawText.substring(0,100));
             return;
         }
         
         if (data.error || !data.payArgs) {
             closeToast();
-            alert(`⚠️ 商户统一下单拦截:\n${data.error || '未返回 payArgs'}`);
+            // 如果后端被微信拦截，把真实原因报出来。请检查 AppID 是否对应！
+            alert(`⚠️ 微信预支付拦截:\n${data.error || '未返回参数'}`);
             return;
         }
 
@@ -328,7 +313,7 @@ const executePayment = async () => {
         }
     } catch (e) { 
         closeToast();
-        alert('前端执行异常: ' + e.message); 
+        alert('前端请求异常: ' + e.message); 
     }
 };
 
@@ -422,8 +407,8 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
           </div>
         </div>
 
-        <div style="padding: 20px 0;">
-             <van-button round block size="large" type="primary" color="#07c160" :loading="submitLoading" @click="onPreSubmit">确认发布</van-button>
+        <div style="margin-top: 30px;">
+             <van-button round block type="primary" color="#07c160" :loading="submitLoading" @click="onPreSubmit" class="submit-btn">确认发布</van-button>
         </div>
     </div>
 
@@ -487,8 +472,8 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
 .tags { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
 .tag { padding:4px 12px; background:#f0f0f0; border-radius:4px; font-size:13px; border:1px solid transparent; }
 .tag.active { background:#eaf5ff; color:#1989fa; border-color:#1989fa; }
-
-/* 彻底删除了干扰原生按钮布局的样式 */
+/* 纯净按钮样式，高度和大小由原生 size 控制，仅加粗 */
+.submit-btn { font-size:16px; height: 44px; font-weight: bold; }
 
 .map-wrap { display:flex;flex-direction:column;height:100%; }
 #picker-map-container { width:100%;height:300px;position:relative;flex-shrink:0; }
