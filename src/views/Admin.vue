@@ -31,7 +31,10 @@ const submitLoading = ref(false);
 
 const config = reactive({
   notice: '', tags_driver: '', tags_passenger: '', contact_qr: '',
-  top_fee: 0, publish_fee: 0, amap_key: '', wx_appid: '', wx_appsecret: '', show_expired: false
+  top_fee: 0, publish_fee: 0, amap_key: '', 
+  wx_appid: '', wx_appsecret: '', 
+  wxpay_mchid: '', wxpay_key: '', // 👉 核心新增：支付底座配置
+  show_expired: false
 });
 
 const loadConfigData = async () => {
@@ -73,7 +76,7 @@ const saveConfig = async () => {
         <ul class="sub-menu" v-if="activeMenu === 'config'">
           <li :class="{ active: activeSubMenu === 'basic' }" @click="activeSubMenu = 'basic'">基本设置</li>
           <li :class="{ active: activeSubMenu === 'tags' }" @click="activeSubMenu = 'tags'">常用备注标签</li>
-          <li :class="{ active: activeSubMenu === 'wx' }" @click="activeSubMenu = 'wx'">微信公众号</li>
+          <li :class="{ active: activeSubMenu === 'wx' }" @click="activeSubMenu = 'wx'">微信与支付</li>
         </ul>
       </ul>
     </div>
@@ -99,16 +102,18 @@ const saveConfig = async () => {
           <div v-if="activeSubMenu === 'tags'">
             <div class="card-title">自定义常用备注标签</div>
             <van-cell-group inset :border="false">
-              <van-field v-model="config.tags_driver" label="车主常用备注" type="textarea" rows="2" autosize placeholder="多个标签请用逗号(,)分隔，如：有空位,走高速,不绕路" />
-              <van-field v-model="config.tags_passenger" label="乘客常用备注" type="textarea" rows="2" autosize placeholder="多个标签请用逗号(,)分隔，如：带宠物,行李多,两人同行" />
+              <van-field v-model="config.tags_driver" label="车主常用备注" type="textarea" rows="2" autosize placeholder="多个标签请用逗号(,)分隔" />
+              <van-field v-model="config.tags_passenger" label="乘客常用备注" type="textarea" rows="2" autosize placeholder="多个标签请用逗号(,)分隔" />
             </van-cell-group>
           </div>
 
           <div v-if="activeSubMenu === 'wx'">
-            <div class="card-title">微信开放平台参数</div>
+            <div class="card-title">微信与支付参数</div>
             <van-cell-group inset :border="false">
-              <van-field v-model="config.wx_appid" label="微信AppID" />
-              <van-field v-model="config.wx_appsecret" label="微信AppSecret" type="password" />
+              <van-field v-model="config.wx_appid" label="微信 AppID" placeholder="以 wx 开头" />
+              <van-field v-model="config.wx_appsecret" label="微信 AppSecret" type="password" />
+              <van-field v-model="config.wxpay_mchid" label="支付商户号" placeholder="例如: 1515306371" />
+              <van-field v-model="config.wxpay_key" label="支付 API 秘钥" type="password" placeholder="V2 秘钥 (32位)" />
             </van-cell-group>
           </div>
           
