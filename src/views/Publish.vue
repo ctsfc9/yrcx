@@ -23,7 +23,7 @@ const getNowDate = () => {
 const defaultDateInfo = getNowDate();
 
 const postForm = reactive({ 
-  type: route.query.type || 'driver', 
+  type: '', 
   origin: '', destination: '', 
   date: defaultDateInfo.value, dateDisplay: defaultDateInfo.display, 
   seats: 1, price: '', remark: [], car_model: '油车', 
@@ -80,10 +80,9 @@ onMounted(async () => {
         showTypeSelector.value = true;
     }
     
-    // 👉 核心优化：延迟 800ms 后静默加载地图组件，保障首屏表单立刻渲染不白屏
     setTimeout(() => {
         loadMapScript();
-    }, 800);
+    }, 300);
 });
 
 const selectPostType = (type) => {
@@ -107,7 +106,6 @@ const parseLocationName = (addressComp) => {
     return city + district;
 };
 
-// 移除 Loading，实现真正的静默定位
 const autoLocate = () => { 
     if (postForm.origin) return; 
     if (!window.AMap) return;
@@ -424,7 +422,9 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
           </div>
         </div>
 
-        <van-button round block type="primary" color="#07c160" :loading="submitLoading" @click="onPreSubmit" class="submit-btn">确认发布</van-button>
+        <div style="padding: 20px 0;">
+             <van-button round block size="large" type="primary" color="#07c160" :loading="submitLoading" @click="onPreSubmit">确认发布</van-button>
+        </div>
     </div>
 
     <van-popup v-model:show="showPayModal" position="bottom" round class="pay-popup">
@@ -487,7 +487,9 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
 .tags { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
 .tag { padding:4px 12px; background:#f0f0f0; border-radius:4px; font-size:13px; border:1px solid transparent; }
 .tag.active { background:#eaf5ff; color:#1989fa; border-color:#1989fa; }
-.submit-btn { margin-top:30px; font-size:16px; height: 44px; }
+
+/* 彻底删除了干扰原生按钮布局的样式 */
+
 .map-wrap { display:flex;flex-direction:column;height:100%; }
 #picker-map-container { width:100%;height:300px;position:relative;flex-shrink:0; }
 .map-footer { padding:15px;background:#fff;border-top:1px solid #eee; }
