@@ -1,146 +1,123 @@
 <script setup>
-import { ref, onMounted, reactive } from 'vue';
-import { showSuccessToast, showFailToast } from 'vant';
+import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
+import { useAppStore } from '../store';
 
+const store = useAppStore();
 const router = useRouter();
-const isAuth = ref(false);
-const adminPwd = ref('');
-
-onMounted(() => {
-  if (sessionStorage.getItem('admin_auth') === 'true') {
-    isAuth.value = true;
-    loadConfigData();
-  }
+const config = ref({
+    amap_key: '',
+    wx_appid: '',
+    top_fee: 0,
+    tags_driver: '',
+    tags_passenger: '',
+    hot_cities: '' // 新增的热门城市字段
 });
+const isLoading = ref(true);
 
-const handleLogin = () => {
-  if (adminPwd.value === '123456') { 
-    sessionStorage.setItem('admin_auth', 'true');
-    isAuth.value = true;
-    showSuccessToast('登录成功');
-    loadConfigData();
-  } else { showFailToast('密码错误'); }
-};
-
-const handleLogout = () => { sessionStorage.removeItem('admin_auth'); isAuth.value = false; adminPwd.value = ''; };
-
-const activeMenu = ref('config');
-const activeSubMenu = ref('basic');
-const submitLoading = ref(false);
-
-const config = reactive({
-  notice: '', tags_driver: '', tags_passenger: '', contact_qr: '',
-  top_fee: 0, publish_fee: 0, amap_key: '', 
-  wx_appid: '', wx_appsecret: '', 
-  wxpay_mchid: '', wxpay_key: '', // 👉 核心新增：支付底座配置
-  show_expired: false
-});
-
-const loadConfigData = async () => {
-  try {
-    const res = await fetch('/api/config');
-    if (res.ok) {
-        const data = await res.json();
-        Object.assign(config, data);
-        config.show_expired = data.show_expired === 1;
+onMounted(async () => {
+    // 简单的权限校验（根据您的实际情况可调整）
+    if (!store.userProfile?.id) {
+        window.alert('请先登录');
+        router.push('/user');
+        return;
     }
-  } catch(e) {}
-};
+    
+    try {
+        const res = await fetch('/api/config'); // 假设这是您获取配置的接口
+        if (res.ok) {
+            const data = await res.json();
+            if (data) {
+                // 将后台数据映射到表单
+                config.value = {
+                    amap_key: data.amap_key || '',
+                    wx_appid: data.wx_appid || '',
+                    top_fee: data.top_fee || 0,
+                    tags_driver: data.tags_driver || '',
+                    tags_passenger: data.tags_passenger || '',
+                    hot_cities: data.hot_cities || ''
+                };
+            }
+        }
+    } catch (e) {
+        console.error("加载配置失败", e);
+    } finally {
+        isLoading.value = false;
+    }
+});
 
 const saveConfig = async () => {
-  submitLoading.value = true;
-  try {
-    const res = await fetch('/api/config', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config)
-    });
-    if (res.ok) showSuccessToast('配置已更新');
-  } finally { submitLoading.value = false; }
+    try {
+        const res = await fetch('/api/config', {
+            method: 'POST', // 或 PUT，取决于您的后端设定
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config.value)
+        });
+        
+        if (res.ok) {
+            window.alert('配置保存成功！');
+            // 更新本地 store
+            if (typeof store.loadConfig === 'function') {
+                store.loadConfig();
+            }
+        } else {
+            window.alert('保存失败，请检查网络或权限');
+        }
+    } catch (e) {
+        window.alert('请求异常');
+    }
 };
 </script>
 
 <template>
-  <div v-if="!isAuth" class="login-container">
-    <div class="login-box">
-      <h2>宜人出行后台</h2>
-      <van-field v-model="adminPwd" type="password" placeholder="请输入密码(默认123456)" :border="true" style="background:#f5f5f5; border-radius:8px; margin-bottom:20px;" @keyup.enter="handleLogin"/>
-      <van-button block type="primary" color="#3b5998" @click="handleLogin">登录控制台</van-button>
-    </div>
-  </div>
+  <div style="padding: 20px; background: #f5f5f5; min-height: 100vh;">
+    <div style="font-size: 20px; font-weight: bold; margin-bottom: 20px; color: #333; text-align: center;">系统高级配置</div>
 
-  <div v-else class="admin-layout">
-    <div class="sidebar">
-      <div class="logo">宜人出行后台</div>
-      <ul class="menu-list">
-        <li :class="{ active: activeMenu === 'config' }" @click="activeMenu = 'config'"><van-icon name="setting-o" /> 平台参数设置</li>
-        <ul class="sub-menu" v-if="activeMenu === 'config'">
-          <li :class="{ active: activeSubMenu === 'basic' }" @click="activeSubMenu = 'basic'">基本设置</li>
-          <li :class="{ active: activeSubMenu === 'tags' }" @click="activeSubMenu = 'tags'">常用备注标签</li>
-          <li :class="{ active: activeSubMenu === 'wx' }" @click="activeSubMenu = 'wx'">微信与支付</li>
-        </ul>
-      </ul>
-    </div>
-    <div class="main-content">
-      <div class="header-bar">
-        <span class="title">控制台 > 参数设置</span>
-        <div class="user" @click="handleLogout">退出登录</div>
-      </div>
-      <div class="content-body">
-        <div class="card" v-if="activeMenu === 'config'">
-          
-          <div v-if="activeSubMenu === 'basic'">
-            <div class="card-title">基本运行参数</div>
-            <van-cell-group inset :border="false">
-              <van-field v-model="config.notice" label="首页公告" type="textarea" rows="2" autosize />
-              <van-field v-model="config.publish_fee" label="单次发布收费" type="number" placeholder="填 0 为免费" input-align="right"><template #button>元</template></van-field>
-              <van-field v-model="config.top_fee" label="行程置顶收费" type="number" placeholder="填 0 为免费" input-align="right"><template #button>元</template></van-field>
-              <van-field v-model="config.amap_key" label="高德地图Key" />
-              <van-cell title="首页展示过期行程" center><template #right-icon><van-switch v-model="config.show_expired" size="24" /></template></van-cell>
-            </van-cell-group>
-          </div>
-
-          <div v-if="activeSubMenu === 'tags'">
-            <div class="card-title">自定义常用备注标签</div>
-            <van-cell-group inset :border="false">
-              <van-field v-model="config.tags_driver" label="车主常用备注" type="textarea" rows="2" autosize placeholder="多个标签请用逗号(,)分隔" />
-              <van-field v-model="config.tags_passenger" label="乘客常用备注" type="textarea" rows="2" autosize placeholder="多个标签请用逗号(,)分隔" />
-            </van-cell-group>
-          </div>
-
-          <div v-if="activeSubMenu === 'wx'">
-            <div class="card-title">微信与支付参数</div>
-            <van-cell-group inset :border="false">
-              <van-field v-model="config.wx_appid" label="微信 AppID" placeholder="以 wx 开头" />
-              <van-field v-model="config.wx_appsecret" label="微信 AppSecret" type="password" />
-              <van-field v-model="config.wxpay_mchid" label="支付商户号" placeholder="例如: 1515306371" />
-              <van-field v-model="config.wxpay_key" label="支付 API 秘钥" type="password" placeholder="V2 秘钥 (32位)" />
-            </van-cell-group>
-          </div>
-          
-          <div class="btn-wrap"><van-button block type="primary" color="#3b5998" :loading="submitLoading" @click="saveConfig">保存设置</van-button></div>
+    <div v-if="isLoading" style="text-align: center; padding: 50px; color: #999;">配置加载中...</div>
+    
+    <div v-else style="background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+        
+        <div class="form-group">
+            <label>高德地图 Web端 Key</label>
+            <input type="text" v-model="config.amap_key" placeholder="填写申请的高德Key" class="input-field" />
         </div>
-      </div>
+
+        <div class="form-group">
+            <label>微信小程序/公众号 AppID</label>
+            <input type="text" v-model="config.wx_appid" placeholder="wx开头的ID" class="input-field" />
+        </div>
+
+        <div class="form-group">
+            <label>行程置顶费用 (元)</label>
+            <input type="number" v-model="config.top_fee" placeholder="0代表不收费" class="input-field" />
+        </div>
+
+        <div class="form-group">
+            <label>车主常用备注标签 (英文逗号分隔)</label>
+            <input type="text" v-model="config.tags_driver" placeholder="例如: 有空位,走高速" class="input-field" />
+        </div>
+
+        <div class="form-group">
+            <label>乘客常用备注标签 (英文逗号分隔)</label>
+            <input type="text" v-model="config.tags_passenger" placeholder="例如: 少带行李,准时出发" class="input-field" />
+        </div>
+
+        <div class="form-group">
+            <label style="color: #ff6600; font-weight: bold;">快捷预设热门城市 (必须用逗号分隔)</label>
+            <textarea v-model="config.hot_cities" rows="4" placeholder="例如: 上海市,嘉兴市,宜宾市,翠屏区" class="input-field" style="height: 80px; resize: none;"></textarea>
+            <div style="font-size: 12px; color: #999; margin-top: 5px;">前端发布行程的地图底部将展示这些快捷城市。</div>
+        </div>
+
+        <button @click="saveConfig" style="width: 100%; height: 45px; background: #07c160; color: #fff; border: none; border-radius: 4px; font-size: 16px; font-weight: bold; margin-top: 20px;">
+            保存系统配置
+        </button>
     </div>
   </div>
 </template>
 
 <style scoped>
-.login-container { display: flex; justify-content: center; align-items: center; height: 100vh; background: #e9eaee; }
-.login-box { background: #fff; padding: 40px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); width: 320px; text-align: center; }
-.admin-layout { display: flex; height: 100vh; background-color: #f4f6f8; font-family: sans-serif; }
-.sidebar { width: 240px; background-color: #263238; color: #cfd8dc; flex-shrink: 0; }
-.logo { height: 64px; line-height: 64px; text-align: center; font-size: 20px; font-weight: bold; color: #fff; background-color: #1a2327; }
-.menu-list { list-style: none; padding: 10px 0; margin: 0; }
-.menu-list li { padding: 14px 20px; cursor: pointer; display: flex; align-items: center; gap: 12px; font-size: 15px; }
-.menu-list li.active { background-color: #0091ea; color: #fff; }
-.sub-menu { list-style: none; padding: 0; background-color: #1a2327; }
-.sub-menu li { padding: 12px 20px 12px 52px; font-size: 14px; }
-.sub-menu li.active { color: #fff; font-weight: bold; }
-.main-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-.header-bar { height: 64px; background: #fff; display: flex; justify-content: space-between; align-items: center; padding: 0 24px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); }
-.content-body { padding: 24px; overflow-y: auto; flex: 1; }
-.card { background: #fff; border-radius: 4px; padding: 24px; box-shadow: 0 2px 10px rgba(0,0,0,0.03); max-width: 900px; }
-.card-title { font-size: 16px; font-weight: bold; color: #333; margin-bottom: 24px; border-left: 4px solid #0091ea; padding-left: 12px; }
-.btn-wrap { margin-top: 40px; }
-:deep(.van-cell) { background-color: #fafafa; margin-bottom: 12px; border: 1px solid #eee; border-radius: 4px; }
+.form-group { margin-bottom: 20px; }
+.form-group label { display: block; margin-bottom: 8px; font-size: 14px; font-weight: bold; color: #555; }
+.input-field { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; box-sizing: border-box; }
+.input-field:focus { border-color: #1989fa; outline: none; }
 </style>
