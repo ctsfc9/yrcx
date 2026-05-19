@@ -47,7 +47,6 @@ const mapSearchKeyword = ref('');
 const currentMapField = ref(''); 
 const mapSelectionText = ref('定位中...');
 let mapInstance = null;
-const userLocation = ref(null); 
 const hotCities = ['上海', '广州', '深圳', '杭州', '成都', '重庆', '宜宾', '宁波', '无锡', '东莞', '佛山'];
 
 const currentRemarkOptions = computed(() => {
@@ -78,14 +77,10 @@ onMounted(async () => {
     } else {
         showTypeSelector.value = true;
     }
-    
     setTimeout(() => { loadMapScript(); }, 300);
 });
 
-const selectPostType = (type) => {
-    postForm.type = type;
-    showTypeSelector.value = false;
-};
+const selectPostType = (type) => { postForm.type = type; showTypeSelector.value = false; };
 const cancelPostType = () => { router.replace('/'); };
 
 const parseLocationName = (addressComp) => {
@@ -100,9 +95,7 @@ const parseLocationName = (addressComp) => {
 };
 
 const autoLocate = () => { 
-    if (postForm.origin) return; 
-    if (!window.AMap) return;
-    
+    if (postForm.origin || !window.AMap) return;
     window.AMap.plugin(['AMap.Geolocation', 'AMap.CitySearch'], function() {
         var geolocation = new window.AMap.Geolocation({ enableHighAccuracy: true, timeout: 3500, convert: true });
         geolocation.getCurrentPosition(function(status, result) {
@@ -160,7 +153,7 @@ const confirmMapSelection = (val) => {
 };
 
 const submitAuth = async () => {
-    if(!/^\d{11}$/.test(registerForm.phone)) { showFailToast('请输入11位数字'); return; }
+    if(!/^\d{11}$/.test(registerForm.phone)) { showFailToast('请输入11位手机号'); return; }
     const payload = { ...store.userProfile, phone: registerForm.phone };
     try {
         const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -175,7 +168,7 @@ const submitAuth = async () => {
 };
 
 const onPreSubmit = () => { 
-    if(!postForm.origin || postForm.origin === '定位失败' || !postForm.destination) { showFailToast('请完善起点和终点'); return; } 
+    if(!postForm.origin || !postForm.destination) { showFailToast('请完善起点终点'); return; } 
     if(!/^\d{11}$/.test(postForm.contact)) { showFailToast('手机号有误'); return; }
     if(!store.userProfile?.phone) { showAuth.value = true; return; } 
     handlePublish(); 
@@ -203,26 +196,25 @@ const handlePublish = async () => {
             const topFee = Number(store.sysConfig.top_fee) || 0;
             if (topFee > 0 && !postForm.old_id) { 
                 showDialog({
-                    title: '发布成功',
-                    message: `信息已发布！是否支付 ${topFee} 元将本条行程置顶增加曝光？`,
+                    title: '发布成功', message: `信息已发布！是否支付 ${topFee} 元将本条行程置顶？\n(置顶可增加曝光)`,
                     showCancelButton: true, confirmButtonText: '马上置顶', cancelButtonText: '暂不需要', confirmButtonColor: '#ff6600'
                 }).then(() => {
                     requiredFee.value = topFee; payType.value = 'top'; currentPayRideId.value = result.ride_id; showPayModal.value = true;
                 }).catch(() => { router.replace('/'); });
             } else {
-                showSuccessToast('发布成功'); 
-                router.replace('/'); 
+                showSuccessToast('发布成功'); router.replace('/'); 
             }
         } else if (res.status === 402) {
             requiredFee.value = result.fee || 0; payType.value = 'publish'; showPayModal.value = true;
         } else { showFailToast(result.error || '发布失败'); }
-    } catch(e) { showFailToast('请求异常'); } 
+    } catch(e) { showFailToast('网络异常'); } 
     finally { submitLoading.value = false; } 
 };
 
+// 极简版支付
 const executePayment = async () => {
     if (!store.userProfile?.openid) { showFailToast('缺少微信身份'); showPayModal.value = false; return; }
-    showLoadingToast({ message: '请求支付...', forbidClick: true, duration: 0 });
+    showLoadingToast({ message: '请求支付网关...', forbidClick: true, duration: 0 });
     try {
         const payRes = await fetch('/api/pay', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -232,7 +224,7 @@ const executePayment = async () => {
         });
         const data = await payRes.json();
         if (data.error || !data.payArgs) {
-            closeToast(); alert(`后端网关错误:\n${data.error || '无返回'}\n等待您查出老系统的支付源码！`); return;
+            closeToast(); alert(`预支付失败:\n${data.error || '未返回'}`); return;
         }
 
         const payArgs = data.payArgs;
@@ -273,7 +265,7 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
          <div style="font-size: 32px; margin-bottom: 10px;">🙋‍♂️</div>
          <div style="font-size: 18px; font-weight: bold; color: #ff7700;">乘客找车</div>
       </div>
-      <van-button block round plain color="#999" @click="cancelPostType">返回大厅</van-button>
+      <div @click="cancelPostType" style="text-align: center; color: #999; padding: 15px 0; font-weight: bold;">暂不发布，返回大厅</div>
     </van-popup>
 
     <div v-show="!showTypeSelector && postForm.type">
@@ -331,10 +323,10 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
           </div>
         </div>
 
-        <div style="margin-top: 30px; padding: 0 10px;">
-             <button @click="onPreSubmit" :disabled="submitLoading" style="width: 100%; height: 44px; background-color: #07c160; color: #fff; font-size: 16px; font-weight: bold; border: none; border-radius: 22px; cursor: pointer;">
-                 {{ submitLoading ? '处理中...' : '确认发布' }}
-             </button>
+        <div style="padding: 25px 15px;">
+            <div @click="!submitLoading && onPreSubmit()" style="background-color: #07c160; color: #fff; text-align: center; height: 46px; line-height: 46px; border-radius: 23px; font-size: 16px; font-weight: bold; cursor: pointer; user-select: none;">
+                {{ submitLoading ? '处理中...' : '确认发布' }}
+            </div>
         </div>
     </div>
 
@@ -342,17 +334,17 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
       <van-icon name="gold-coin" color="#ff6600" size="48" style="margin-bottom:10px;" />
       <h3 style="margin:0 0 10px;">服务费</h3>
       <div style="font-size: 32px; font-weight: bold; color: #333; margin-bottom: 20px;">¥ {{ requiredFee }}</div>
-      <button @click="executePayment" style="width: 100%; height: 44px; background-color: #07c160; color: #fff; font-size: 16px; border: none; border-radius: 22px;">微信安全支付</button>
-      <div @click="showPayModal = false" style="margin-top: 15px; color: #999; font-size: 14px;">取消</div>
+      <div @click="executePayment" style="background-color: #07c160; color: #fff; text-align: center; height: 46px; line-height: 46px; border-radius: 23px; font-size: 16px; cursor: pointer; font-weight: bold;">微信安全支付</div>
+      <div @click="showPayModal = false" style="margin-top: 15px; color: #999; font-size: 14px; padding: 10px;">取消</div>
     </van-popup>
 
     <van-popup v-model:show="showMap" position="bottom" :style="{height:'90%'}" round @opened="initMapInstance">
         <div style="display:flex;flex-direction:column;height:100%;">
-          <van-search v-model="mapSearchKeyword" show-action placeholder="搜索" @search="confirmMapSelection()"><template #action><div @click="showMap=false">取消</div></template></van-search>
+          <van-search v-model="mapSearchKeyword" show-action placeholder="搜索地点" @search="confirmMapSelection()"><template #action><div @click="showMap=false">取消</div></template></van-search>
           <div id="picker-map-container" style="width:100%;height:300px;"></div>
           <div style="padding:15px;background:#fff;border-top:1px solid #eee;">
             <div style="margin-bottom:10px;font-size:14px;color:#333;font-weight:bold;">当前：{{ mapSelectionText }}</div>
-            <button @click="confirmMapSelection()" style="width: 100%; height: 44px; background-color: #1989fa; color: #fff; border: none; border-radius: 22px;">确定选择</button>
+            <div @click="confirmMapSelection()" style="background-color: #1989fa; color: #fff; text-align: center; height: 44px; line-height: 44px; border-radius: 22px; font-size: 15px; cursor: pointer;">确定选择</div>
           </div>
         </div>
     </van-popup>
@@ -364,7 +356,7 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
     <van-popup v-model:show="showAuth" position="bottom" round style="padding: 30px 20px; text-align:center;">
         <h3 style="margin-bottom: 20px;">补充联系方式</h3>
         <van-field v-model="registerForm.phone" type="tel" placeholder="请输入11位数字手机号" border style="background: #f5f5f5; border-radius: 8px;" />
-        <button @click="submitAuth" style="margin-top: 20px; width: 100%; height: 44px; background-color: #ff6600; color: #fff; border: none; border-radius: 22px;">确认绑定</button>
+        <div @click="submitAuth" style="margin-top: 20px; background-color: #ff6600; color: #fff; text-align: center; height: 44px; line-height: 44px; border-radius: 22px; font-size: 15px; font-weight: bold; cursor: pointer;">确认绑定</div>
     </van-popup>
   </div>
 </template>
