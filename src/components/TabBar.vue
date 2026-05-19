@@ -4,12 +4,9 @@
     
     <van-tabbar-item replace to="/publish" class="publish-tab-item">
       <template #icon>
-        <div class="publish-container">
-          <span class="flank-text left">发</span>
-          <div class="publish-btn-circle">
-            <van-icon name="plus" />
-          </div>
-          <span class="flank-text right">布</span>
+        <div class="publish-btn-circle">
+          <van-icon name="plus" size="22" style="font-weight: bold; margin-bottom: 2px;" />
+          <span class="btn-text">发布</span>
         </div>
       </template>
     </van-tabbar-item>
@@ -28,44 +25,33 @@
 
 .publish-tab-item {
     position: relative;
-    /* 核心：确保文字可以排在加号下方两旁 */
     display: flex;
     justify-content: center;
 }
 
-/* 核心容器：左右文字夹着中间大圆球 */
-.publish-container {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 5px; /* 间距 */
-    /* 整体向上偏移，形成凸起 */
-    transform: translateY(-8px);
-    width: 100%;
-}
-
-/* 左右两侧的“发”和“布”字体样式 */
-.flank-text {
-    font-weight: bold;
-    font-size: 16px; /* 字体偏大些 */
-    color: #555;
-    /* 让文字在加号下方两旁（通过 translateY 微调实现相对于圆球的下方位置） */
-    transform: translateY(8px);
-}
-
-/* 绿色大圆球凸起样式 */
+/* 绿色大圆球：放大尺寸，使用 Flex 垂直排列 */
 .publish-btn-circle {
-    width: 46px;
-    height: 46px;
+    width: 58px;
+    height: 58px;
     background: linear-gradient(135deg, #07c160, #06ad56);
     border-radius: 50%;
     display: flex;
+    flex-direction: column; /* 上下排列 */
     align-items: center;
     justify-content: center;
     color: white;
-    font-size: 26px; /* 加号大小 */
+    /* 向上凸起 */
+    transform: translateY(-16px);
     border: 4px solid #fff;
     box-shadow: 0 4px 12px rgba(7, 193, 96, 0.4);
-    pointer-events: auto; /* 保证圆球可以点击 */
+    pointer-events: auto;
+}
+
+/* 圆圈内的“发布”文字 */
+.btn-text {
+    font-size: 13px;
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: 1px;
 }
 </style>
