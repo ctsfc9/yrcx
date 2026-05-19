@@ -6,16 +6,16 @@
     </div>
 
     <div style="background: #ff7700; padding: 30px 20px; color: #fff; display: flex; align-items: center;">
-      <template v-if="userProfile.id">
-        <img :src="userProfile.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" style="width: 60px; height: 60px; border-radius: 50%; border: 2px solid #fff; object-fit: cover; background: #fff;" />
+      <template v-if="localUser.id">
+        <img :src="localUser.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" style="width: 60px; height: 60px; border-radius: 50%; border: 2px solid #fff; object-fit: cover; background: #fff;" />
         <div style="margin-left: 15px;">
-          <div style="font-size: 18px; font-weight: bold;">{{ userProfile.nickname || '微信用户' }}</div>
-          <div style="font-size: 14px; margin-top: 5px;">📱 {{ userProfile.phone || '未绑定手机号' }}</div>
+          <div style="font-size: 18px; font-weight: bold;">{{ localUser.nickname || '微信用户' }}</div>
+          <div style="font-size: 14px; margin-top: 5px;">📱 {{ localUser.phone || '未绑定手机号' }}</div>
         </div>
       </template>
       <template v-else>
-        <div style="width: 60px; height: 60px; background: rgba(255,255,255,0.3); border-radius: 50%; text-align: center; line-height: 60px; font-size: 30px;" @click="goToAuth">👤</div>
-        <div style="margin-left: 15px;" @click="goToAuth">
+        <div style="width: 60px; height: 60px; background: rgba(255,255,255,0.3); border-radius: 50%; text-align: center; line-height: 60px; font-size: 30px; cursor: pointer;" @click="goToAuth">👤</div>
+        <div style="margin-left: 15px; cursor: pointer;" @click="goToAuth">
           <div style="font-size: 18px; font-weight: bold;">点击登录 / 授权</div>
           <div style="font-size: 14px; margin-top: 5px;">授权微信后可管理您的行程</div>
         </div>
@@ -26,7 +26,7 @@
       <div style="font-size: 16px; font-weight: bold; color: #333; margin-bottom: 15px; border-left: 4px solid #ff7700; padding-left: 8px;">我的发布</div>
       
       <div v-if="loading" style="text-align: center; padding: 40px; color: #999; background: #fff; border-radius: 8px;">行程加载中...</div>
-      <div v-else-if="!userProfile.id" style="text-align: center; padding: 40px; color: #999; background: #fff; border-radius: 8px;">请先完成微信授权登录</div>
+      <div v-else-if="!localUser.id" style="text-align: center; padding: 40px; color: #999; background: #fff; border-radius: 8px;">请先完成微信授权登录</div>
       <div v-else-if="myRides.length === 0" style="text-align: center; padding: 40px; color: #999; background: #fff; border-radius: 8px;">暂无行程发布记录</div>
       
       <div v-else v-for="item in myRides" :key="item.id" style="background: #fff; border-radius: 8px; padding: 15px; margin-bottom: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.03);">
@@ -36,7 +36,7 @@
           </span>
           <span v-if="item.is_top" style="color: #ee0a24; font-size: 12px; font-weight: bold;">🔥已置顶</span>
         </div>
-        <div style="font-size: 16px; font-weight: bold; margin-bottom: 6px; color: #333;" @click="router.push(`/detail?id=${item.id}`)">
+        <div style="font-size: 16px; font-weight: bold; margin-bottom: 6px; color: #333; cursor: pointer;" @click="router.push(`/detail?id=${item.id}`)">
           {{ item.origin }} ➡️ {{ item.destination }}
         </div>
         <div style="color: #666; font-size: 13px; margin-bottom: 15px;">出发时间: {{ formatDate(item.date) }}</div>
@@ -53,7 +53,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAppStore } from '../store';
 import TabBar from '../components/TabBar.vue';
@@ -63,25 +63,34 @@ const router = useRouter();
 const myRides = ref([]);
 const loading = ref(true);
 
-const userProfile = computed(() => {
-    return store.userProfile || {};
-});
+// 彻底切断模板对 Store 嵌套对象的依赖，采用平替变量
+const localUser = ref({ id: '', nickname: '', avatar: '', phone: '' });
 
 onMounted(async () => {
-  if (userProfile.value.id) {
-    try {
+  try {
+    if (store && store.userProfile) {
+      localUser.value = {
+          id: store.userProfile.id || '',
+          nickname: store.userProfile.nickname || '',
+          avatar: store.userProfile.avatar || '',
+          phone: store.userProfile.phone || ''
+      };
+    }
+    
+    if (localUser.value.id) {
       const res = await fetch('/api/rides');
       if (res.ok) {
         const data = await res.json();
         if (data && data.results) {
-          myRides.value = data.results.filter(r => r.user_id === userProfile.value.id);
+          myRides.value = data.results.filter(r => r.user_id === localUser.value.id);
         }
       }
-    } catch (e) {
-      console.error(e);
     }
+  } catch (e) {
+    console.error(e);
+  } finally {
+    loading.value = false;
   }
-  loading.value = false;
 });
 
 const formatDate = (str) => {
@@ -98,10 +107,10 @@ const goToAuth = () => {
 };
 
 const deleteRide = async (id) => {
-  if (!userProfile.value.id) return;
+  if (!localUser.value.id) return;
   if (window.confirm('确定要删除这条行程吗？删除后无法恢复。')) {
     try {
-      const res = await fetch(`/api/rides?id=${id}&user_id=${userProfile.value.id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/rides?id=${id}&user_id=${localUser.value.id}`, { method: 'DELETE' });
       if (res.ok) {
         myRides.value = myRides.value.filter(r => r.id !== id);
       }
