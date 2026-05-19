@@ -12,7 +12,7 @@ const isLoading = ref(true);
 
 onMounted(async () => {
     try {
-        if (store.userProfile && store.userProfile.id) {
+        if (store && store.userProfile && store.userProfile.id) {
             const res = await fetch('/api/rides');
             if (res.ok) {
                 const data = await res.json();
@@ -22,7 +22,7 @@ onMounted(async () => {
             }
         }
     } catch (e) {
-        console.error("加载行程报错:", e);
+        console.error("加载数据失败");
     } finally {
         isLoading.value = false;
     }
@@ -36,13 +36,14 @@ const formatDate = (str) => {
 };
 
 const goToAuth = () => {
-    const appId = store.sysConfig?.wx_appid;
+    const appId = store?.sysConfig?.wx_appid;
     if (!appId) { showToast('后台未配置微信AppID'); return; }
     const redirectUri = encodeURIComponent(window.location.origin + '/');
     window.location.href = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_userinfo&state=STATE#wechat_redirect`;
 };
 
 const deleteRide = (id) => {
+    if (!store?.userProfile?.id) return;
     showDialog({ title: '确认删除', message: '删除后无法恢复，是否继续？', showCancelButton: true })
     .then(async () => {
         showLoadingToast({ message: '删除中...', forbidClick: true });
@@ -64,11 +65,12 @@ const deleteRide = (id) => {
 
     <div v-if="isLoading" style="text-align: center; padding: 40px; color: #999;">
         <van-loading type="spinner" color="#ff6600" />
-        <div style="margin-top:10px;">加载中...</div>
+        <div style="margin-top:10px;">数据加载中...</div>
     </div>
+    
     <div v-else>
         <div style="background: linear-gradient(135deg, #ff9000, #ff5c00); padding: 30px 20px; color: #fff; display: flex; align-items: center;">
-            <template v-if="store.userProfile && store.userProfile.id">
+            <template v-if="store && store.userProfile && store.userProfile.id">
                 <img :src="store.userProfile.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" style="width: 64px; height: 64px; border-radius: 50%; border: 2px solid #fff; object-fit: cover;" />
                 <div style="margin-left: 15px; flex: 1;">
                     <div style="font-size: 20px; font-weight: bold; margin-bottom: 5px;">{{ store.userProfile.nickname || '微信用户' }}</div>
@@ -90,7 +92,7 @@ const deleteRide = (id) => {
         <div style="margin: 15px;">
             <div style="font-size: 16px; font-weight: bold; color: #333; margin-bottom: 10px; border-left: 4px solid #ff6600; padding-left: 8px;">我的发布</div>
             
-            <div v-if="!store.userProfile || !store.userProfile.id" style="text-align: center; padding: 40px 0; color: #999; background: #fff; border-radius: 8px;">
+            <div v-if="!store || !store.userProfile || !store.userProfile.id" style="text-align: center; padding: 40px 0; color: #999; background: #fff; border-radius: 8px;">
                 请先登录后查看
             </div>
             <div v-else-if="myRides.length === 0" style="text-align: center; padding: 40px 0; color: #999; background: #fff; border-radius: 8px;">
