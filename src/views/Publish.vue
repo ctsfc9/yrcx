@@ -250,7 +250,7 @@ const handlePublish = async () => {
     finally { submitLoading.value = false; } 
 };
 
-// 👉 核心防御：满配全覆盖支付 Payload。将后端可能需要的所有数据类型全传过去。
+// 👉 核心净化：极致精简 Payload。这说明是您的后端拦截了，请后端查日志！
 const executePayment = async () => {
     if (!store.userProfile?.openid) {
         showFailToast('缺少微信身份，无法唤起支付');
@@ -258,33 +258,15 @@ const executePayment = async () => {
         return;
     }
 
-    showLoadingToast({ message: '正在请求微信网关...', forbidClick: true, duration: 0 });
+    showLoadingToast({ message: '正在请求后端统一下单...', forbidClick: true, duration: 0 });
     try {
-        const amountNum = Number(requiredFee.value);
-        const amountStr = String(amountNum);
-        const amountCent = Math.round(amountNum * 100);
-        const orderIdStr = 'ORD' + Date.now() + Math.floor(Math.random()*10000);
-        const descStr = payType.value === 'top' ? '顺风车置顶' : '顺风车发布';
-
-        // 此包覆盖了微信统一下单 V2/V3 以及各种自定义后端所需要的所有常见字段名和数据类型
-        const payPayload = { 
-            user_id: String(store.userProfile.id), 
-            openid: String(store.userProfile.openid),
-            amount: amountStr,        // String 类型的元
-            price: amountNum,         // Number 类型的元
-            total_fee: amountCent,    // Integer 类型的分
-            out_trade_no: orderIdStr, // 绝对不重复的订单号
-            body: descStr,
-            description: descStr,
-            subject: descStr,
-            pay_type: payType.value,
-            type: payType.value,
-            ride_id: String(currentPayRideId.value)
-        };
-
         const payRes = await fetch('/api/pay', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payPayload)
+            body: JSON.stringify({
+                user_id: store.userProfile.id,
+                openid: store.userProfile.openid,
+                amount: requiredFee.value
+            })
         });
         
         const rawText = await payRes.text();
@@ -293,13 +275,13 @@ const executePayment = async () => {
             data = JSON.parse(rawText);
         } catch (err) {
             closeToast();
-            alert("⚠️ 您的后端接口崩溃，未返回JSON数据。检查您的 /api/pay 接口");
+            alert("⚠️ 您的后端接口崩溃，未返回JSON数据:\n" + rawText.substring(0,100));
             return;
         }
         
         if (data.error || !data.payArgs) {
             closeToast();
-            alert(`⚠️ 微信商户平台拦截统一下单请求:\n${data.error || '后端未返回 payArgs'}\n请务必检查您的微信支付商户 API Key 和目录配置！`);
+            alert(`⚠️ 您后端的统一下单请求被微信拦截:\n${data.error || '未返回 payArgs'}\n提示：请后端检查 API Key 签名或金额转换！`);
             return;
         }
 
@@ -323,7 +305,7 @@ const executePayment = async () => {
                 } else if (res.err_msg === "get_brand_wcpay_request:cancel") { 
                     showFailToast('支付已取消'); 
                 } else {
-                    alert(`⚠️ 微信支付报错：\n${res.err_msg}\n这表明您的后端签名计算错误。`);
+                    alert(`⚠️ 微信内唤起失败：\n${res.err_msg}`);
                 }
             });
         } else { 
@@ -425,7 +407,7 @@ const toggleRemark = (t) => { const i=postForm.remark.indexOf(t); if(i>-1) postF
           </div>
         </div>
 
-        <van-button round block type="primary" color="#07c160" :loading="submitLoading" @click="onPreSubmit" class="submit-btn" size="large" style="margin-top: 40px; height: 50px; font-size: 18px; font-weight: bold;">确认发布</van-button>
+        <van-button round block type="primary" color="#07c160" :loading="submitLoading" @click="onPreSubmit" class="submit-btn">确认发布</van-button>
     </div>
 
     <van-popup v-model:show="showPayModal" position="bottom" round class="pay-popup">
