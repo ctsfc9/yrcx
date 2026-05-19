@@ -8,10 +8,6 @@ const router = useRouter();
 const route = useRoute();
 const store = useAppStore();
 
-// 安全获取 store 数据的辅助函数，彻底规避 ?. 语法带来的编译报错崩溃
-const getSysConfig = () => (store && store.sysConfig) ? store.sysConfig : {};
-const getUserProfile = () => (store && store.userProfile) ? store.userProfile : {};
-
 const getNowDate = () => {
   const now = new Date();
   const y = now.getFullYear();
@@ -31,7 +27,7 @@ const postForm = reactive({
   origin: '', destination: '', 
   date: defaultDateInfo.value, dateDisplay: defaultDateInfo.display, 
   seats: 1, price: '', remark: [], car_model: '油车', 
-  contact: getUserProfile().phone || '', old_id: null 
+  contact: store.userProfile?.phone || '', old_id: null 
 });
 
 const showTypeSelector = ref(false);
@@ -53,24 +49,23 @@ const mapSelectionText = ref('定位中...');
 let mapInstance = null;
 const userLocation = ref(null); 
 
-// 👉 快捷备注：后台配置读取，支持中英文逗号
+// 👉 快捷备注：标准 computed 写法，确保响应后台配置
 const currentRemarkOptions = computed(() => {
-  const conf = getSysConfig();
-  const str = postForm.type === 'driver' ? conf.tags_driver : conf.tags_passenger;
+  const str = postForm.type === 'driver' ? store.sysConfig?.tags_driver : store.sysConfig?.tags_passenger;
   if (str && typeof str === 'string' && str.trim()) {
-      return str.split(/[,，]/).filter(Boolean);
+      return str.replace(/，/g, ',').split(',').filter(Boolean);
   }
   return ['有空位', '走高速', '不绕路', '少带行李', '可带宠物', '准时出发'];
 });
 
-// 👉 热门城市：后台配置读取 (system_config 表的 hot_cities 字段)，支持中英文逗号
+// 👉 热门城市：标准 computed 写法，动态监听 store 变化
 const computedHotCities = computed(() => {
-  const conf = getSysConfig();
-  const str = conf.hot_cities;
+  const str = store.sysConfig?.hot_cities;
   if (str && typeof str === 'string' && str.trim()) {
-    return str.split(/[,，]/).filter(Boolean);
+    // 兼容中文逗号和英文逗号，然后分割成数组
+    return str.replace(/，/g, ',').split(',').filter(Boolean);
   }
-  // 如果后台没配置，默认兜底城市
+  // 如果后台没配，默认给这套城市
   return [
     '上海', '杭州', '宁波', '温州', '南京', '苏州', '无锡', '广州', '深圳', '东莞', 
     '佛山', '福州', '厦门', '泉州', '宜宾', '翠屏区', '叙州区', '南溪区', '江安县', '长宁县', '高县'
@@ -88,12 +83,11 @@ const dateColumns = computed(() => {
 });
 
 onMounted(async () => {
-    const conf = getSysConfig();
-    if (!conf.amap_key && store && typeof store.loadConfig === 'function') {
+    if (!store.sysConfig?.amap_key) {
         await store.loadConfig();
     }
     
-    if (route.query && route.query.type) {
+    if (route.query?.type) {
         postForm.type = route.query.type;
     } else {
         showTypeSelector.value = true;
@@ -132,8 +126,7 @@ const autoLocate = () => {
 
 const loadMapScript = () => {
     if (window.AMap) { autoLocate(); return; }
-    const conf = getSysConfig();
-    const key = conf.amap_key;
+    const key = store.sysConfig?.amap_key;
     if (!key) return;
     window._AMapSecurityConfig = { securityJsCode: '' }; 
     const s = document.createElement('script');
@@ -144,7 +137,7 @@ const loadMapScript = () => {
 };
 
 const openMapSelector = (f) => { 
-    if (!window.AMap) { showToast('地图正在初始化或后台未配置高德密钥'); return; }
+    if (!window.AMap) { showToast('地图未就绪或后台未配置高德API Key'); return; }
     currentMapField.value = f; showMap.value = true; mapSearchKeyword.value = ''; 
 };
 
@@ -174,26 +167,24 @@ const confirmMapSelection = (directValue) => {
 const onPreSubmit = () => { 
     if(!postForm.origin || !postForm.destination) { showFailToast('请完善起点和终点'); return; } 
     if(!/^\d{11}$/.test(postForm.contact)) { showFailToast('请填写11位手机号'); return; }
-    
-    const user = getUserProfile();
-    if(!user.phone) { showAuth.value = true; return; } 
+    if(!store.userProfile?.phone) { showAuth.value = true; return; } 
     handlePublish(); 
 };
 
 const handlePublish = async () => { 
     submitLoading.value = true; 
-    const user = getUserProfile();
-    let currentUserId = user.id || ('user_' + Date.now());
+    let currentUserId = store.userProfile?.id || ('user_' + Date.now());
     
-    if(!user.id && store && typeof store.saveUser === 'function') {
-        store.saveUser(Object.assign({}, user, { id: currentUserId }));
+    if(!store.userProfile?.id) {
+        store.saveUser({ ...store.userProfile, id: currentUserId });
     }
 
-    const newRide = Object.assign({}, postForm, { 
+    const newRide = { 
+        ...postForm,
         user_id: currentUserId, 
         date: postForm.date, 
         remark: postForm.remark.join('，') 
-    }); 
+    }; 
     if (!newRide.price) newRide.price = '面议';
 
     try { 
@@ -201,8 +192,7 @@ const handlePublish = async () => {
         const result = await res.json();
         
         if (res.ok) { 
-            const conf = getSysConfig();
-            const topFee = Number(conf.top_fee) || 0;
+            const topFee = Number(store.sysConfig?.top_fee) || 0;
             if (topFee > 0) { 
                 showDialog({
                     title: '发布成功', message: `信息已发布！是否支付 ${topFee} 元置顶增加曝光？`,
@@ -219,13 +209,12 @@ const handlePublish = async () => {
 };
 
 const executePayment = async () => {
-    const user = getUserProfile();
-    if (!user.openid) { showFailToast('缺少微信身份'); showPayModal.value = false; return; }
+    if (!store.userProfile?.openid) { showFailToast('缺少微信身份'); showPayModal.value = false; return; }
     showLoadingToast({ message: '请求支付...', forbidClick: true, duration: 0 });
     try {
         const payRes = await fetch('/api/pay', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_id: String(user.id), openid: String(user.openid), amount: Number(requiredFee.value) })
+            body: JSON.stringify({ user_id: String(store.userProfile.id), openid: String(store.userProfile.openid), amount: Number(requiredFee.value) })
         });
         const data = await payRes.json();
         
@@ -261,10 +250,7 @@ const toggleRemark = (t) => {
 
 const submitAuth = async () => {
     if(!/^\d{11}$/.test(registerForm.phone)) { showFailToast('请输入11位数字手机号'); return; }
-    const user = getUserProfile();
-    if(store && typeof store.saveUser === 'function') {
-        store.saveUser(Object.assign({}, user, { phone: registerForm.phone }));
-    }
+    store.saveUser({ ...store.userProfile, phone: registerForm.phone });
     showAuth.value = false;
     postForm.contact = registerForm.phone;
     handlePublish();
