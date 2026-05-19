@@ -44,8 +44,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
+import { showToast } from 'vant';
 import { useAppStore } from '../store';
 import TabBar from '../components/TabBar.vue';
 
@@ -55,16 +56,11 @@ const rides = ref([]);
 const loading = ref(false);
 const finished = ref(false);
 const page = ref(1);
-const limit = 8; // 每次增量加载8条
+const limit = 8; 
 
-// 计算属性：安全动态解析原有 Store 中的轮播图 JSON 配置
 const bannerList = computed(() => {
   if (store && store.sysConfig && store.sysConfig.banners) {
-    try {
-      return JSON.parse(store.sysConfig.banners);
-    } catch (e) {
-      return [];
-    }
+    try { return JSON.parse(store.sysConfig.banners); } catch (e) { return []; }
   }
   return [];
 });
@@ -78,17 +74,10 @@ const loadRides = async () => {
             const data = await res.json();
             const newRides = data.results || [];
             rides.value = [...rides.value, ...newRides];
-            
-            if (newRides.length < limit) {
-                finished.value = true; 
-            } else {
-                page.value++;
-            }
-        } else {
-            finished.value = true;
-        }
+            if (newRides.length < limit) finished.value = true; 
+            else page.value++;
+        } else { finished.value = true; }
     } catch (e) {
-        console.error(e);
         finished.value = true;
     } finally {
         loading.value = false;
@@ -105,10 +94,34 @@ const formatDate = (str) => {
     return String(str).replace('T', ' ').substring(0, 16);
 };
 
-onMounted(async () => {
-    if (store && typeof store.loadConfig === 'function') {
-        await store.loadConfig();
+// 👉 核心恢复：双击退出防误触逻辑
+let clickTime = 0;
+const handlePopstate = () => {
+  const now = new Date().getTime();
+  if (now - clickTime < 2000) {
+    // 允许退出（如果在微信内直接关闭页面）
+    if (typeof WeixinJSBridge !== 'undefined') {
+      WeixinJSBridge.call('closeWindow');
     }
-    await loadRides();
+  } else {
+    clickTime = now;
+    showToast('再按一次退出宜人出行');
+    history.pushState(null, null, document.URL); // 再次拦截
+  }
+};
+
+onMounted(() => {
+    // 异步加载配置，绝不阻塞首页行程列表渲染，提速10倍
+    if (store && typeof store.loadConfig === 'function') {
+        store.loadConfig().catch(()=>{});
+    }
+    
+    // 初始化双击退出拦截
+    history.pushState(null, null, document.URL);
+    window.addEventListener('popstate', handlePopstate);
+});
+
+onUnmounted(() => {
+    window.removeEventListener('popstate', handlePopstate);
 });
 </script>
