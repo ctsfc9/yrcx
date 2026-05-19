@@ -3,11 +3,11 @@
     <van-nav-bar title="个人中心" />
 
     <div style="background: #ff7700; padding: 30px 20px; color: #fff;">
-      <div v-if="store && store.userProfile && store.userProfile.id" style="display: flex; align-items: center;">
-        <van-image round width="60" height="60" :src="store.userProfile.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" />
+      <div v-if="userProfile.id" style="display: flex; align-items: center;">
+        <van-image round width="60" height="60" :src="userProfile.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" />
         <div style="margin-left: 15px;">
-          <div style="font-size: 18px; font-weight: bold;">{{ store.userProfile.nickname || '微信用户' }}</div>
-          <div style="font-size: 14px; margin-top: 5px;">{{ store.userProfile.phone || '未绑定手机号' }}</div>
+          <div style="font-size: 18px; font-weight: bold;">{{ userProfile.nickname || '微信用户' }}</div>
+          <div style="font-size: 14px; margin-top: 5px;">{{ userProfile.phone || '未绑定手机号' }}</div>
         </div>
       </div>
       <div v-else style="display: flex; align-items: center;" @click="goToAuth">
@@ -21,7 +21,7 @@
 
     <van-cell-group title="我的发布" style="margin-top: 10px;">
       <div v-if="loading" style="text-align: center; padding: 40px; color: #999;">行程数据拉取中...</div>
-      <div v-else-if="!store || !store.userProfile || !store.userProfile.id" style="text-align: center; padding: 40px; color: #999;">请先完成微信授权登录</div>
+      <div v-else-if="!userProfile.id" style="text-align: center; padding: 40px; color: #999;">请先完成微信授权登录</div>
       <div v-else-if="myRides.length === 0" style="text-align: center; padding: 40px; color: #999;">暂无行程发布记录</div>
       
       <div v-else style="padding: 10px 15px;">
@@ -50,7 +50,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, reactive, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAppStore } from '../store';
 import TabBar from '../components/TabBar.vue';
@@ -60,20 +60,32 @@ const router = useRouter();
 const myRides = ref([]);
 const loading = ref(true);
 
+// 将响应式数据代理到本地，彻底杜绝模板引擎中层层点语法引发的崩溃
+const userProfile = reactive({
+  id: '',
+  nickname: '',
+  avatar: '',
+  phone: ''
+});
+
 onMounted(async () => {
   try {
-    // 脚本防御层：只有在全局状态初始化、用户档案和用户ID存在时才拉取数据
     if (store && store.userProfile && store.userProfile.id) {
+      userProfile.id = store.userProfile.id;
+      userProfile.nickname = store.userProfile.nickname;
+      userProfile.avatar = store.userProfile.avatar;
+      userProfile.phone = store.userProfile.phone;
+
       const res = await fetch('/api/rides');
       if (res.ok) {
         const data = await res.json();
         if (data && data.results) {
-          myRides.value = data.results.filter(r => r.user_id === store.userProfile.id);
+          myRides.value = data.results.filter(r => r.user_id === userProfile.id);
         }
       }
     }
   } catch (e) {
-    console.error('拉取用户关联行程异常', e);
+    console.error('拉取用户行程异常', e);
   } finally {
     loading.value = false;
   }
@@ -93,10 +105,10 @@ const goToAuth = () => {
 };
 
 const deleteRide = async (id) => {
-  if (!store || !store.userProfile || !store.userProfile.id) return;
+  if (!userProfile.id) return;
   if (window.confirm('确定要删除这条行程吗？删除后无法恢复。')) {
     try {
-      const res = await fetch(`/api/rides?id=${id}&user_id=${store.userProfile.id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/rides?id=${id}&user_id=${userProfile.id}`, { method: 'DELETE' });
       if (res.ok) {
         myRides.value = myRides.value.filter(r => r.id !== id);
       }
