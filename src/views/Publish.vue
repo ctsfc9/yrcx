@@ -27,7 +27,7 @@ const postForm = reactive({
   origin: '', destination: '', 
   date: defaultDateInfo.value, dateDisplay: defaultDateInfo.display, 
   seats: 1, price: '', remark: [], car_model: '油车', 
-  contact: store.userProfile?.phone || '', old_id: null 
+  contact: (store.userProfile && store.userProfile.phone) ? store.userProfile.phone : '', old_id: null 
 });
 
 const showTypeSelector = ref(false);
@@ -49,27 +49,18 @@ const mapSelectionText = ref('定位中...');
 let mapInstance = null;
 const userLocation = ref(null); 
 
-// 👉 快捷备注：标准 computed 写法，确保响应后台配置
+// 👉 独立存储的热门城市变量，避免 computed 失效
+const localHotCities = ref([
+  '上海', '杭州', '宁波', '温州', '南京', '苏州', '无锡', '广州', '深圳', '东莞', 
+  '佛山', '福州', '厦门', '泉州', '宜宾', '翠屏区', '叙州区', '南溪区', '江安县', '长宁县', '高县'
+]);
+
 const currentRemarkOptions = computed(() => {
-  const str = postForm.type === 'driver' ? store.sysConfig?.tags_driver : store.sysConfig?.tags_passenger;
+  const str = postForm.type === 'driver' ? (store.sysConfig && store.sysConfig.tags_driver) : (store.sysConfig && store.sysConfig.tags_passenger);
   if (str && typeof str === 'string' && str.trim()) {
       return str.replace(/，/g, ',').split(',').filter(Boolean);
   }
   return ['有空位', '走高速', '不绕路', '少带行李', '可带宠物', '准时出发'];
-});
-
-// 👉 热门城市：标准 computed 写法，动态监听 store 变化
-const computedHotCities = computed(() => {
-  const str = store.sysConfig?.hot_cities;
-  if (str && typeof str === 'string' && str.trim()) {
-    // 兼容中文逗号和英文逗号，然后分割成数组
-    return str.replace(/，/g, ',').split(',').filter(Boolean);
-  }
-  // 如果后台没配，默认给这套城市
-  return [
-    '上海', '杭州', '宁波', '温州', '南京', '苏州', '无锡', '广州', '深圳', '东莞', 
-    '佛山', '福州', '厦门', '泉州', '宜宾', '翠屏区', '叙州区', '南溪区', '江安县', '长宁县', '高县'
-  ];
 });
 
 const dateColumns = computed(() => {
@@ -83,11 +74,24 @@ const dateColumns = computed(() => {
 });
 
 onMounted(async () => {
-    if (!store.sysConfig?.amap_key) {
+    // 强制加载一次配置
+    if (store && typeof store.loadConfig === 'function') {
         await store.loadConfig();
     }
     
-    if (route.query?.type) {
+    // 👉 强制解析后台配置的 hot_cities
+    if (store && store.sysConfig && store.sysConfig.hot_cities) {
+        const rawCities = store.sysConfig.hot_cities;
+        if (typeof rawCities === 'string' && rawCities.trim() !== '') {
+            // 将中文逗号替换为英文逗号并转为数组
+            const parsedCities = rawCities.replace(/，/g, ',').split(',').filter(item => item.trim() !== '');
+            if (parsedCities.length > 0) {
+                localHotCities.value = parsedCities;
+            }
+        }
+    }
+
+    if (route.query && route.query.type) {
         postForm.type = route.query.type;
     } else {
         showTypeSelector.value = true;
@@ -126,7 +130,7 @@ const autoLocate = () => {
 
 const loadMapScript = () => {
     if (window.AMap) { autoLocate(); return; }
-    const key = store.sysConfig?.amap_key;
+    const key = (store.sysConfig && store.sysConfig.amap_key) ? store.sysConfig.amap_key : '';
     if (!key) return;
     window._AMapSecurityConfig = { securityJsCode: '' }; 
     const s = document.createElement('script');
@@ -137,7 +141,7 @@ const loadMapScript = () => {
 };
 
 const openMapSelector = (f) => { 
-    if (!window.AMap) { showToast('地图未就绪或后台未配置高德API Key'); return; }
+    if (!window.AMap) { showToast('地图正在初始化或后台未配置高德密钥'); return; }
     currentMapField.value = f; showMap.value = true; mapSearchKeyword.value = ''; 
 };
 
@@ -167,24 +171,24 @@ const confirmMapSelection = (directValue) => {
 const onPreSubmit = () => { 
     if(!postForm.origin || !postForm.destination) { showFailToast('请完善起点和终点'); return; } 
     if(!/^\d{11}$/.test(postForm.contact)) { showFailToast('请填写11位手机号'); return; }
-    if(!store.userProfile?.phone) { showAuth.value = true; return; } 
+    
+    if(!(store.userProfile && store.userProfile.phone)) { showAuth.value = true; return; } 
     handlePublish(); 
 };
 
 const handlePublish = async () => { 
     submitLoading.value = true; 
-    let currentUserId = store.userProfile?.id || ('user_' + Date.now());
+    let currentUserId = (store.userProfile && store.userProfile.id) ? store.userProfile.id : ('user_' + Date.now());
     
-    if(!store.userProfile?.id) {
-        store.saveUser({ ...store.userProfile, id: currentUserId });
+    if(!(store.userProfile && store.userProfile.id) && store && typeof store.saveUser === 'function') {
+        store.saveUser(Object.assign({}, store.userProfile, { id: currentUserId }));
     }
 
-    const newRide = { 
-        ...postForm,
+    const newRide = Object.assign({}, postForm, { 
         user_id: currentUserId, 
         date: postForm.date, 
         remark: postForm.remark.join('，') 
-    }; 
+    }); 
     if (!newRide.price) newRide.price = '面议';
 
     try { 
@@ -192,7 +196,7 @@ const handlePublish = async () => {
         const result = await res.json();
         
         if (res.ok) { 
-            const topFee = Number(store.sysConfig?.top_fee) || 0;
+            const topFee = Number(store.sysConfig && store.sysConfig.top_fee) || 0;
             if (topFee > 0) { 
                 showDialog({
                     title: '发布成功', message: `信息已发布！是否支付 ${topFee} 元置顶增加曝光？`,
@@ -209,7 +213,7 @@ const handlePublish = async () => {
 };
 
 const executePayment = async () => {
-    if (!store.userProfile?.openid) { showFailToast('缺少微信身份'); showPayModal.value = false; return; }
+    if (!(store.userProfile && store.userProfile.openid)) { showFailToast('缺少微信身份'); showPayModal.value = false; return; }
     showLoadingToast({ message: '请求支付...', forbidClick: true, duration: 0 });
     try {
         const payRes = await fetch('/api/pay', {
@@ -250,7 +254,9 @@ const toggleRemark = (t) => {
 
 const submitAuth = async () => {
     if(!/^\d{11}$/.test(registerForm.phone)) { showFailToast('请输入11位数字手机号'); return; }
-    store.saveUser({ ...store.userProfile, phone: registerForm.phone });
+    if(store && typeof store.saveUser === 'function') {
+        store.saveUser(Object.assign({}, store.userProfile, { phone: registerForm.phone }));
+    }
     showAuth.value = false;
     postForm.contact = registerForm.phone;
     handlePublish();
@@ -343,7 +349,7 @@ const submitAuth = async () => {
             
             <div style="font-size:13px; color:#666; margin-bottom:8px; font-weight:bold;">快捷预设热门城市：</div>
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:20px; max-height:120px; overflow-y:auto;">
-                <div v-for="c in computedHotCities" :key="c" @click="confirmMapSelection(c)" style="padding:6px 12px; background:#f5f5f5; border-radius:6px; font-size:13px; color:#333; border:1px solid #eee; cursor: pointer;">
+                <div v-for="c in localHotCities" :key="c" @click="confirmMapSelection(c)" style="padding:6px 12px; background:#f5f5f5; border-radius:6px; font-size:13px; color:#333; border:1px solid #eee; cursor: pointer;">
                     {{ c }}
                 </div>
             </div>
