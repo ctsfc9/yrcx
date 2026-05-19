@@ -8,7 +8,7 @@ import TabBar from '../components/TabBar.vue';
 const router = useRouter();
 const store = useAppStore();
 const rideList = ref([]);
-const loading = ref(true); // 控制骨架屏
+const loading = ref(true); // 👉 骨架屏控制开关
 const showAuthGuide = ref(false);
 
 let exitTime = 0;
@@ -28,6 +28,7 @@ onMounted(async () => {
   history.pushState(null, null, document.URL);
   window.addEventListener('popstate', handlePopstate);
 
+  // 异步加载配置，不阻塞 UI
   if(!store.sysConfig.amap_key) store.loadConfig();
 
   const urlParams = new URLSearchParams(window.location.search);
@@ -36,7 +37,6 @@ onMounted(async () => {
       showAuthGuide.value = true;
   }
 
-  // 👉 异步拉取数据，期间展示骨架屏
   try {
     const res = await fetch('/api/rides');
     const data = await res.json();
@@ -44,7 +44,7 @@ onMounted(async () => {
   } catch (e) {
     showToast('数据加载失败');
   } finally {
-    loading.value = false; // 瞬间关闭骨架屏显示真实数据
+    loading.value = false; // 👉 网络请求结束，瞬间隐藏骨架屏，展示真实数据
   }
 });
 
@@ -93,7 +93,12 @@ const goToAuth = () => {
     <div style="padding: 10px;">
       <div v-if="loading">
          <div v-for="i in 4" :key="i" style="background: #fff; padding: 15px; border-radius: 8px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
-            <van-skeleton title :row="3" />
+            <div style="display:flex; justify-content:space-between; margin-bottom: 15px;">
+                <van-skeleton title :row="0" style="width: 30%;" />
+                <van-skeleton title :row="0" style="width: 20%;" />
+            </div>
+            <van-skeleton title :row="1" style="width: 80%; margin-bottom: 15px;" />
+            <van-skeleton title :row="0" style="width: 50%;" />
          </div>
       </div>
       
@@ -137,4 +142,7 @@ const goToAuth = () => {
 .ride-card:active { background: #f9f9f9; }
 .is-expired-card { opacity: 0.6; filter: grayscale(100%); }
 .expired-stamp { position: absolute; top: 15px; right: 15px; font-size: 22px; font-weight: 900; color: #c00; border: 4px solid #c00; padding: 4px 12px; transform: rotate(-20deg); border-radius: 8px; opacity: 0.8; letter-spacing: 4px; pointer-events: none; box-shadow: 0 0 0 2px #fff inset; }
+
+/* 深度重写骨架屏样式，使其更贴合实际卡片排版 */
+:deep(.van-skeleton__row) { height: 16px; border-radius: 4px; }
 </style>
