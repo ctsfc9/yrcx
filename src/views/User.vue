@@ -11,20 +11,25 @@ const myRides = ref([]);
 const pageLoading = ref(true);
 
 onMounted(async () => {
-    // 极简防御逻辑，防止任何空指针导致白屏
+    // 终极防御：任何情况下都不允许崩溃白屏
     try {
+        // 如果未登录，直接渲染未登录界面，退出函数
         if (!store.userProfile || !store.userProfile.id) {
             pageLoading.value = false;
             return;
         }
+        
         const res = await fetch(`/api/rides`);
         const data = await res.json();
-        if (data && data.results) {
+        
+        // 确保 data.results 存在再进行过滤
+        if (data && Array.isArray(data.results)) {
             myRides.value = data.results.filter(r => r.user_id === store.userProfile.id);
         }
     } catch(e) {
-        console.error('加载行程失败');
+        console.error('加载行程失败', e);
     } finally {
+        // 无论成功失败，必须关闭 Loading 才能显示页面
         pageLoading.value = false;
     }
 });
