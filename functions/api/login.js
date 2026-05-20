@@ -1,4 +1,4 @@
-// 微信授权登录核心：带数据库自动升级的安全版本
+// 微信授权登录核心：安全读取密钥
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -8,15 +8,21 @@ export async function onRequest(context) {
   if (!code) return new Response(JSON.stringify({ error: '缺失授权凭证' }), { status: 400 });
 
   try {
-    // 🚀 核心修复：自动静默升级您的数据库表结构，无感添加缺失的 is_banned 字段，杜绝崩溃报错
     try { await db.prepare("ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0").run(); } catch(e) {}
-
-    const config = await db.prepare("SELECT wx_appid FROM system_config LIMIT 1").first();
-    const appId = config?.wx_appid || 'wx90223bd25485040a';
-
     await db.prepare("CREATE TABLE IF NOT EXISTS app_secrets (key TEXT PRIMARY KEY, value TEXT)").run();
-    const secretRow = await db.prepare("SELECT value FROM app_secrets WHERE key = 'wx_appsecret'").first();
-    const appSecret = secretRow?.value;
+
+    // 🌟 增量：统一从安全表中读取 AppID 和 AppSecret
+    const { results } = await db.prepare("SELECT * FROM app_secrets").all();
+    const secrets = {};
+    results.forEach(r => secrets[r.key] = r.value);
+
+    // 兼容防呆机制
+    let appId = secrets['wx_appid'];
+    if (!appId) {
+        const config = await db.prepare("SELECT wx_appid FROM system_config LIMIT 1").first();
+        appId = config?.wx_appid || 'wx90223bd25485040a';
+    }
+    const appSecret = secrets['wx_appsecret'];
 
     if (!appSecret) {
         return new Response(JSON.stringify({ error: '系统拦截：您还未在管理后台配置 AppSecret 密钥。' }), { status: 500 });
