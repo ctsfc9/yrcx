@@ -108,10 +108,13 @@
                                 </div>
                             </div>
                             <div style="display:flex; gap: 8px;">
-                                <button @click="toggleBanUser(u)" :style="{background: u.is_banned ? '#07c160' : '#ff976a', color:'#fff', border:'none', padding:'8px 14px', borderRadius:'6px', cursor: 'pointer', fontWeight:'bold'}">
-                                    {{ u.is_banned ? '🟢 解除封禁' : '🟠 封禁拉黑' }}
+                                <button v-if="!u.is_banned" @click="toggleBanUser(u, 1)" style="background:#ff976a; color:#fff; border:none; padding:8px 12px; border-radius:6px; cursor: pointer; font-weight:bold;">
+                                    🚫 封禁
                                 </button>
-                                <button @click="deleteUser(u.id)" style="background: #ee0a24; color:'#fff'; border:none; padding:8px 14px; border-radius:6px; cursor: 'pointer'; font-weight:bold;">
+                                <button v-else @click="toggleBanUser(u, 0)" style="background:#07c160; color:#fff; border:none; padding:8px 12px; border-radius:6px; cursor: pointer; font-weight:bold;">
+                                    ✅ 解封
+                                </button>
+                                <button @click="deleteUser(u.id)" style="background: #ee0a24; color:#fff; border:none; padding:8px 12px; border-radius:6px; cursor: pointer; font-weight:bold;">
                                     🗑️ 删除
                                 </button>
                             </div>
@@ -185,14 +188,11 @@ const removeBanner = (idx) => { bannerItems.value.splice(idx, 1); };
 const saveConfig = async () => {
     config.value.banners = JSON.stringify(bannerItems.value);
     try {
-        const res1 = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config.value) });
-        const res2 = await fetch('/api/secret', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(secrets.value) });
-        
-        if(res1.ok && res2.ok){
-            Toast.success('参数配置已成功保存！');
-            if (store && typeof store.loadConfig === 'function') store.loadConfig();
-        } else { Toast.fail('部分数据保存失败'); }
-    } catch (e) { Toast.fail('网络同步异常'); }
+        await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config.value) });
+        await fetch('/api/secret', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(secrets.value) });
+        Toast.success('保存成功');
+        if (store && typeof store.loadConfig === 'function') store.loadConfig();
+    } catch (e) { Toast.fail('保存失败'); }
 };
 
 const deleteRide = async (id) => {
@@ -212,16 +212,15 @@ const quickBanUser = async (userId) => {
     }
 };
 
-const toggleBanUser = async (user) => {
-    const targetStatus = user.is_banned ? 0 : 1;
+const toggleBanUser = async (user, targetStatus) => {
     const res = await fetch(`/api/users/ban`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: user.id, is_banned: targetStatus }) });
     if(res.ok) { user.is_banned = targetStatus; Toast.success(targetStatus ? '已拉黑封禁' : '已解封'); }
 };
 
 const deleteUser = async (userId) => {
-    if(window.confirm('⚠️ 彻底删除用户将清除其所有数据！确认操作吗？')) {
+    if(window.confirm('⚠️ 彻底删除用户将同时删除其所有数据！确认操作吗？')) {
         const res = await fetch(`/api/users?id=${userId}`, { method: 'DELETE' });
-        if(res.ok) { Toast.success('用户已删除'); fetchAdminAssets(); }
+        if(res.ok) { Toast.success('用户已彻底删除'); fetchAdminAssets(); }
     }
 };
 
