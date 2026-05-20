@@ -1,184 +1,118 @@
-<script setup>
-import { ref, onMounted, reactive } from 'vue';
-import { useRouter } from 'vue-router';
-import { showDialog, showSuccessToast, showFailToast, showToast } from 'vant';
-import { useAppStore } from '../store';
-import TabBar from '../components/TabBar.vue';
-
-const router = useRouter();
-const store = useAppStore();
-const myRidesList = ref([]);
-
-// 编辑个人信息的弹窗控制
-const showEditPop = ref(false);
-const editForm = reactive({
-  nickname: '',
-  phone: ''
-});
-
-onMounted(() => { 
-  fetchMyRides(); 
-});
-
-const fetchMyRides = async () => {
-  if(!store.userProfile.id) return;
-  try {
-    const res = await fetch(`/api/rides?type=all`); 
-    const data = await res.json();
-    if (data.results) {
-      myRidesList.value = data.results.filter(item => item.user_id === store.userProfile.id);
-    }
-  } catch(e) {
-    console.error('获取记录失败', e);
-  }
-};
-
-const formatDate = (str) => {
-  if (!str) return '待定';
-  const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2})[:](\d{1,2}))?/);
-  if (match) return `${match[2]}月${match[3]}日 ${match[4] || '0'}点`;
-  return str;
-};
-
-// 打开修改信息的弹窗
-const openEditProfile = () => {
-  editForm.nickname = store.userProfile.nickname || '';
-  editForm.phone = store.userProfile.phone || '';
-  showEditPop.value = true;
-};
-
-// 提交修改到后端并更新 Store
-const submitEditProfile = async () => {
-  if (!editForm.nickname || !editForm.phone) {
-    showToast('请填写完整信息');
-    return;
-  }
-  try {
-    const payload = { 
-      ...store.userProfile, 
-      nickname: editForm.nickname, 
-      phone: editForm.phone 
-    };
-    const res = await fetch('/api/login', { 
-      method: 'POST', 
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload) 
-    });
-    
-    if (res.ok) {
-      store.saveUser(payload);
-      showEditPop.value = false;
-      showSuccessToast('信息更新成功');
-    } else {
-      showFailToast('更新失败');
-    }
-  } catch (e) {
-    showFailToast('网络错误');
-  }
-};
-
-const handleUserDelete = (id) => { 
-  showDialog({
-    title: '提示',
-    message: '确认删除此行程? 删除后不可恢复。',
-    showCancelButton: true
-  }).then(async () => {
-    await fetch(`/api/rides?id=${id}&user_id=${store.userProfile.id}`, { method: 'DELETE' });
-    fetchMyRides();
-    showSuccessToast('删除成功');
-  }).catch(() => {}); 
-};
-
-const editRide = (item) => {
-    store.setEditPayload(item);
-    router.push('/publish');
-};
-
-const handleLogout = () => {
-    showDialog({
-      title: '提示',
-      message: '确定退出登录?',
-      showCancelButton: true
-    }).then(() => {
-        localStorage.clear();
-        window.location.href = '/';
-    }).catch(() => {});
-};
-</script>
-
 <template>
-  <div style="padding-bottom: 80px; min-height: 100vh; background: #f7f8fa;">
-    <div style="background: linear-gradient(135deg, #ff6600, #ff8800); color: #fff; padding: 50px 20px 40px; display: flex; align-items: center;" @click="openEditProfile">
-      <img :src="store.userProfile.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" style="width: 70px; height: 70px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.4); margin-right: 15px;"/>
-      <div style="flex: 1;">
-        <div style="font-size:20px;font-weight:bold;">{{ store.userProfile.nickname || '点击完善信息' }}</div>
-        <div style="font-size:13px;opacity:0.9;margin-top:5px;">
-          <van-icon name="phone-o" /> {{ store.userProfile.phone || '尚未绑定手机号' }}
+  <div style="min-height: 100vh; background: #f7f8fa; padding-bottom: 90px; font-family: sans-serif;">
+    <van-nav-bar title="个人中心" />
+
+    <div style="background: #ff7700; padding: 30px 20px; color: #fff; display: flex; align-items: center;">
+      <template v-if="localUser.id">
+        <van-image round width="60" height="60" :src="localUser.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" />
+        <div style="margin-left: 15px;">
+          <div style="font-size: 18px; font-weight: bold;">{{ localUser.nickname || '微信用户' }}</div>
+          <div style="font-size: 14px; margin-top: 5px;">📱 {{ localUser.phone || '未绑定手机号' }}</div>
+        </div>
+      </template>
+      <template v-else>
+        <div style="width: 60px; height: 60px; background: rgba(255,255,255,0.3); border-radius: 50%; text-align: center; line-height: 60px; font-size: 30px; cursor: pointer;" @click="goToAuth">👤</div>
+        <div style="margin-left: 15px; cursor: pointer;" @click="goToAuth">
+          <div style="font-size: 18px; font-weight: bold;">点击登录 / 授权</div>
+          <div style="font-size: 14px; margin-top: 5px;">授权微信后可管理您的行程</div>
+        </div>
+      </template>
+    </div>
+
+    <div style="margin: 15px;">
+      <div style="font-size: 16px; font-weight: bold; color: #333; margin-bottom: 15px; border-left: 4px solid #ff7700; padding-left: 8px;">我的发布</div>
+      
+      <div v-if="loading" style="text-align: center; padding: 40px; color: #999; background: #fff; border-radius: 8px;">行程加载中...</div>
+      <div v-else-if="!localUser.id" style="text-align: center; padding: 40px; color: #999; background: #fff; border-radius: 8px;">请先完成微信授权登录</div>
+      <div v-else-if="myRides.length === 0" style="text-align: center; padding: 40px; color: #999; background: #fff; border-radius: 8px;">暂无行程发布记录</div>
+      
+      <div v-else v-for="item in myRides" :key="item.id" style="background: #fff; border-radius: 8px; padding: 15px; margin-bottom: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.03);">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+          <span :style="{color: item.type === 'driver' ? '#1989fa' : '#ff7700', fontWeight: 'bold', fontSize: '13px'}">
+            {{ item.type === 'driver' ? '🚗 车主找人' : '🙋‍♂️ 乘客找车' }}
+          </span>
+          <span v-if="item.is_top" style="color: #ee0a24; font-size: 12px; font-weight: bold;">🔥已置顶</span>
+        </div>
+        <div style="font-size: 16px; font-weight: bold; margin-bottom: 6px; color: #333; cursor: pointer;" @click="router.push(`/detail?id=${item.id}`)">
+          {{ item.origin }} ➡️ {{ item.destination }}
+        </div>
+        <div style="color: #666; font-size: 13px; margin-bottom: 15px;">出发时间: {{ formatDate(item.date) }}</div>
+        
+        <div style="display: flex; gap: 10px; border-top: 1px solid #f0f0f0; padding-top: 10px;">
+          <button style="flex: 1; height: 34px; background: #fff; border: 1px solid #1989fa; color: #1989fa; border-radius: 4px; font-weight: bold; font-size: 13px; cursor: pointer;" @click="router.push(`/detail?id=${item.id}`)">详情</button>
+          <button style="flex: 1; height: 34px; background: #fff; border: 1px solid #ee0a24; color: #ee0a24; border-radius: 4px; font-weight: bold; font-size: 13px; cursor: pointer;" @click="deleteRide(item.id)">删除</button>
         </div>
       </div>
-      <van-icon name="arrow" size="20" style="opacity: 0.7" />
     </div>
     
-    <div style="display: flex; justify-content: space-around; background: #fff; padding: 20px 0; border-radius: 0 0 15px 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
-      <div style="display: flex; flex-direction: column; align-items: center; border-right: 1px solid #f0f0f0; flex: 1;">
-        <span style="font-size:18px; font-weight:bold; color: #ff6600;">0.00</span>
-        <span style="font-size:12px; color:#999; margin-top:4px;">账户余额</span>
-      </div>
-      <div style="display: flex; flex-direction: column; align-items: center; flex: 1;">
-        <span style="font-size:18px; font-weight:bold;">{{ myRidesList.length }}</span>
-        <span style="font-size:12px; color:#999; margin-top:4px;">我的发布</span>
-      </div>
-    </div>
-
-    <van-tabs sticky animated color="#ff6600" style="margin-top:12px;">
-      <van-tab title="行程管理">
-        <div v-if="myRidesList.length === 0" style="text-align:center;padding:50px 20px;color:#999;">
-          <van-icon name="notes-o" size="48" style="display:block;margin-bottom:10px;"/>
-          暂无记录，快去发布行程吧
-        </div>
-        <div v-else style="padding: 5px;">
-          <div v-for="item in myRidesList" :key="item.id" style="background:#fff; margin:12px; padding:18px; border-radius:12px; position:relative;">
-            <div style="display:flex; align-items:center; margin-bottom:12px;">
-              <span :style="{background: item.type==='driver'?'#eaf5ff':'#fff2e8', color: item.type==='driver'?'#1989fa':'#ff7700'}" style="font-size:10px; padding:2px 6px; border-radius:4px; margin-right:8px;">
-                {{ item.type === 'driver' ? '车主' : '乘客' }}
-              </span>
-              <div style="font-weight:bold; font-size:17px; flex:1;">{{ item.origin }} → {{ item.destination }}</div>
-            </div>
-            
-            <div style="display:flex; justify-content:space-between; align-items:center; color:#666; font-size:14px;">
-              <div><van-icon name="clock-o" /> {{ formatDate(item.date) }}</div>
-              <div style="color:#ee0a24; font-size:18px; font-weight:bold;">¥{{ item.price }}</div>
-            </div>
-
-            <div style="margin-top:15px; padding-top:15px; border-top:1px solid #f9f9f9; display:flex; justify-content:flex-end; gap:12px;">
-              <van-button size="small" icon="edit" round type="primary" plain @click="editRide(item)">修改</van-button>
-              <van-button size="small" icon="delete-o" round type="danger" plain @click="handleUserDelete(item.id)">删除</van-button>
-            </div>
-          </div>
-        </div>
-      </van-tab>
-    </van-tabs>
-
-    <div style="padding:30px 20px;">
-      <van-button block round plain type="danger" @click="handleLogout">退出当前账号</van-button>
-    </div>
-
-    <van-popup v-model:show="showEditPop" position="bottom" round style="height: 50%; padding: 20px;">
-      <h3 style="text-align:center; margin-bottom:25px;">完善个人信息</h3>
-      <van-field v-model="editForm.nickname" label="真实姓名" placeholder="请输入姓名" />
-      <van-field v-model="editForm.phone" label="手机号码" type="tel" placeholder="用于接收乘客联系" />
-      <div style="margin-top:40px;">
-        <van-button block round type="primary" color="#ff6600" @click="submitEditProfile">保存并更新</van-button>
-        <van-button block round plain style="margin-top:12px; border:none;" @click="showEditPop=false">取消</van-button>
-      </div>
-    </van-popup>
-
     <TabBar />
   </div>
 </template>
 
-<style scoped>
-:deep(.van-tabs__nav) {
-  background-color: transparent;
-}
-</style>
+<script setup>
+import { ref, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
+import { useAppStore } from '../store';
+import TabBar from '../components/TabBar.vue';
+
+const store = useAppStore();
+const router = useRouter();
+const myRides = ref([]);
+const loading = ref(true);
+
+const localUser = ref({ id: '', nickname: '', avatar: '', phone: '' });
+
+onMounted(async () => {
+  try {
+    if (store && store.userProfile) {
+      localUser.value = {
+          id: store.userProfile.id || '',
+          nickname: store.userProfile.nickname || '',
+          avatar: store.userProfile.avatar || '',
+          phone: store.userProfile.phone || ''
+      };
+    }
+    
+    if (localUser.value.id) {
+      const res = await fetch('/api/rides');
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.results) {
+          myRides.value = data.results.filter(r => r.user_id === localUser.value.id);
+        }
+      }
+    }
+  } catch (e) {
+    console.error(e);
+  } finally {
+    loading.value = false;
+  }
+});
+
+const formatDate = (str) => {
+  if (!str) return '';
+  const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})[T\s](\d{1,2}):(\d{1,2})/);
+  if (match) return `${match[2]}月${match[3]}日 ${match[4]}:${match[5]}`;
+  return str;
+};
+
+const goToAuth = () => {
+  const appId = (store && store.sysConfig && store.sysConfig.wx_appid) ? store.sysConfig.wx_appid : 'wx90223bd25485040a';
+  const redirectUri = encodeURIComponent(window.location.origin + '/');
+  window.location.href = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_userinfo&state=STATE#wechat_redirect`;
+};
+
+const deleteRide = async (id) => {
+  if (!localUser.value.id) return;
+  if (window.confirm('确定要删除这条行程吗？删除后无法恢复。')) {
+    try {
+      const res = await fetch(`/api/rides?id=${id}&user_id=${localUser.value.id}`, { method: 'DELETE' });
+      if (res.ok) {
+        myRides.value = myRides.value.filter(r => r.id !== id);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
+};
+</script>
