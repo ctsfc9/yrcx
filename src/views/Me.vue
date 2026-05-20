@@ -1,40 +1,121 @@
 <template>
-  <div style="min-height: 100vh; background: #f7f8fa;">
-    <van-nav-bar title="个人中心" />
-    <div style="background:#fff; padding:30px; text-align:center;">
-      <div v-if="user.id">
-        <img :src="user.avatar" style="width:60px; border-radius:50%;" />
-        <p>{{ user.nickname }}</p>
-      </div>
-      <van-button v-else type="primary" @click="goToAuth">点击授权登录</van-button>
+  <div style="min-height: 100vh; background: #f7f8fa; padding-bottom: 90px; font-family: sans-serif;">
+    <div style="height: 46px; background: #fff; text-align: center; line-height: 46px; font-size: 16px; font-weight: bold; border-bottom: 1px solid #eee; color: #333;">
+      个人中心
     </div>
-    <van-cell title="退出登录" style="color:red; margin-top:20px; text-align:center;" @click="logout" />
-    <Tabbar v-model="active" route>
-      <TabbarItem replace to="/" icon="home-o">首页</TabbarItem>
-      <TabbarItem replace to="/publish" icon="plus">发布</TabbarItem>
-      <TabbarItem replace to="/me" icon="user-o">我的</TabbarItem>
-    </Tabbar>
+
+    <div style="background: #ff7700; padding: 30px 20px; color: #fff; display: flex; align-items: center;">
+      <template v-if="localUser.id">
+        <img :src="localUser.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" style="width: 60px; height: 60px; border-radius: 50%; border: 2px solid #fff; object-fit: cover; background: #fff;" />
+        <div style="margin-left: 15px;">
+          <div style="font-size: 18px; font-weight: bold;">{{ localUser.nickname || '微信用户' }}</div>
+          <div style="font-size: 14px; margin-top: 5px;">📱 {{ localUser.phone || '未绑定手机号' }}</div>
+        </div>
+      </template>
+      <template v-else>
+        <div style="width: 60px; height: 60px; background: rgba(255,255,255,0.3); border-radius: 50%; text-align: center; line-height: 60px; font-size: 30px; cursor: pointer;" @click="goToAuth">👤</div>
+        <div style="margin-left: 15px; cursor: pointer;" @click="goToAuth">
+          <div style="font-size: 18px; font-weight: bold;">点击登录 / 授权</div>
+          <div style="font-size: 14px; margin-top: 5px;">授权微信后可管理您的行程</div>
+        </div>
+      </template>
+    </div>
+
+    <div style="margin: 15px;">
+      <div style="font-size: 16px; font-weight: bold; color: #333; margin-bottom: 15px; border-left: 4px solid #ff7700; padding-left: 8px;">我的发布</div>
+      
+      <div v-if="loading" style="text-align: center; padding: 40px; color: #999; background: #fff; border-radius: 8px;">历史行程加载中...</div>
+      <div v-slot:default v-else-if="myRides.length === 0" style="text-align: center; padding: 40px; color: #999; background: #fff; border-radius: 8px;">暂无行程发布记录</div>
+      
+      <div v-else v-for="item in myRides" :key="item.id" style="background: #fff; border-radius: 8px; padding: 15px; margin-bottom: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.03);">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+          <span :style="{color: item.type === 'driver' ? '#1989fa' : '#ff7700', fontWeight: 'bold', fontSize: '13px'}">
+            {{ item.type === 'driver' ? '🚗 车主找人' : '🙋‍♂️ 乘客找车' }}
+          </span>
+          <span v-if="item.is_top" style="color: #ee0a24; font-size: 12px; font-weight: bold;">🔥置顶</span>
+        </div>
+        <div style="font-size: 16px; font-weight: bold; margin-bottom: 6px; color: #333;" @click="router.push(`/detail?id=${item.id}`)">
+          {{ item.origin }} ➡️ {{ item.destination }}
+        </div>
+        <div style="color: #666; font-size: 13px; margin-bottom: 15px;">出发时间: {{ formatDate(item.date) }}</div>
+        
+        <div style="display: flex; gap: 10px; border-top: 1px solid #f0f0f0; padding-top: 10px;">
+          <button style="flex: 1; height: 34px; background: #fff; border: 1px solid #1989fa; color: #1989fa; border-radius: 4px; font-weight: bold; font-size: 13px; cursor: pointer;" @click="router.push(`/detail?id=${item.id}`)">详情</button>
+          <button style="flex: 1; height: 34px; background: #fff; border: 1px solid #ee0a24; color: #ee0a24; border-radius: 4px; font-weight: bold; font-size: 13px; cursor: pointer;" @click="deleteRide(item.id)">删除</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="localUser.id" style="margin: 20px 15px;">
+        <button @click="logout" style="width: 100%; height: 46px; background: #fff; color: #ff4d4f; border: 1px solid #ff4d4f; border-radius: 8px; font-size: 15px; font-weight: bold; cursor: pointer;">退出当前微信账户</button>
+    </div>
+    
+    <TabBar />
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue';
-import { Tabbar, TabbarItem } from 'vant';
+import { useRouter } from 'vue-router';
+import { useAppStore } from '../store';
+import TabBar from '../components/TabBar.vue';
 
-const active = ref(2);
-const user = ref({ id: '', nickname: '', avatar: '' });
+const store = useAppStore();
+const router = useRouter();
+const myRides = ref([]);
+const loading = ref(true);
 
-onMounted(() => {
-  const profile = localStorage.getItem('user_profile');
-  if (profile) user.value = JSON.parse(profile);
+const localUser = ref({ id: '', nickname: '', avatar: '', phone: '' });
+
+onMounted(async () => {
+  try {
+    const cachedUser = localStorage.getItem('user_profile');
+    if (cachedUser) {
+        localUser.value = JSON.parse(cachedUser);
+    } else if (store && store.userProfile) {
+        localUser.value = { id: store.userProfile.id || '', nickname: store.userProfile.nickname || '', avatar: store.userProfile.avatar || '', phone: store.userProfile.phone || '' };
+    }
+    
+    if (localUser.value.id) {
+      const res = await fetch('/api/rides');
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.results) {
+          myRides.value = data.results.filter(r => r.user_id === localUser.value.id);
+        }
+      }
+    }
+  } catch (e) {
+    console.error(e);
+  } finally { loading.value = false; }
 });
 
+const formatDate = (str) => {
+  if (!str) return '';
+  const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})[T\s](\d{1,2}):(\d{1,2})/);
+  return match ? `${match[2]}月${match[3]}日 ${match[4]}:${match[5]}` : str;
+};
+
 const goToAuth = () => {
-  window.location.href = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=wx90223bd25485040a&redirect_uri=${encodeURIComponent(window.location.origin + '/me')}&response_type=code&scope=snsapi_userinfo&state=STATE#wechat_redirect`;
+  const appId = 'wx90223bd25485040a';
+  const redirectUri = encodeURIComponent(window.location.origin + '/me');
+  window.location.href = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_userinfo&state=STATE#wechat_redirect`;
+};
+
+const deleteRide = async (id) => {
+  if (!localUser.value.id) return;
+  if (window.confirm('确定要删除这条行程吗？删除后无法恢复。')) {
+    try {
+      const res = await fetch(`/api/rides?id=${id}&user_id=${localUser.value.id}`, { method: 'DELETE' });
+      if (res.ok) myRides.value = myRides.value.filter(r => r.id !== id);
+    } catch (e) { console.error(e); }
+  }
 };
 
 const logout = () => {
-  localStorage.clear();
-  window.location.reload();
+    if(window.confirm('确认安全退出登录吗？')){
+        localStorage.clear();
+        window.location.href = '/';
+    }
 };
 </script>
