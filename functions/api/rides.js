@@ -1,4 +1,4 @@
-// 版本号: v2.1 稳定版
+// 版本号: v2.2 增加管理端越权下架支持
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -69,7 +69,16 @@ export async function onRequest(context) {
   
   if (request.method === 'DELETE') {
     const url = new URL(request.url);
-    await db.prepare("DELETE FROM rides WHERE id = ? AND user_id = ?").bind(url.searchParams.get('id'), url.searchParams.get('user_id')).run();
+    const id = url.searchParams.get('id');
+    const userId = url.searchParams.get('user_id');
+    const isAdmin = url.searchParams.get('admin');
+
+    // 如果是管理端发起的请求，无视用户ID直接删除
+    if (isAdmin === 'true') {
+        await db.prepare("DELETE FROM rides WHERE id = ?").bind(id).run();
+    } else {
+        await db.prepare("DELETE FROM rides WHERE id = ? AND user_id = ?").bind(id, userId).run();
+    }
     return new Response(JSON.stringify({ success: true }));
   }
 }
