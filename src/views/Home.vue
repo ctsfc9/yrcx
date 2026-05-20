@@ -46,7 +46,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { showToast } from 'vant';
+import { Toast } from 'vant'; // 🛠️ 严格对齐 Vant 3 组件语法
 import { useAppStore } from '../store';
 import TabBar from '../components/TabBar.vue';
 
@@ -112,42 +112,45 @@ const handlePopstate = () => {
     if (typeof WeixinJSBridge !== 'undefined') WeixinJSBridge.call('closeWindow');
   } else {
     clickTime = now;
-    showToast('再按一次退出宜人出行');
+    Toast('再按一次退出宜人出行');
     history.pushState(null, null, document.URL);
   }
 };
 
 const goToAuth = () => {
   const appId = (store?.sysConfig?.wx_appid) ? store.sysConfig.wx_appid : 'wx90223bd25485040a';
-  // 【核心修复】：授权后直接跳回当前首页 / ，不跳转到个人中心
   const redirectUri = encodeURIComponent(window.location.origin + '/');
   window.location.href = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_userinfo&state=STATE#wechat_redirect`;
 };
 
 onMounted(async () => {
-    // 【核心修复】：检查 URL 中是否有微信返回的 code
     const urlParams = new URLSearchParams(window.location.search);
     const wxCode = urlParams.get('code');
     let cachedUser = localStorage.getItem('user_profile');
 
-    // 如果刚从微信跳回来，自动用 code 换取用户信息并存入本地，无需用户再点任何按钮！
+    // 如果携带 code 返回，立即执行后台数据库建档并换取登录态
     if (wxCode && !cachedUser) {
-        showToast({ message: '授权登录中...', type: 'loading', duration: 0 });
+        Toast.loading({ message: '授权登录中...', forbidClick: true, duration: 0 });
         try {
-            // 这里调用您后端的 login.js 接口
             const res = await fetch(`/api/login?code=${wxCode}`);
+            const data = await res.json();
             if (res.ok) {
-                const data = await res.json();
                 localStorage.setItem('user_profile', JSON.stringify(data));
-                cachedUser = true;
-                // 清理URL栏的code尾巴，保持美观
+                cachedUser = JSON.stringify(data);
                 window.history.replaceState({}, document.title, '/');
+                Toast.success('登录成功');
+            } else {
+                // 如果由于后台没配置 AppSecret 等原因报错，清晰提示，不卡死界面
+                Toast.fail(data.error || '登录失败');
             }
-        } catch (e) {}
-        showToast.clear();
+        } catch (e) {
+            Toast.fail('安全认证请求中断');
+        } finally {
+            Toast.clear(); // 🛠️ 修正为标准 Vant 3 清除加载遮罩语法
+        }
     }
 
-    // 如果既没有本地缓存，也没有正在拿 code 换取信息，则强制锁死弹窗
+    // 强拦截状态判断
     if (!cachedUser) {
         showAuthPopup.value = true;
     } else {
