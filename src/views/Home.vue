@@ -3,39 +3,39 @@
     
     <div v-if="isLogining" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(255,255,255,0.95); z-index:99999; display:flex; flex-direction:column; align-items:center; justify-content:center;">
       <van-icon name="wechat" color="#07c160" size="60" />
-      <div style="margin-top:20px; font-size:16px; font-weight:bold; color:#333; letter-spacing:1px;">安全通信中，请稍候...</div>
-    </div>
-
-    <div v-if="loginError" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(255,255,255,0.95); z-index:99999; display:flex; flex-direction:column; align-items:center; justify-content:center; padding: 20px; text-align: center;">
-      <van-icon name="warning" color="#ee0a24" size="60" />
-      <div style="margin-top:20px; font-size:16px; font-weight:bold; color:#333;">{{ loginError }}</div>
-      <van-button type="primary" color="#07c160" round style="margin-top: 30px; width: 200px;" @click="goToAuth">重新尝试授权</van-button>
+      <div style="margin-top:20px; font-size:16px; font-weight:bold; color:#333;">安全通信中，请稍候...</div>
     </div>
 
     <van-notice-bar v-if="noticeText" left-icon="volume-o" :text="noticeText" />
 
     <div v-if="bannerList && bannerList.length > 0" style="margin: 12px 16px; border-radius: 12px; overflow: hidden; height: 160px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
       <van-swipe :autoplay="4000" indicator-color="white" style="height: 100%;">
-        <van-swipe-item v-for="(b, idx) in bannerList" :key="idx" @click="handleBannerClick(b.url)">
-          <img :src="b.img" style="width: 100%; height: 100%; object-fit: cover;" />
-        </van-swipe-item>
+        <van-swipe-item v-for="(b, idx) in bannerList" :key="idx" @click="handleBannerClick(b.url)"><img :src="b.img" style="width: 100%; height: 100%; object-fit: cover;" /></van-swipe-item>
       </van-swipe>
     </div>
 
     <div v-for="item in displayedRides" :key="item.id" class="ride-card">
       <div class="row-1">
-        <span :class="['badge', item.type === 'driver' ? 'driver' : 'passenger']">
-          {{ item.type === 'driver' ? '🚗 车主找人' : '🙋‍♂️ 乘客找车' }}
-        </span>
-        <span v-if="item.is_top" class="top-tag">🔥已置顶</span>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span :class="['badge', item.type === 'driver' ? 'driver' : 'passenger']">{{ item.type === 'driver' ? '🚗 车主找人' : '🙋‍♂️ 乘客找车' }}</span>
+          <span style="font-size:13px; color:#666; font-weight:bold;">{{ formatShortDate(item.date) }} 出发</span>
+        </div>
+        <span v-if="item.is_top" class="top-tag">🔥置顶</span>
       </div>
+      
       <div class="row-2" @click="router.push(`/detail?id=${item.id}`)">
         {{ item.origin }} <span class="arrow">➡️</span> {{ item.destination }}
       </div>
-      <div class="row-3">📅 出发时间: {{ formatDate(item.date) }}</div>
+      
+      <div class="row-3">
+        💺 <span style="color:#333; font-weight:bold;">{{ item.seats }}空位</span> &nbsp;|&nbsp; 
+        💰 <span style="color:#ff5500; font-weight:bold;">{{ item.price || '面议' }}</span> 
+        <span v-if="item.car_model">&nbsp;|&nbsp; 🚘 <span style="color:#333; font-weight:bold;">{{ item.car_model }}</span></span>
+      </div>
+      
       <div class="row-4">
-        <span class="price">费用: {{ item.price || '面议' }}</span>
-        <button class="detail-btn" @click="router.push(`/detail?id=${item.id}`)">查看详情</button>
+        <div class="remark-text">📝 {{ item.remark || '暂无额外备注信息' }}</div>
+        <button class="detail-btn" @click="router.push(`/detail?id=${item.id}`)">详情</button>
       </div>
     </div>
     
@@ -66,8 +66,7 @@ const displayedRides = ref([]);
 const loading = ref(false);
 const finished = ref(false);
 const showAuthPopup = ref(false);
-const isLogining = ref(false); // 控制安全遮罩层
-const loginError = ref(''); // 控制错误提示
+const isLogining = ref(false);
 const limit = 8; 
 
 const noticeText = computed(() => (store?.sysConfig?.notice) ? store.sysConfig.notice : '');
@@ -98,11 +97,7 @@ const handleScroll = () => {
 const fetchAllRides = async () => {
     try {
         const res = await fetch('/api/rides');
-        if (res.ok) {
-            const data = await res.json();
-            allRides.value = data.results || [];
-            loadMoreRides();
-        }
+        if (res.ok) { const data = await res.json(); allRides.value = data.results || []; loadMoreRides(); }
     } catch (e) { finished.value = true; }
 };
 
@@ -111,22 +106,15 @@ const handleBannerClick = (url) => {
     else if (url) router.push(url);
 };
 
-const formatDate = (str) => str ? String(str).replace('T', ' ').substring(0, 16) : '';
-
-let clickTime = 0;
-const handlePopstate = () => {
-  const now = new Date().getTime();
-  if (now - clickTime < 2000) {
-    if (typeof WeixinJSBridge !== 'undefined') WeixinJSBridge.call('closeWindow');
-  } else {
-    clickTime = now;
-    history.pushState(null, null, document.URL);
-  }
+// 短日期格式化：10-24 14:00
+const formatShortDate = (str) => {
+  if (!str) return '';
+  const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})[T\s](\d{1,2}):(\d{1,2})/);
+  return match ? `${match[2]}-${match[3]} ${match[4]}:${match[5]}` : str;
 };
 
 const goToAuth = () => {
   showAuthPopup.value = false;
-  loginError.value = '';
   const appId = (store?.sysConfig?.wx_appid) ? store.sysConfig.wx_appid : 'wx90223bd25485040a';
   const redirectUri = encodeURIComponent(window.location.origin + '/');
   window.location.href = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_userinfo&state=STATE#wechat_redirect`;
@@ -137,51 +125,32 @@ onMounted(async () => {
     const wxCode = urlParams.get('code');
     let cachedUser = localStorage.getItem('user_profile');
 
-    // 如果刚从微信授权跳回
     if (wxCode && !cachedUser) {
         isLogining.value = true;
         try {
             const res = await fetch(`/api/login?code=${wxCode}`);
             const data = await res.json();
-            
             if (res.ok && data.id) {
-                // 登录成功，安全写入本地并清理 URL
                 localStorage.setItem('user_profile', JSON.stringify(data));
                 cachedUser = JSON.stringify(data);
                 window.history.replaceState({}, document.title, '/');
-            } else {
-                // 报错兜底，绝不白屏
-                loginError.value = data.error || '获取微信信息失败';
-            }
-        } catch (e) {
-            loginError.value = '网络请求中断，请检查网络';
-        } finally {
-            isLogining.value = false;
-        }
+            } else { alert(data.error || '授权失败'); }
+        } catch (e) {} finally { isLogining.value = false; }
     }
 
-    // 只有在没有缓存且没有报错的情况下，才弹出授权框
-    if (!cachedUser && !isLogining.value && !loginError.value) {
-        showAuthPopup.value = true;
-    } else {
-        showAuthPopup.value = false;
-    }
+    if (!cachedUser && !isLogining.value) showAuthPopup.value = true;
+    else showAuthPopup.value = false;
 
     if (store && typeof store.loadConfig === 'function') store.loadConfig().catch(()=>{});
     fetchAllRides();
     window.addEventListener('scroll', handleScroll);
-    history.pushState(null, null, document.URL);
-    window.addEventListener('popstate', handlePopstate);
 });
 
-onUnmounted(() => {
-    window.removeEventListener('scroll', handleScroll);
-    window.removeEventListener('popstate', handlePopstate);
-});
+onUnmounted(() => { window.removeEventListener('scroll', handleScroll); });
 </script>
 
 <style scoped>
-.ride-card { background: #fff; padding: 16px; margin: 14px 16px; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.03); box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; border: 1px solid #f2f3f5; }
+.ride-card { background: #fff; padding: 16px; margin: 14px 16px; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.03); box-sizing: border-box; display: flex; flex-direction: column; gap: 8px; border: 1px solid #f2f3f5; }
 .row-1 { display: flex; justify-content: space-between; align-items: center; }
 .badge { font-size: 12px; font-weight: bold; padding: 3px 8px; border-radius: 4px; }
 .badge.driver { background: #eaf5ff; color: #1989fa; }
@@ -189,9 +158,8 @@ onUnmounted(() => {
 .top-tag { color: #ee0a24; font-size: 11px; font-weight: bold; background: #fff0f0; padding: 2px 6px; border-radius: 4px; }
 .row-2 { font-size: 18px; font-weight: 800; color: #1a1a1a; cursor: pointer; display: flex; align-items: center; gap: 8px; margin: 2px 0; }
 .arrow { color: #ccc; font-size: 13px; }
-.row-3 { color: #666; font-size: 13px; font-weight: 500; }
+.row-3 { font-size: 13px; color: #888; background: #fafafa; padding: 6px 10px; border-radius: 6px; display: inline-block; width: fit-content; }
 .row-4 { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #f6f7f9; padding-top: 12px; margin-top: 2px; }
-.price { color: #ff5500; font-weight: 900; font-size: 17px; }
-.detail-btn { padding: 7px 18px; background: linear-gradient(135deg, #07c160, #05b057); color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: bold; cursor: pointer; box-shadow: 0 3px 8px rgba(7,193,96,0.25); }
-.detail-btn:active { transform: scale(0.97); }
+.remark-text { font-size: 13px; color: #999; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 65%; }
+.detail-btn { padding: 6px 18px; background: linear-gradient(135deg, #07c160, #05b057); color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: bold; cursor: pointer; box-shadow: 0 3px 8px rgba(7,193,96,0.25); flex-shrink: 0; }
 </style>
