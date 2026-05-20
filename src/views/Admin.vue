@@ -35,6 +35,7 @@
 
                     <div v-show="activeTab === 'ui'">
                         <h2 class="section-title">UI呈现配置</h2>
+                        
                         <div class="form-item">
                             <label style="color: #07c160;">📢 首页滚动公告栏文字</label>
                             <input v-model="config.notice" class="input-ctrl" placeholder="填写公告内容，留空则不显示公告" />
