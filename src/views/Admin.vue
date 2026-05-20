@@ -84,7 +84,7 @@
                     <div v-show="activeTab === 'users'">
                         <h3 class="section-title">用户准入权限与预设选项控制</h3>
                         <div class="form-group" style="margin-bottom: 25px;">
-                            <label style="color:#ff6600; font-weight:bold;">🏙 ...发布页地图预设热门城市配置</label>
+                            <label style="color:#ff6600; font-weight:bold;">🏙️ 发布页地图预设热门城市配置</label>
                             <textarea v-model="config.hot_cities" rows="3" class="input-ctrl" style="height:70px; resize:none;"></textarea>
                         </div>
                         <div class="form-group"><label>车主发布常用快捷标签 (逗号分隔)</label><input v-model="config.tags_driver" class="input-ctrl" /></div>
@@ -99,8 +99,8 @@
                                     <div style="font-size: 12px; color: #666; margin-top: 5px; font-family: monospace;">用户ID: {{ u.id }} | 📱 手机号: <span style="color:#ff5500; font-weight:bold;">{{ u.phone || '未填写手机号' }}</span></div>
                                 </div>
                             </div>
-                            <button @click="toggleBanUser(u)" :style="{background: u.is_banned ? '#07c160' : '#ff4d4f', color:#fff', border:'none', padding:'7px 14px', borderRadius:'6px', cursor: 'pointer', fontWeight:'bold', fontSize:'13px'}">
-                                {{ u.is_banned ? '解除封禁' : '强制拉黑' }}
+                            <button @click="toggleBanUser(u)" :style="{background: u.is_banned ? '#07c160' : '#ff4d4f', color:'#fff', border:'none', padding:'7px 14px', borderRadius:'6px', cursor: 'pointer', fontWeight:'bold', fontSize:'13px'}">
+                                {{ u.is_banned ? '解除封禁资质' : '强制拉黑封禁' }}
                             </button>
                         </div>
                         <div v-if="users.length === 0" style="text-align:center; padding:30px; color:#aaa;">暂无任何注册会员数据</div>
@@ -137,7 +137,7 @@ const doLogin = () => {
         localStorage.setItem('admin_token', 'true');
         isAdmin.value = true;
         fetchAdminAssets();
-    } else { showFailToast('超级密码错误'); }
+    } else { showFailToast('管理端安全凭证错误'); }
 };
 
 const fetchAdminAssets = async () => {
@@ -171,17 +171,17 @@ const saveConfig = async () => {
     try {
         const res = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config.value) });
         if (res.ok) {
-            showSuccessToast('配置保存并全网同步成功');
+            showSuccessToast('全局系统配置同步保存成功');
             if (store && typeof store.loadConfig === 'function') store.loadConfig();
         }
     } catch (e) { showFailToast('核心数据同步受阻'); }
 };
 
 const deleteRide = async (id) => {
-    if(window.confirm('确认在全网强行下架并永久删除该条拼车历史行程吗？')){
+    if(window.confirm('确认强制删除该条拼车路线单据吗？')){
         try {
             const res = await fetch(`/api/rides?id=${id}&admin=true`, { method: 'DELETE' });
-            if(res.ok) { rides.value = rides.value.filter(r => r.id !== id); showSuccessToast('行程已强行下架'); }
+            if(res.ok) { rides.value = rides.value.filter(r => r.id !== id); showSuccessToast('行程信息已成功强行下架'); }
         } catch(e){}
     }
 };
@@ -191,7 +191,7 @@ const quickBanUser = async (userId) => {
     if(window.confirm(`超级干预：确认直接封禁并拉黑该发布人(用户ID: ${userId})吗？`)){
         try {
             const res = await fetch(`/api/users/ban`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: userId, is_banned: 1 }) });
-            if(res.ok) { showSuccessToast('发布者账号已封禁'); fetchAdminAssets(); }
+            if(res.ok) { showSuccessToast('发布者账号已强行终止服务权限'); fetchAdminAssets(); }
         } catch(e){}
     }
 };
@@ -200,7 +200,7 @@ const toggleBanUser = async (user) => {
     const targetStatus = user.is_banned ? 0 : 1;
     try {
         const res = await fetch(`/api/users/ban`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: user.id, is_banned: targetStatus }) });
-        if(res.ok) { user.is_banned = targetStatus; showSuccessToast(targetStatus ? '已强行将该会员拉黑' : '会员准入资质已成功解封'); }
+        if(res.ok) { user.is_banned = targetStatus; showSuccessToast(targetStatus ? '已强行将该会员拉黑封禁' : '该会员拼车准入资质已成功解封'); }
     } catch(e){}
 };
 
