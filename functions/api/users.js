@@ -1,11 +1,13 @@
-// 后台用户管理与封禁处理接口
+// 后台用户管理与封禁处理接口：带数据库自动升级
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
   const url = new URL(request.url);
 
+  // 🚀 核心修复：自动静默升级数据库表结构，确保后台读取畅通无阻
+  try { await db.prepare("ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0").run(); } catch(e) {}
+
   if (request.method === 'GET') {
-    // 联合查询用户表和行程表，确保获取最新头像、昵称和绑定的手机号
     try {
       const { results } = await db.prepare(`
         SELECT u.id, u.nickname, u.avatar, u.balance, u.is_banned,
@@ -23,7 +25,6 @@ export async function onRequest(context) {
       const data = await request.json();
       await db.prepare("UPDATE users SET is_banned = ? WHERE id = ?").bind(data.is_banned, data.id).run();
       
-      // 联动：如果用户被封禁，立即清除该用户发布的所有拼车行程
       if (data.is_banned === 1) {
         await db.prepare("DELETE FROM rides WHERE user_id = ?").bind(data.id).run();
       }
