@@ -34,9 +34,9 @@
     <div v-if="finished && displayedRides.length > 0" style="text-align: center; padding: 15px; color: #999; font-size: 13px;">没有更多行程了</div>
 
     <van-popup v-model:show="showAuthPopup" round :close-on-click-overlay="false" style="padding: 28px 24px; width: 85%; text-align: center; box-sizing: border-box;">
-      <div style="font-size: 18px; font-weight: bold; margin-bottom: 14px; color: #333; letter-spacing: 0.5px;">微信安全授权提示</div>
-      <div style="font-size: 14px; color: #666; margin-bottom: 26px; line-height: 1.6; text-align: left; text-indent: 28px;">欢迎来到宜人出行！为了保障绿色真实的拼车环境，系统需要获取您的微信头像和昵称。授权后即可正常浏览全网行程、发布拼车信息。</div>
-      <van-button type="primary" block round color="linear-gradient(135deg, #07c160, #05b057)" font-weight="bold" style="height: 44px; font-size: 16px; letter-spacing: 1px; box-shadow: 0 4px 12px rgba(7,193,96,0.3);" @click="goToAuth">确 认 微 信 授 权</van-button>
+      <div style="font-size: 18px; font-weight: bold; margin-bottom: 14px; color: #333;">微信安全授权提示</div>
+      <div style="font-size: 14px; color: #666; margin-bottom: 26px; line-height: 1.6; text-align: left;">为了保障真实的拼车环境，系统需要获取您的微信身份信息。授权后即可正常浏览与发布信息。</div>
+      <van-button type="primary" block round color="#07c160" font-weight="bold" @click="goToAuth">确 认 授 权</van-button>
     </van-popup>
     
     <TabBar />
@@ -118,18 +118,40 @@ const handlePopstate = () => {
 };
 
 const goToAuth = () => {
-  showAuthPopup.value = false;
   const appId = (store?.sysConfig?.wx_appid) ? store.sysConfig.wx_appid : 'wx90223bd25485040a';
-  // 点一次直接授权，redirect_uri 直接设为 /me，让个人中心在后台写入缓存，绝不再跳回首页让人二次点击
-  const redirectUri = encodeURIComponent(window.location.origin + '/me');
+  // 【核心修复】：授权后直接跳回当前首页 / ，不跳转到个人中心
+  const redirectUri = encodeURIComponent(window.location.origin + '/');
   window.location.href = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_userinfo&state=STATE#wechat_redirect`;
 };
 
-onMounted(() => {
-    // 强授权：检测不到本地 user_profile 缓存，立刻锁屏弹窗
-    const cachedUser = localStorage.getItem('user_profile');
+onMounted(async () => {
+    // 【核心修复】：检查 URL 中是否有微信返回的 code
+    const urlParams = new URLSearchParams(window.location.search);
+    const wxCode = urlParams.get('code');
+    let cachedUser = localStorage.getItem('user_profile');
+
+    // 如果刚从微信跳回来，自动用 code 换取用户信息并存入本地，无需用户再点任何按钮！
+    if (wxCode && !cachedUser) {
+        showToast({ message: '授权登录中...', type: 'loading', duration: 0 });
+        try {
+            // 这里调用您后端的 login.js 接口
+            const res = await fetch(`/api/login?code=${wxCode}`);
+            if (res.ok) {
+                const data = await res.json();
+                localStorage.setItem('user_profile', JSON.stringify(data));
+                cachedUser = true;
+                // 清理URL栏的code尾巴，保持美观
+                window.history.replaceState({}, document.title, '/');
+            }
+        } catch (e) {}
+        showToast.clear();
+    }
+
+    // 如果既没有本地缓存，也没有正在拿 code 换取信息，则强制锁死弹窗
     if (!cachedUser) {
         showAuthPopup.value = true;
+    } else {
+        showAuthPopup.value = false;
     }
 
     if (store && typeof store.loadConfig === 'function') store.loadConfig().catch(()=>{});
@@ -146,18 +168,17 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* 大厂精致 4 排响应式白边编排样式 */
 .ride-card { background: #fff; padding: 16px; margin: 14px 16px; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.03); box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; border: 1px solid #f2f3f5; }
 .row-1 { display: flex; justify-content: space-between; align-items: center; }
 .badge { font-size: 12px; font-weight: bold; padding: 3px 8px; border-radius: 4px; }
 .badge.driver { background: #eaf5ff; color: #1989fa; }
 .badge.passenger { background: #fff5eb; color: #ff7700; }
-.top-tag { color: #ee0a24; font-size: 11px; font-weight: bold; background: #fff0f0; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(238,10,36,0.15); }
-.row-2 { font-size: 18px; font-weight: 800; color: #1a1a1a; letter-spacing: 0.3px; cursor: pointer; display: flex; align-items: center; gap: 8px; margin: 2px 0; }
-.arrow { color: #ccc; font-size: 13px; font-weight: normal; }
+.top-tag { color: #ee0a24; font-size: 11px; font-weight: bold; background: #fff0f0; padding: 2px 6px; border-radius: 4px; }
+.row-2 { font-size: 18px; font-weight: 800; color: #1a1a1a; cursor: pointer; display: flex; align-items: center; gap: 8px; margin: 2px 0; }
+.arrow { color: #ccc; font-size: 13px; }
 .row-3 { color: #666; font-size: 13px; font-weight: 500; }
 .row-4 { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #f6f7f9; padding-top: 12px; margin-top: 2px; }
 .price { color: #ff5500; font-weight: 900; font-size: 17px; }
-.detail-btn { padding: 7px 18px; background: linear-gradient(135deg, #07c160, #05b057); color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: bold; cursor: pointer; box-shadow: 0 3px 8px rgba(7,193,96,0.25); transition: all 0.2s; }
-.detail-btn:active { transform: scale(0.97); opacity: 0.9; }
+.detail-btn { padding: 7px 18px; background: linear-gradient(135deg, #07c160, #05b057); color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: bold; cursor: pointer; box-shadow: 0 3px 8px rgba(7,193,96,0.25); }
+.detail-btn:active { transform: scale(0.97); }
 </style>
