@@ -1,10 +1,9 @@
-// 后台用户管理与封禁处理接口：带数据库自动升级
+// 后台用户管理接口：支持拉黑与彻底删除
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
   const url = new URL(request.url);
 
-  // 🚀 核心修复：自动静默升级数据库表结构，确保后台读取畅通无阻
   try { await db.prepare("ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0").run(); } catch(e) {}
 
   if (request.method === 'GET') {
@@ -24,13 +23,22 @@ export async function onRequest(context) {
     try {
       const data = await request.json();
       await db.prepare("UPDATE users SET is_banned = ? WHERE id = ?").bind(data.is_banned, data.id).run();
-      
       if (data.is_banned === 1) {
         await db.prepare("DELETE FROM rides WHERE user_id = ?").bind(data.id).run();
       }
       return new Response(JSON.stringify({ success: true }));
     } catch (e) {
       return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+    }
+  }
+
+  // 🚀 新增：彻底删除用户及名下所有行程
+  if (request.method === 'DELETE') {
+    const id = url.searchParams.get('id');
+    if (id) {
+      await db.prepare("DELETE FROM users WHERE id = ?").bind(id).run();
+      await db.prepare("DELETE FROM rides WHERE user_id = ?").bind(id).run();
+      return new Response(JSON.stringify({ success: true }));
     }
   }
 
