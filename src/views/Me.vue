@@ -85,3 +85,40 @@ onMounted(async () => {
         }
       }
     }
+  } catch (e) {
+    console.error(e);
+  // 【修复点】：修改为了正确的 finally
+  } finally { 
+    loading.value = false; 
+  }
+});
+
+const formatDate = (str) => {
+  if (!str) return '';
+  const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})[T\s](\d{1,2}):(\d{1,2})/);
+  return match ? `${match[2]}月${match[3]}日 ${match[4]}:${match[5]}` : str;
+};
+
+const goToAuth = () => {
+  const appId = 'wx90223bd25485040a';
+  const redirectUri = encodeURIComponent(window.location.origin + '/me');
+  window.location.href = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_userinfo&state=STATE#wechat_redirect`;
+};
+
+const deleteRide = async (id) => {
+  if (!localUser.value.id) return;
+  if (window.confirm('确定要删除这条行程吗？删除后无法恢复。')) {
+    try {
+      const res = await fetch(`/api/rides?id=${id}&user_id=${localUser.value.id}`, { method: 'DELETE' });
+      if (res.ok) myRides.value = myRides.value.filter(r => r.id !== id);
+    } catch (e) { console.error(e); }
+  }
+};
+
+const logout = () => {
+    if(window.confirm('确认安全退出登录吗？退出后返回首页将重新触发强制授权。')){
+        localStorage.clear();
+        window.location.href = '/';
+    }
+};
+</script>
