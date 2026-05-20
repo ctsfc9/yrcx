@@ -1,6 +1,6 @@
 <template>
   <div style="min-height: 100vh; background: #f7f8fa; padding-bottom: 80px;">
-    <van-nav-bar title="发布行程" left-arrow @click-left="router.back()" />
+    <van-nav-bar :title="isEditMode ? '重新编辑行程' : '发布行程'" left-arrow @click-left="router.back()" />
     
     <van-form @submit="onSubmit">
       <div style="background: #fff; padding: 18px; display: flex; align-items: center; justify-content: center;">
@@ -28,7 +28,7 @@
 
       <div style="margin: 30px 16px;">
         <van-button round block type="primary" native-type="submit" color="#07c160" style="height: 48px; font-size: 18px; font-weight: bold;">
-          确认发布
+          {{ isEditMode ? '保存修改并发布' : '确认发布' }}
         </van-button>
       </div>
     </van-form>
@@ -37,28 +37,44 @@
 
 <script setup>
 import { ref, onMounted } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRouter, useRoute } from 'vue-router';
 import { Toast } from 'vant';
 
 const router = useRouter();
+const route = useRoute();
 const formData = ref({ type: 'driver', origin: '', destination: '', date: '', seats: '', price: '', car_model: '', contact: '', remark: '' });
+const isEditMode = ref(false);
 
-onMounted(() => {
-    // 自动回显手机号
+onMounted(async () => {
+    // 1. 回显手机号
     const cachedUser = localStorage.getItem('user_profile');
     if (cachedUser) {
         const user = JSON.parse(cachedUser);
         if (user.phone) formData.value.contact = user.phone;
     }
+
+    // 2. 如果是从个人中心点进来的“重新编辑”，加载旧数据
+    const editId = route.query.id;
+    if (editId) {
+        isEditMode.value = true;
+        try {
+            const res = await fetch(`/api/rides?id=${editId}`);
+            if (res.ok) {
+                const data = await res.json();
+                formData.value = Object.assign(formData.value, data);
+            }
+        } catch(e) {}
+    }
 });
 
 const onSubmit = async () => {
-    // 🚀 核心修复：强制读取真实的微信缓存 ID，直接切断旧版本假 ID 漏洞
+    // 🌟 核心修复：强制读取真实的微信缓存 ID，匹配发布数据
     const cachedUser = localStorage.getItem('user_profile');
-    if (!cachedUser) return Toast.fail('未检测到微信授权信息，请返回首页刷新');
+    if (!cachedUser) return Toast.fail('未检测到有效登录信息');
     
     const user = JSON.parse(cachedUser);
-    const payload = { ...formData.value, user_id: user.id }; // 确保绑定真实微信ID
+    const payload = { ...formData.value, user_id: user.id };
+    if (route.query.id) payload.id = route.query.id; // 如果有 id 就是在更新老记录
 
     Toast.loading({ message: '提交中...', forbidClick: true, duration: 0 });
     try {
@@ -66,10 +82,9 @@ const onSubmit = async () => {
         const data = await res.json();
         
         if (res.ok) {
-            Toast.success('发布成功');
-            // 发布成功后，立刻跳转个人中心，此时因为 ID 绝对真实一致，记录瞬间显示！
+            Toast.success(isEditMode.value ? '修改成功' : '发布成功');
             setTimeout(() => router.push('/me'), 1000);
-        } else { Toast.fail(data.error || '发布失败'); }
+        } else { Toast.fail(data.error || '操作失败'); }
     } catch (e) { Toast.fail('网络错误'); } finally { Toast.clear(); }
 };
 </script>
