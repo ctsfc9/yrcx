@@ -1,16 +1,13 @@
 <template>
   <div style="min-height: 100vh; background: #f7f8fa; padding-bottom: 80px; box-sizing: border-box; position: relative;">
     
-    <div v-if="isLogining" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(255,255,255,0.95); z-index:99999; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-      <van-icon name="wechat" color="#07c160" size="60" />
-      <div style="margin-top:20px; font-size:16px; font-weight:bold; color:#333;">安全通信中，请稍候...</div>
-    </div>
-
     <van-notice-bar v-if="noticeText" left-icon="volume-o" :text="noticeText" />
 
     <div v-if="bannerList && bannerList.length > 0" style="margin: 12px 16px; border-radius: 12px; overflow: hidden; height: 160px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
       <van-swipe :autoplay="4000" indicator-color="white" style="height: 100%;">
-        <van-swipe-item v-for="(b, idx) in bannerList" :key="idx" @click="handleBannerClick(b.url)"><img :src="b.img" style="width: 100%; height: 100%; object-fit: cover;" /></van-swipe-item>
+        <van-swipe-item v-for="(b, idx) in bannerList" :key="idx" @click="handleBannerClick(b.url)">
+          <img :src="b.img" style="width: 100%; height: 100%; object-fit: cover; display: block;" />
+        </van-swipe-item>
       </van-swipe>
     </div>
 
@@ -34,12 +31,12 @@
       </div>
       
       <div class="row-4">
-        <div class="remark-text">📝 {{ item.remark || '暂无额外备注信息' }}</div>
+        <div class="remark-text">📝 {{ item.remark || '无额外备注' }}</div>
         <button class="detail-btn" @click="router.push(`/detail?id=${item.id}`)">详情</button>
       </div>
     </div>
     
-    <div v-if="loading" style="text-align: center; padding: 15px; color: #999; font-size: 13px;">加载中...</div>
+    <div v-if="loading" style="text-align: center; padding: 15px; color: #999; font-size: 13px;">极速加载数据中...</div>
     <div v-if="finished && displayedRides.length > 0" style="text-align: center; padding: 15px; color: #999; font-size: 13px;">没有更多行程了</div>
 
     <van-popup v-model:show="showAuthPopup" round :close-on-click-overlay="false" style="padding: 28px 24px; width: 85%; text-align: center; box-sizing: border-box;">
@@ -55,6 +52,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
+import { Toast } from 'vant';
 import { useAppStore } from '../store';
 import TabBar from '../components/TabBar.vue';
 
@@ -66,7 +64,6 @@ const displayedRides = ref([]);
 const loading = ref(false);
 const finished = ref(false);
 const showAuthPopup = ref(false);
-const isLogining = ref(false);
 const limit = 8; 
 
 const noticeText = computed(() => (store?.sysConfig?.notice) ? store.sysConfig.notice : '');
@@ -106,7 +103,6 @@ const handleBannerClick = (url) => {
     else if (url) router.push(url);
 };
 
-// 短日期格式化：10-24 14:00
 const formatShortDate = (str) => {
   if (!str) return '';
   const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})[T\s](\d{1,2}):(\d{1,2})/);
@@ -125,8 +121,8 @@ onMounted(async () => {
     const wxCode = urlParams.get('code');
     let cachedUser = localStorage.getItem('user_profile');
 
+    // 🚀 核心修复：后台轻量化静默验证登录，彻底解决白屏死循环卡慢问题
     if (wxCode && !cachedUser) {
-        isLogining.value = true;
         try {
             const res = await fetch(`/api/login?code=${wxCode}`);
             const data = await res.json();
@@ -134,11 +130,12 @@ onMounted(async () => {
                 localStorage.setItem('user_profile', JSON.stringify(data));
                 cachedUser = JSON.stringify(data);
                 window.history.replaceState({}, document.title, '/');
-            } else { alert(data.error || '授权失败'); }
-        } catch (e) {} finally { isLogining.value = false; }
+                Toast.success('验证成功');
+            } else { Toast.fail(data.error || '验证失败'); }
+        } catch (e) {}
     }
 
-    if (!cachedUser && !isLogining.value) showAuthPopup.value = true;
+    if (!cachedUser) showAuthPopup.value = true;
     else showAuthPopup.value = false;
 
     if (store && typeof store.loadConfig === 'function') store.loadConfig().catch(()=>{});
