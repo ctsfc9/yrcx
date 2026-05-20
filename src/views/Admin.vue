@@ -84,7 +84,7 @@
                     <div v-show="activeTab === 'users'">
                         <h3 class="section-title">用户准入权限与预设选项控制</h3>
                         <div class="form-group" style="margin-bottom: 25px;">
-                            <label style="color:#ff6600; font-weight:bold;">🏙️ 发布页地图预设热门城市配置</label>
+                            <label style="color:#ff6600;">🏙️ 发布端高德选位预设热门城市配置</label>
                             <textarea v-model="config.hot_cities" rows="3" class="input-ctrl" style="height:70px; resize:none;"></textarea>
                         </div>
                         <div class="form-group"><label>车主发布常用快捷标签 (逗号分隔)</label><input v-model="config.tags_driver" class="input-ctrl" /></div>
@@ -118,7 +118,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue';
-import { showSuccessToast, showFailToast } from 'vant';
+import { Toast } from 'vant'; // 严格采用 Vant 3 语法规范
 import { useAppStore } from '../store';
 
 const store = useAppStore();
@@ -137,7 +137,7 @@ const doLogin = () => {
         localStorage.setItem('admin_token', 'true');
         isAdmin.value = true;
         fetchAdminAssets();
-    } else { showFailToast('管理端安全凭证错误'); }
+    } else { Toast.fail('管理端安全凭证错误'); }
 };
 
 const fetchAdminAssets = async () => {
@@ -171,17 +171,17 @@ const saveConfig = async () => {
     try {
         const res = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config.value) });
         if (res.ok) {
-            showSuccessToast('全局系统配置同步保存成功');
+            Toast.success('配置保存并全网同步成功');
             if (store && typeof store.loadConfig === 'function') store.loadConfig();
         }
-    } catch (e) { showFailToast('核心数据同步受阻'); }
+    } catch (e) { Toast.fail('核心数据同步受阻'); }
 };
 
 const deleteRide = async (id) => {
-    if(window.confirm('确认强制删除该条拼车路线单据吗？')){
+    if(window.confirm('确认在全网强行下架并永久删除该条拼车历史行程吗？')){
         try {
             const res = await fetch(`/api/rides?id=${id}&admin=true`, { method: 'DELETE' });
-            if(res.ok) { rides.value = rides.value.filter(r => r.id !== id); showSuccessToast('行程信息已成功强行下架'); }
+            if(res.ok) { rides.value = rides.value.filter(r => r.id !== id); Toast.success('行程已强行下架'); }
         } catch(e){}
     }
 };
@@ -191,7 +191,7 @@ const quickBanUser = async (userId) => {
     if(window.confirm(`超级干预：确认直接封禁并拉黑该发布人(用户ID: ${userId})吗？`)){
         try {
             const res = await fetch(`/api/users/ban`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: userId, is_banned: 1 }) });
-            if(res.ok) { showSuccessToast('发布者账号已强行终止服务权限'); fetchAdminAssets(); }
+            if(res.ok) { Toast.success('发布者账号已封禁'); fetchAdminAssets(); }
         } catch(e){}
     }
 };
@@ -200,7 +200,7 @@ const toggleBanUser = async (user) => {
     const targetStatus = user.is_banned ? 0 : 1;
     try {
         const res = await fetch(`/api/users/ban`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: user.id, is_banned: targetStatus }) });
-        if(res.ok) { user.is_banned = targetStatus; showSuccessToast(targetStatus ? '已强行将该会员拉黑封禁' : '该会员拼车准入资质已成功解封'); }
+        if(res.ok) { user.is_banned = targetStatus; Toast.success(targetStatus ? '已强行将该会员拉黑' : '会员准入资质已成功解封'); }
     } catch(e){}
 };
 
