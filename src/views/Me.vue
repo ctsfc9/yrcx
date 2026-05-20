@@ -87,7 +87,6 @@ onMounted(async () => {
     }
   } catch (e) {
     console.error(e);
-  // 【修复点】：修改为了正确的 finally
   } finally { 
     loading.value = false; 
   }
