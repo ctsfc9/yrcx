@@ -24,15 +24,15 @@
     <div style="margin: 15px;">
       <div style="font-size: 16px; font-weight: bold; color: #333; margin-bottom: 15px; border-left: 4px solid #ff7700; padding-left: 8px;">我的发布</div>
       
-      <div v-if="loading" style="text-align: center; padding: 40px; color: #999; background: #fff; border-radius: 8px;">历史行程加载中...</div>
-      <div v-slot:default v-else-if="myRides.length === 0" style="text-align: center; padding: 40px; color: #999; background: #fff; border-radius: 8px;">暂无行程发布记录</div>
+      <div v-if="loading" style="text-align: center; padding: 40px; color: #999; background: #fff; border-radius: 8px;">历史记录加载中...</div>
+      <div v-else-if="myRides.length === 0" style="text-align: center; padding: 40px; color: #999; background: #fff; border-radius: 8px;">暂无行程发布记录</div>
       
       <div v-else v-for="item in myRides" :key="item.id" style="background: #fff; border-radius: 8px; padding: 15px; margin-bottom: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.03);">
         <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
           <span :style="{color: item.type === 'driver' ? '#1989fa' : '#ff7700', fontWeight: 'bold', fontSize: '13px'}">
             {{ item.type === 'driver' ? '🚗 车主找人' : '🙋‍♂️ 乘客找车' }}
           </span>
-          <span v-if="item.is_top" style="color: #ee0a24; font-size: 12px; font-weight: bold;">🔥置顶</span>
+          <span v-if="item.is_top" style="color: #ee0a24; font-size: 12px; font-weight: bold;">🔥已置顶</span>
         </div>
         <div style="font-size: 16px; font-weight: bold; margin-bottom: 6px; color: #333;" @click="router.push(`/detail?id=${item.id}`)">
           {{ item.origin }} ➡️ {{ item.destination }}
@@ -46,7 +46,7 @@
       </div>
     </div>
 
-    <div v-if="localUser.id" style="margin: 20px 15px;">
+    <div v-if="localUser.id" style="margin: 25px 15px;">
         <button @click="logout" style="width: 100%; height: 46px; background: #fff; color: #ff4d4f; border: 1px solid #ff4d4f; border-radius: 8px; font-size: 15px; font-weight: bold; cursor: pointer;">退出当前微信账户</button>
     </div>
     
