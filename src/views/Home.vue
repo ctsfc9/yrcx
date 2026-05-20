@@ -32,6 +32,12 @@
     
     <div v-if="loading" style="text-align: center; padding: 15px; color: #999; font-size: 13px;">加载中...</div>
     <div v-if="finished && displayedRides.length > 0" style="text-align: center; padding: 15px; color: #999; font-size: 13px;">没有更多行程了</div>
+
+    <van-popup v-model:show="showAuthPopup" round :close-on-click-overlay="false" style="padding: 24px; width: 82%; text-align: center; box-sizing: border-box;">
+      <div style="font-size: 18px; font-weight: bold; margin-bottom: 12px; color: #333;">微信授权提示</div>
+      <div style="font-size: 14px; color: #666; margin-bottom: 24px; line-height: 1.6; text-align: left;">欢迎来到宜人出行！为了给您提供完整的拼车数据交互、行程发布与管理服务，系统需要获取您的微信公开身份信息。</div>
+      <van-button type="primary" block round color="#07c160" font-weight="bold" @click="goToAuth">确 认 授 权</van-button>
+    </van-popup>
     
     <TabBar />
   </div>
@@ -51,6 +57,7 @@ const allRides = ref([]);
 const displayedRides = ref([]);
 const loading = ref(false);
 const finished = ref(false);
+const showAuthPopup = ref(false);
 const limit = 8; 
 
 const noticeText = computed(() => (store?.sysConfig?.notice) ? store.sysConfig.notice : '');
@@ -110,13 +117,18 @@ const handlePopstate = () => {
   }
 };
 
+const goToAuth = () => {
+  showAuthPopup.value = false;
+  const appId = (store?.sysConfig?.wx_appid) ? store.sysConfig.wx_appid : 'wx90223bd25485040a';
+  const redirectUri = encodeURIComponent(window.location.origin + '/me');
+  window.location.href = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_userinfo&state=STATE#wechat_redirect`;
+};
+
 onMounted(() => {
-    // 🛡️ 核心打磨对齐：新用户一进站，只要没有本地缓存，立刻强制弹出微信授权
+    // 检查本地登录态，如果没有，则在当前首页拉起授权弹窗
     const cachedUser = localStorage.getItem('user_profile');
-    if (!cachedUser) {
-        const appId = 'wx90223bd25485040a';
-        window.location.href = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${encodeURIComponent(window.location.origin + '/me')}&response_type=code&scope=snsapi_userinfo&state=STATE#wechat_redirect`;
-        return;
+    if (!cachedUser && !sessionStorage.getItem('auth_dismissed')) {
+        showAuthPopup.value = true;
     }
 
     if (store && typeof store.loadConfig === 'function') store.loadConfig().catch(()=>{});
@@ -133,7 +145,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* 严格定制的 4 排精美大厂列表布局样式 */
 .ride-card { background: #fff; padding: 16px; margin: 12px 16px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.03); box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; }
 .row-1 { display: flex; justify-content: space-between; align-items: center; }
 .badge { font-size: 12px; font-weight: bold; padding: 3px 8px; border-radius: 4px; }
