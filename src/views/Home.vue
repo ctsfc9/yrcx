@@ -36,7 +36,8 @@
     <van-popup v-model:show="showAuthPopup" round :close-on-click-overlay="false" style="padding: 24px; width: 82%; text-align: center; box-sizing: border-box;">
       <div style="font-size: 18px; font-weight: bold; margin-bottom: 12px; color: #333;">微信授权提示</div>
       <div style="font-size: 14px; color: #666; margin-bottom: 24px; line-height: 1.6; text-align: left;">欢迎来到宜人出行！为了给您提供完整的拼车数据交互、行程发布与管理服务，系统需要获取您的微信公开身份信息。</div>
-      <van-button type="primary" block round color="#07c160" font-weight="bold" @click="goToAuth">确 认 授 权</van-button>
+      <van-button type="primary" block round color="#07c160" font-weight="bold" @click="goToAuth" style="margin-bottom: 12px;">确 认 授 权</van-button>
+      <van-button block round plain color="#999" style="border: none;" @click="dismissAuth">暂不授权，随便逛逛</van-button>
     </van-popup>
     
     <TabBar />
@@ -44,7 +45,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, computed } from 'vue';
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { showToast } from 'vant';
 import { useAppStore } from '../store';
@@ -117,6 +118,26 @@ const handlePopstate = () => {
   }
 };
 
+const checkAuth = () => {
+  // 如果 URL 里有 code，说明是微信刚刚跳回来的路上，绝对不弹窗
+  if (window.location.search.includes('code=')) return;
+  
+  let cachedUser = localStorage.getItem('user_profile');
+  
+  // 兜底同步：如果 localStorage 没来得及存，但 Pinia store 里有，手动同步一次
+  if (!cachedUser && store?.userProfile?.id) {
+      cachedUser = JSON.stringify(store.userProfile);
+      localStorage.setItem('user_profile', cachedUser);
+  }
+
+  // 既没有缓存，又没有点击过“暂不授权”
+  if (!cachedUser && !sessionStorage.getItem('auth_dismissed')) {
+      showAuthPopup.value = true;
+  } else {
+      showAuthPopup.value = false;
+  }
+};
+
 const goToAuth = () => {
   showAuthPopup.value = false;
   const appId = (store?.sysConfig?.wx_appid) ? store.sysConfig.wx_appid : 'wx90223bd25485040a';
@@ -124,14 +145,21 @@ const goToAuth = () => {
   window.location.href = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_userinfo&state=STATE#wechat_redirect`;
 };
 
-onMounted(() => {
-    // 检查本地登录态，如果没有，则在当前首页拉起授权弹窗
-    const cachedUser = localStorage.getItem('user_profile');
-    if (!cachedUser && !sessionStorage.getItem('auth_dismissed')) {
-        showAuthPopup.value = true;
-    }
+const dismissAuth = () => {
+  sessionStorage.setItem('auth_dismissed', '1');
+  showAuthPopup.value = false;
+};
 
+// 监听 store 状态变化，一旦登录成功自动关闭弹窗
+watch(() => store.userProfile, () => {
+  if (store.userProfile && store.userProfile.id) {
+    showAuthPopup.value = false;
+  }
+}, { deep: true });
+
+onMounted(() => {
     if (store && typeof store.loadConfig === 'function') store.loadConfig().catch(()=>{});
+    checkAuth();
     fetchAllRides();
     window.addEventListener('scroll', handleScroll);
     history.pushState(null, null, document.URL);
