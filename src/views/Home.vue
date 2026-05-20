@@ -1,5 +1,17 @@
 <template>
-  <div style="min-height: 100vh; background: #f7f8fa; padding-bottom: 80px; box-sizing: border-box;">
+  <div style="min-height: 100vh; background: #f7f8fa; padding-bottom: 80px; box-sizing: border-box; position: relative;">
+    
+    <div v-if="isLogining" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(255,255,255,0.95); z-index:99999; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+      <van-icon name="wechat" color="#07c160" size="60" />
+      <div style="margin-top:20px; font-size:16px; font-weight:bold; color:#333; letter-spacing:1px;">安全通信中，请稍候...</div>
+    </div>
+
+    <div v-if="loginError" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(255,255,255,0.95); z-index:99999; display:flex; flex-direction:column; align-items:center; justify-content:center; padding: 20px; text-align: center;">
+      <van-icon name="warning" color="#ee0a24" size="60" />
+      <div style="margin-top:20px; font-size:16px; font-weight:bold; color:#333;">{{ loginError }}</div>
+      <van-button type="primary" color="#07c160" round style="margin-top: 30px; width: 200px;" @click="goToAuth">重新尝试授权</van-button>
+    </div>
+
     <van-notice-bar v-if="noticeText" left-icon="volume-o" :text="noticeText" />
 
     <div v-if="bannerList && bannerList.length > 0" style="margin: 12px 16px; border-radius: 12px; overflow: hidden; height: 160px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
@@ -17,13 +29,10 @@
         </span>
         <span v-if="item.is_top" class="top-tag">🔥已置顶</span>
       </div>
-      
       <div class="row-2" @click="router.push(`/detail?id=${item.id}`)">
         {{ item.origin }} <span class="arrow">➡️</span> {{ item.destination }}
       </div>
-      
       <div class="row-3">📅 出发时间: {{ formatDate(item.date) }}</div>
-      
       <div class="row-4">
         <span class="price">费用: {{ item.price || '面议' }}</span>
         <button class="detail-btn" @click="router.push(`/detail?id=${item.id}`)">查看详情</button>
@@ -46,7 +55,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { Toast } from 'vant'; // 严格使用 Vant 3 组件规范
 import { useAppStore } from '../store';
 import TabBar from '../components/TabBar.vue';
 
@@ -58,6 +66,8 @@ const displayedRides = ref([]);
 const loading = ref(false);
 const finished = ref(false);
 const showAuthPopup = ref(false);
+const isLogining = ref(false); // 控制安全遮罩层
+const loginError = ref(''); // 控制错误提示
 const limit = 8; 
 
 const noticeText = computed(() => (store?.sysConfig?.notice) ? store.sysConfig.notice : '');
@@ -73,9 +83,7 @@ const loadMoreRides = () => {
     loading.value = true;
     const currentLength = displayedRides.value.length;
     const nextChunk = allRides.value.slice(currentLength, currentLength + limit);
-    if (nextChunk.length > 0) {
-        displayedRides.value.push(...nextChunk);
-    }
+    if (nextChunk.length > 0) displayedRides.value.push(...nextChunk);
     loading.value = false;
     if (displayedRides.value.length >= allRides.value.length) finished.value = true;
 };
@@ -112,12 +120,13 @@ const handlePopstate = () => {
     if (typeof WeixinJSBridge !== 'undefined') WeixinJSBridge.call('closeWindow');
   } else {
     clickTime = now;
-    Toast('再按一次退出宜人出行');
     history.pushState(null, null, document.URL);
   }
 };
 
 const goToAuth = () => {
+  showAuthPopup.value = false;
+  loginError.value = '';
   const appId = (store?.sysConfig?.wx_appid) ? store.sysConfig.wx_appid : 'wx90223bd25485040a';
   const redirectUri = encodeURIComponent(window.location.origin + '/');
   window.location.href = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_userinfo&state=STATE#wechat_redirect`;
@@ -128,32 +137,34 @@ onMounted(async () => {
     const wxCode = urlParams.get('code');
     let cachedUser = localStorage.getItem('user_profile');
 
-    // ⚔️ 核心防御重构：如果携带 code，必须等异步请求完全成功并写入缓存后，才允许向后运行
+    // 如果刚从微信授权跳回
     if (wxCode && !cachedUser) {
-        Toast.loading({ message: '授权登录中...', forbidClick: true, duration: 0 });
+        isLogining.value = true;
         try {
             const res = await fetch(`/api/login?code=${wxCode}`);
             const data = await res.json();
+            
             if (res.ok && data.id) {
+                // 登录成功，安全写入本地并清理 URL
                 localStorage.setItem('user_profile', JSON.stringify(data));
                 cachedUser = JSON.stringify(data);
                 window.history.replaceState({}, document.title, '/');
-                Toast.success('登录成功');
             } else {
-                Toast.fail(data.error || '授权凭证换取失败');
+                // 报错兜底，绝不白屏
+                loginError.value = data.error || '获取微信信息失败';
             }
         } catch (e) {
-            Toast.fail('安全通讯链路中断');
+            loginError.value = '网络请求中断，请检查网络';
         } finally {
-            Toast.clear(); // 严格使用 Vant 3 清除遮罩层语法
+            isLogining.value = false;
         }
     }
 
-    // 🔒 此时进行判定，缓存状态 100% 同步，绝不会产生时间差导致的强制复现弹窗
-    if (cachedUser) {
-        showAuthPopup.value = false;
-    } else {
+    // 只有在没有缓存且没有报错的情况下，才弹出授权框
+    if (!cachedUser && !isLogining.value && !loginError.value) {
         showAuthPopup.value = true;
+    } else {
+        showAuthPopup.value = false;
     }
 
     if (store && typeof store.loadConfig === 'function') store.loadConfig().catch(()=>{});
