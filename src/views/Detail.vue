@@ -37,7 +37,8 @@
             <a :href="'tel:' + ride.contact" style="display:block; text-align:center; background:#07c160; color:#fff; padding:16px 0; border-radius:8px; font-size:18px; font-weight:bold; text-decoration:none; box-shadow: 0 4px 12px rgba(7,193,96,0.25);">
                 📞 拨打电话联系对方
             </a>
-            <button @click="copyRideInfo" style="width:100%; text-align:center; background:#fff; color:#333; border:1px solid #ccc; padding:16px 0; border-radius:8px; font-size:16px; font-weight:bold; cursor:pointer;">
+            
+            <button @click="copyRideInfo" style="width:100%; text-align:center; background:#fff; color:#333; border:1px solid #ebedf0; padding:16px 0; border-radius:8px; font-size:16px; font-weight:bold; cursor:pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
                 📋 一键复制文字版行程
             </button>
         </div>
@@ -61,12 +62,12 @@ const formatTime = (str) => {
   return match ? `${match[1]}年${match[2]}月${match[3]}日 ${match[4]}:${match[5]}` : str;
 };
 
-// 🌟 恢复：复制行程到剪贴板功能
+// 🌟 恢复：格式化极其优美的纯文本复制功能
 const copyRideInfo = () => {
     if (!ride.value) return;
     const r = ride.value;
-    const typeStr = r.type === 'driver' ? '车主找人' : '乘客找车';
-    const text = `【${typeStr}】\n路线：${r.origin} -> ${r.destination}\n时间：${formatTime(r.date)}\n座位：${r.seats}个\n费用：${r.price || '面议'}\n备注：${r.remark || '无'}\n联系电话：${r.contact}`;
+    const typeStr = r.type === 'driver' ? '🚗 车主找人' : '🙋‍♂️ 乘客找车';
+    const text = `【宜人出行 - 拼车服务】\n${typeStr}\n📍 路线：${r.origin} ➡️ ${r.destination}\n⏰ 时间：${formatTime(r.date)}\n💺 空位：${r.seats}个\n💰 费用：${r.price || '面议'}${r.car_model ? '\n🚘 车型：' + r.car_model : ''}\n📝 备注：${r.remark || '无'}\n☎️ 电话：${r.contact}\n👉 点击下方链接查看详情：\n${window.location.href}`;
     
     const textarea = document.createElement('textarea');
     textarea.value = text;
@@ -74,7 +75,7 @@ const copyRideInfo = () => {
     textarea.select();
     try {
         document.execCommand('copy');
-        Toast.success('复制成功，可去粘贴');
+        Toast.success('文字行程复制成功');
     } catch (err) {
         Toast.fail('复制失败，请手动复制');
     }
