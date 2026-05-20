@@ -22,15 +22,17 @@
             <div style="background: #fff; padding: 30px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.03); max-width: 1000px; margin: 0 auto;">
                 <div v-if="isLoading" style="text-align: center; padding: 50px; color: #999;">平台资产数据同步中...</div>
                 <div v-else>
+                    
                     <div v-show="activeTab === 'base'">
                         <h3 class="section-title">基础通信密钥参数</h3>
                         <div class="form-group"><label>高德地图 Key</label><input v-model="config.amap_key" class="input-ctrl" /></div>
-                        <div class="form-group"><label>微信核心 AppID</label><input v-model="config.wx_appid" class="input-ctrl" /></div>
-                        <div class="form-group">
-                            <label style="color:#ee0a24;">🔐 微信 AppSecret (安全加密)</label>
-                            <input v-model="secretStore" type="password" class="input-ctrl" placeholder="输入您的微信 AppSecret" />
-                        </div>
                         <div class="form-group"><label>行程置顶推荐服务费 (元)</label><input v-model="config.top_fee" type="number" class="input-ctrl" /></div>
+                        
+                        <h3 class="section-title" style="margin-top:30px; border-left-color:#1989fa;">公众号与微信支付设置</h3>
+                        <div class="form-group"><label>请输入公众号AppID：</label><input v-model="secrets.wx_appid" class="input-ctrl" /></div>
+                        <div class="form-group"><label>请输入公众号AppSecret：</label><input v-model="secrets.wx_appsecret" type="password" class="input-ctrl" /></div>
+                        <div class="form-group"><label>请输入微信商户号：</label><input v-model="secrets.wx_mchid" class="input-ctrl" /></div>
+                        <div class="form-group"><label>请输入微信支付秘钥：</label><input v-model="secrets.wx_paykey" type="password" class="input-ctrl" /></div>
                     </div>
 
                     <div v-show="activeTab === 'ui'">
@@ -53,18 +55,20 @@
                         <h3 class="section-title">全网详细行程单据</h3>
                         <table style="width:100%; border-collapse:collapse; font-size:13px;">
                             <tr style="background:#f4f5f6; text-align:left;">
-                                <th style="padding:10px; border:1px solid #eef0f1; width:50px;">类型</th>
+                                <th style="padding:10px; border:1px solid #eef0f1; width:70px;">类型</th>
                                 <th style="padding:10px; border:1px solid #eef0f1;">路线与时间</th>
                                 <th style="padding:10px; border:1px solid #eef0f1;">详细信息</th>
-                                <th style="padding:10px; border:1px solid #eef0f1; width:130px;">操作</th>
+                                <th style="padding:10px; border:1px solid #eef0f1; width:100px;">操作</th>
                             </tr>
                             <tr v-for="r in rides" :key="r.id" style="border-bottom: 1px solid #f0f0f0;">
-                                <td style="padding:10px; border:1px solid #eef0f1;">
-                                    <span :style="{color: r.type==='driver'?'#1989fa':'#ff7700', fontWeight:'bold'}">{{ r.type==='driver'?'车主':'乘客' }}</span>
+                                <td style="padding:10px; border:1px solid #eef0f1; text-align:center;">
+                                    <div :style="{color: r.type==='driver'?'#1989fa':'#ff7700', fontWeight:'bold', marginBottom:'5px'}">{{ r.type==='driver'?'车主':'乘客' }}</div>
+                                    <div style="font-size: 11px; color:#888;">ID: #{{ r.id }}</div>
                                 </td>
                                 <td style="padding:10px; border:1px solid #eef0f1;">
                                     <div style="font-weight:bold; font-size:14px; color:#333; margin-bottom:4px;">{{ r.origin }} ➡️ {{ r.destination }}</div>
-                                    <div style="color:#666;">📅 {{ formatDate(r.date) }}</div>
+                                    <div style="color:#666; margin-bottom:4px;">📅 {{ formatDate(r.date) }}</div>
+                                    <div style="color:#999; font-size:12px; font-family:monospace;">发布人ID: {{ r.user_id }}</div>
                                 </td>
                                 <td style="padding:10px; border:1px solid #eef0f1; color:#555; line-height: 1.6;">
                                     <div>💺 {{ r.seats }}座 | 💰 {{ r.price || '面议' }} {{ r.car_model ? ' | 🚘 ' + r.car_model : '' }}</div>
@@ -72,8 +76,8 @@
                                     <div style="color:#888; font-size:12px;">📝 备注: {{ r.remark || '无' }}</div>
                                 </td>
                                 <td style="padding:10px; border:1px solid #eef0f1; text-align: center;">
-                                    <button @click="deleteRide(r.id)" style="background:#ff4d4f; color:#fff; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; margin-bottom: 6px; width: 100%;">强行下架</button>
-                                    <button @click="quickBanUser(r.user_id)" style="background:#222; color:#fff; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; width: 100%;">封禁发布人</button>
+                                    <button @click="deleteRide(r.id)" style="background:#ff4d4f; color:#fff; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; margin-bottom: 6px; width: 100%;">下架</button>
+                                    <button @click="quickBanUser(r.user_id)" style="background:#222; color:#fff; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; width: 100%;">封禁用户</button>
                                 </td>
                             </tr>
                         </table>
@@ -85,8 +89,10 @@
                             <label style="color:#ff6600;">🏙️ 发布页预设热门城市</label>
                             <textarea v-model="config.hot_cities" rows="2" class="input-ctrl" style="resize:none;"></textarea>
                         </div>
+                        <div class="form-group"><label>车主快捷标签</label><input v-model="config.tags_driver" class="input-ctrl" /></div>
+                        <div class="form-group" style="margin-bottom:30px;"><label>乘客快捷标签</label><input v-model="config.tags_passenger" class="input-ctrl" /></div>
                         
-                        <h4 style="margin:25px 0 12px; color:#222; font-weight:bold; font-size:15px;">👤 会员身份管理列表</h4>
+                        <h4 style="margin:25px 0 12px; color:#222; font-weight:bold; font-size:15px;">👤 授权用户身份及解封管理</h4>
                         <div v-for="u in users" :key="u.id" style="display:flex; justify-content:space-between; align-items:center; padding:15px; background: #fafafa; border-radius: 8px; margin-bottom: 10px; border: 1px solid #eee;">
                             <div style="display:flex; align-items:center; gap:14px;">
                                 <img :src="u.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" style="width:44px; height:44px; border-radius:50%; object-fit:cover;" />
@@ -99,8 +105,8 @@
                                 <button @click="toggleBanUser(u)" :style="{background: u.is_banned ? '#07c160' : '#ff976a', color:'#fff', border:'none', padding:'8px 14px', borderRadius:'6px', cursor: 'pointer', fontWeight:'bold'}">
                                     {{ u.is_banned ? '🟢 解除封禁' : '🟠 封禁拉黑' }}
                                 </button>
-                                <button @click="deleteUser(u.id)" style="background: #ee0a24; color:#fff; border:none; padding:8px 14px; border-radius:6px; cursor: 'pointer', fontWeight:'bold'}">
-                                    🗑️ 彻底删除
+                                <button @click="deleteUser(u.id)" style="background: #ee0a24; color:'#fff'; border:none; padding:8px 14px; border-radius:6px; cursor: 'pointer'; font-weight:bold;">
+                                    🗑️ 删除
                                 </button>
                             </div>
                         </div>
@@ -127,8 +133,9 @@ const isAdmin = ref(false);
 const isLoading = ref(false);
 const activeTab = ref('base');
 
-const config = ref({ amap_key: '', wx_appid: '', top_fee: 0, hot_cities: '', notice: '', banners: '[]' });
-const secretStore = ref('');
+const config = ref({ amap_key: '', top_fee: 0, hot_cities: '', notice: '', banners: '[]' });
+// 🌟 增量：独立的四项安全密钥
+const secrets = ref({ wx_appid: '', wx_appsecret: '', wx_mchid: '', wx_paykey: '' });
 const bannerItems = ref([]);
 const rides = ref([]);
 const users = ref([]);
@@ -149,11 +156,15 @@ const fetchAdminAssets = async () => {
         const res = await fetch('/api/config');
         if (res.ok) {
             const data = await res.json();
-            config.value = Object.assign({ amap_key: '', wx_appid: '', top_fee: 0, hot_cities: '', notice: '', banners: '[]' }, data);
+            config.value = Object.assign({ amap_key: '', top_fee: 0, hot_cities: '', notice: '', banners: '[]' }, data);
             try { bannerItems.value = JSON.parse(config.value.banners || '[]'); } catch(e) { bannerItems.value = []; }
         }
+        // 拉取安全密钥
         const secretRes = await fetch('/api/secret');
-        if (secretRes.ok) { const sData = await secretRes.json(); secretStore.value = sData.wx_appsecret || ''; }
+        if (secretRes.ok) { 
+            const sData = await secretRes.json(); 
+            secrets.value = Object.assign({ wx_appid: '', wx_appsecret: '', wx_mchid: '', wx_paykey: '' }, sData); 
+        }
         
         const ridesRes = await fetch('/api/rides');
         if (ridesRes.ok) { const rData = await ridesRes.json(); rides.value = rData.results || []; }
@@ -170,7 +181,7 @@ const saveConfig = async () => {
     config.value.banners = JSON.stringify(bannerItems.value);
     try {
         await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config.value) });
-        if (secretStore.value) await fetch('/api/secret', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wx_appsecret: secretStore.value }) });
+        await fetch('/api/secret', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(secrets.value) });
         Toast.success('保存成功');
         if (store && typeof store.loadConfig === 'function') store.loadConfig();
     } catch (e) { Toast.fail('保存失败'); }
@@ -200,7 +211,7 @@ const toggleBanUser = async (user) => {
 };
 
 const deleteUser = async (userId) => {
-    if(window.confirm('⚠️ 警告：彻底删除用户将同时删除其发布的所有行程，不可恢复！确认操作吗？')) {
+    if(window.confirm('⚠️ 警告：彻底删除用户将同时删除其发布的所有行程！确认操作吗？')) {
         const res = await fetch(`/api/users?id=${userId}`, { method: 'DELETE' });
         if(res.ok) { Toast.success('用户已彻底删除'); fetchAdminAssets(); }
     }
