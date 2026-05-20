@@ -25,14 +25,14 @@
                     
                     <div v-show="activeTab === 'base'">
                         <h3 class="section-title">基础通信密钥参数</h3>
-                        <div class="form-group"><label>高德地图 Key</label><input v-model="config.amap_key" class="input-ctrl" /></div>
+                        <div class="form-group"><label>高德地图 Key</label><input v-model="config.amap_key" type="text" class="input-ctrl" /></div>
                         <div class="form-group"><label>行程置顶推荐服务费 (元)</label><input v-model="config.top_fee" type="number" class="input-ctrl" /></div>
                         
-                        <h3 class="section-title" style="margin-top:30px; border-left-color:#1989fa;">公众号与微信支付设置</h3>
-                        <div class="form-group"><label>请输入公众号AppID：</label><input v-model="secrets.wx_appid" class="input-ctrl" /></div>
-                        <div class="form-group"><label>请输入公众号AppSecret：</label><input v-model="secrets.wx_appsecret" type="password" class="input-ctrl" /></div>
-                        <div class="form-group"><label>请输入微信商户号：</label><input v-model="secrets.wx_mchid" class="input-ctrl" /></div>
-                        <div class="form-group"><label>请输入微信支付秘钥：</label><input v-model="secrets.wx_paykey" type="password" class="input-ctrl" /></div>
+                        <h3 class="section-title" style="margin-top:30px; border-left-color:#1989fa;">公众号与微信支付设置 (明文显示)</h3>
+                        <div class="form-group"><label>请输入公众号AppID：</label><input v-model="secrets.wx_appid" type="text" class="input-ctrl" /></div>
+                        <div class="form-group"><label>请输入公众号AppSecret：</label><input v-model="secrets.wx_appsecret" type="text" class="input-ctrl" /></div>
+                        <div class="form-group"><label>请输入微信商户号：</label><input v-model="secrets.wx_mchid" type="text" class="input-ctrl" /></div>
+                        <div class="form-group"><label>请输入微信支付秘钥：</label><input v-model="secrets.wx_paykey" type="text" class="input-ctrl" /></div>
                     </div>
 
                     <div v-show="activeTab === 'ui'">
@@ -67,8 +67,14 @@
                                 </td>
                                 <td style="padding:10px; border:1px solid #eef0f1;">
                                     <div style="font-weight:bold; font-size:14px; color:#333; margin-bottom:4px;">{{ r.origin }} ➡️ {{ r.destination }}</div>
-                                    <div style="color:#666; margin-bottom:4px;">📅 {{ formatDate(r.date) }}</div>
-                                    <div style="color:#999; font-size:12px; font-family:monospace;">发布人ID: {{ r.user_id }}</div>
+                                    <div style="color:#666; margin-bottom:8px;">📅 {{ formatDate(r.date) }}</div>
+                                    <div style="display:flex; align-items:center; gap:6px; background:#f9f9f9; padding:6px; border-radius:6px; border:1px solid #eee;">
+                                        <img :src="r.publisher_avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" style="width:26px; height:26px; border-radius:50%; object-fit:cover;" />
+                                        <div style="font-size:12px; color:#333; font-weight:bold; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:120px;">
+                                            {{ r.publisher_nickname || '未知用户' }}
+                                        </div>
+                                    </div>
+                                    <div style="color:#aaa; font-size:11px; margin-top:4px; font-family:monospace;">账号ID: {{ r.user_id }}</div>
                                 </td>
                                 <td style="padding:10px; border:1px solid #eef0f1; color:#555; line-height: 1.6;">
                                     <div>💺 {{ r.seats }}座 | 💰 {{ r.price || '面议' }} {{ r.car_model ? ' | 🚘 ' + r.car_model : '' }}</div>
@@ -98,7 +104,7 @@
                                 <img :src="u.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" style="width:44px; height:44px; border-radius:50%; object-fit:cover;" />
                                 <div>
                                     <div style="font-weight:bold; font-size: 15px; color: #111;">{{ u.nickname || '微信用户' }}</div>
-                                    <div style="font-size: 12px; color: #666; margin-top: 5px;">ID: {{ u.id }} | 📱 <span style="color:#ff5500; font-weight:bold;">{{ u.phone || '未留存' }}</span></div>
+                                    <div style="font-size: 12px; color: #666; margin-top: 5px; font-family: monospace;">ID: {{ u.id }} | 📱 <span style="color:#ff5500; font-weight:bold;">{{ u.phone || '未留存' }}</span></div>
                                 </div>
                             </div>
                             <div style="display:flex; gap: 8px;">
@@ -134,7 +140,6 @@ const isLoading = ref(false);
 const activeTab = ref('base');
 
 const config = ref({ amap_key: '', top_fee: 0, hot_cities: '', notice: '', banners: '[]' });
-// 🌟 增量：独立的四项安全密钥
 const secrets = ref({ wx_appid: '', wx_appsecret: '', wx_mchid: '', wx_paykey: '' });
 const bannerItems = ref([]);
 const rides = ref([]);
@@ -159,7 +164,7 @@ const fetchAdminAssets = async () => {
             config.value = Object.assign({ amap_key: '', top_fee: 0, hot_cities: '', notice: '', banners: '[]' }, data);
             try { bannerItems.value = JSON.parse(config.value.banners || '[]'); } catch(e) { bannerItems.value = []; }
         }
-        // 拉取安全密钥
+        
         const secretRes = await fetch('/api/secret');
         if (secretRes.ok) { 
             const sData = await secretRes.json(); 
@@ -180,11 +185,14 @@ const removeBanner = (idx) => { bannerItems.value.splice(idx, 1); };
 const saveConfig = async () => {
     config.value.banners = JSON.stringify(bannerItems.value);
     try {
-        await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config.value) });
-        await fetch('/api/secret', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(secrets.value) });
-        Toast.success('保存成功');
-        if (store && typeof store.loadConfig === 'function') store.loadConfig();
-    } catch (e) { Toast.fail('保存失败'); }
+        const res1 = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config.value) });
+        const res2 = await fetch('/api/secret', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(secrets.value) });
+        
+        if(res1.ok && res2.ok){
+            Toast.success('参数配置已成功保存！');
+            if (store && typeof store.loadConfig === 'function') store.loadConfig();
+        } else { Toast.fail('部分数据保存失败'); }
+    } catch (e) { Toast.fail('网络同步异常'); }
 };
 
 const deleteRide = async (id) => {
@@ -211,9 +219,9 @@ const toggleBanUser = async (user) => {
 };
 
 const deleteUser = async (userId) => {
-    if(window.confirm('⚠️ 警告：彻底删除用户将同时删除其发布的所有行程！确认操作吗？')) {
+    if(window.confirm('⚠️ 彻底删除用户将清除其所有数据！确认操作吗？')) {
         const res = await fetch(`/api/users?id=${userId}`, { method: 'DELETE' });
-        if(res.ok) { Toast.success('用户已彻底删除'); fetchAdminAssets(); }
+        if(res.ok) { Toast.success('用户已删除'); fetchAdminAssets(); }
     }
 };
 
