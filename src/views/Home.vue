@@ -35,7 +35,7 @@
 
     <van-popup v-model:show="showAuthPopup" round :close-on-click-overlay="false" style="padding: 28px 24px; width: 85%; text-align: center; box-sizing: border-box;">
       <div style="font-size: 18px; font-weight: bold; margin-bottom: 14px; color: #333;">微信安全授权提示</div>
-      <div style="font-size: 14px; color: #666; margin-bottom: 26px; line-height: 1.6; text-align: left;">为了保障真实的拼车环境，系统需要获取您的微信身份信息。授权后即可正常浏览与发布信息。</div>
+      <div style="font-size: 14px; color: #666; margin-bottom: 26px; line-height: 1.6; text-align: left;">为了保障真实绿色的拼车环境，系统需要获取您的微信身份信息。授权后即可正常浏览与发布拼车行程。</div>
       <van-button type="primary" block round color="#07c160" font-weight="bold" @click="goToAuth">确 认 授 权</van-button>
     </van-popup>
     
@@ -46,7 +46,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { Toast } from 'vant'; // 🛠️ 严格对齐 Vant 3 组件语法
+import { Toast } from 'vant'; // 严格使用 Vant 3 组件规范
 import { useAppStore } from '../store';
 import TabBar from '../components/TabBar.vue';
 
@@ -128,33 +128,32 @@ onMounted(async () => {
     const wxCode = urlParams.get('code');
     let cachedUser = localStorage.getItem('user_profile');
 
-    // 如果携带 code 返回，立即执行后台数据库建档并换取登录态
+    // ⚔️ 核心防御重构：如果携带 code，必须等异步请求完全成功并写入缓存后，才允许向后运行
     if (wxCode && !cachedUser) {
         Toast.loading({ message: '授权登录中...', forbidClick: true, duration: 0 });
         try {
             const res = await fetch(`/api/login?code=${wxCode}`);
             const data = await res.json();
-            if (res.ok) {
+            if (res.ok && data.id) {
                 localStorage.setItem('user_profile', JSON.stringify(data));
                 cachedUser = JSON.stringify(data);
                 window.history.replaceState({}, document.title, '/');
                 Toast.success('登录成功');
             } else {
-                // 如果由于后台没配置 AppSecret 等原因报错，清晰提示，不卡死界面
-                Toast.fail(data.error || '登录失败');
+                Toast.fail(data.error || '授权凭证换取失败');
             }
         } catch (e) {
-            Toast.fail('安全认证请求中断');
+            Toast.fail('安全通讯链路中断');
         } finally {
-            Toast.clear(); // 🛠️ 修正为标准 Vant 3 清除加载遮罩语法
+            Toast.clear(); // 严格使用 Vant 3 清除遮罩层语法
         }
     }
 
-    // 强拦截状态判断
-    if (!cachedUser) {
-        showAuthPopup.value = true;
-    } else {
+    // 🔒 此时进行判定，缓存状态 100% 同步，绝不会产生时间差导致的强制复现弹窗
+    if (cachedUser) {
         showAuthPopup.value = false;
+    } else {
+        showAuthPopup.value = true;
     }
 
     if (store && typeof store.loadConfig === 'function') store.loadConfig().catch(()=>{});
