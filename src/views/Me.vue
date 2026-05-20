@@ -1,10 +1,13 @@
 <template>
   <div style="min-height: 100vh; background: #f7f8fa; padding-bottom: 90px; font-family: sans-serif;">
-    <van-nav-bar title="个人中心" />
+    
+    <div style="height: 46px; background: #fff; text-align: center; line-height: 46px; font-size: 16px; font-weight: bold; border-bottom: 1px solid #eee; color: #333;">
+      个人中心
+    </div>
 
     <div style="background: #ff7700; padding: 30px 20px; color: #fff; display: flex; align-items: center;">
       <template v-if="localUser.id">
-        <van-image round width="60" height="60" :src="localUser.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" />
+        <img :src="localUser.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" style="width: 60px; height: 60px; border-radius: 50%; border: 2px solid #fff; object-fit: cover; background: #fff;" />
         <div style="margin-left: 15px;">
           <div style="font-size: 18px; font-weight: bold;">{{ localUser.nickname || '微信用户' }}</div>
           <div style="font-size: 14px; margin-top: 5px;">📱 {{ localUser.phone || '未绑定手机号' }}</div>
