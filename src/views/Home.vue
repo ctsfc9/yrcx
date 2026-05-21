@@ -1,5 +1,5 @@
 <template>
-  <div style="min-height: 100vh; background: #f7f8fa; padding-bottom: 80px; box-sizing: border-box; position: relative;">
+  <div style="min-height: 100vh; background: #f7f8fa; padding-bottom: 80px; box-sizing: border-box;">
     
     <van-notice-bar v-if="noticeText" left-icon="volume-o" :text="noticeText" />
 
@@ -11,32 +11,33 @@
       </van-swipe>
     </div>
 
-    <div v-for="item in displayedRides" :key="item.id" class="ride-card">
-      <div class="row-1">
-        <div style="display:flex; align-items:center; gap:8px;">
-          <span :class="['badge', item.type === 'driver' ? 'driver' : 'passenger']">{{ item.type === 'driver' ? '🚗 车主找人' : '🙋‍♂️ 乘客找车' }}</span>
-          <span style="font-size:13px; color:#666; font-weight:bold;">{{ formatShortDate(item.date) }} 出发</span>
+    <van-skeleton title avatar :row="3" :loading="loading && displayedRides.length === 0" style="margin-top: 20px;">
+      <div v-for="item in displayedRides" :key="item.id" class="ride-card">
+        <div class="row-1">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span :class="['badge', item.type === 'driver' ? 'driver' : 'passenger']">{{ item.type === 'driver' ? '🚗 车主找人' : '🙋‍♂️ 乘客找车' }}</span>
+            <span style="font-size:13px; color:#666; font-weight:bold;">{{ formatShortDate(item.date) }} 出发</span>
+          </div>
+          <span v-if="item.is_top" class="top-tag">🔥置顶</span>
         </div>
-        <span v-if="item.is_top" class="top-tag">🔥置顶</span>
+        
+        <div class="row-2" @click="router.push(`/detail?id=${item.id}`)">
+          {{ item.origin }} <span class="arrow">➡️</span> {{ item.destination }}
+        </div>
+        
+        <div class="row-3">
+          💺 <span style="color:#333; font-weight:bold;">{{ item.seats }}空位</span> &nbsp;|&nbsp; 
+          💰 <span style="color:#ff5500; font-weight:bold;">{{ item.price || '面议' }}</span> 
+          <span v-if="item.car_model">&nbsp;|&nbsp; 🚘 <span style="color:#333; font-weight:bold;">{{ item.car_model }}</span></span>
+        </div>
+        
+        <div class="row-4">
+          <div class="remark-text">📝 {{ item.remark || '无额外备注' }}</div>
+          <button class="detail-btn" @click="router.push(`/detail?id=${item.id}`)">详情</button>
+        </div>
       </div>
-      
-      <div class="row-2" @click="router.push(`/detail?id=${item.id}`)">
-        {{ item.origin }} <span class="arrow">➡️</span> {{ item.destination }}
-      </div>
-      
-      <div class="row-3">
-        💺 <span style="color:#333; font-weight:bold;">{{ item.seats }}空位</span> &nbsp;|&nbsp; 
-        💰 <span style="color:#ff5500; font-weight:bold;">{{ item.price || '面议' }}</span> 
-        <span v-if="item.car_model">&nbsp;|&nbsp; 🚘 <span style="color:#333; font-weight:bold;">{{ item.car_model }}</span></span>
-      </div>
-      
-      <div class="row-4">
-        <div class="remark-text">📝 {{ item.remark || '无额外备注' }}</div>
-        <button class="detail-btn" @click="router.push(`/detail?id=${item.id}`)">详情</button>
-      </div>
-    </div>
+    </van-skeleton>
     
-    <div v-if="loading" style="text-align: center; padding: 15px; color: #999; font-size: 13px;">极速加载数据中...</div>
     <div v-if="finished && displayedRides.length > 0" style="text-align: center; padding: 15px; color: #999; font-size: 13px;">没有更多行程了</div>
 
     <van-popup v-model:show="showAuthPopup" round :close-on-click-overlay="false" style="padding: 28px 24px; width: 85%; text-align: center; box-sizing: border-box;">
@@ -61,7 +62,7 @@ const router = useRouter();
 
 const allRides = ref([]);
 const displayedRides = ref([]);
-const loading = ref(false);
+const loading = ref(true);
 const finished = ref(false);
 const showAuthPopup = ref(false);
 const limit = 8; 
@@ -75,12 +76,10 @@ const bannerList = computed(() => {
 });
 
 const loadMoreRides = () => {
-    if (loading.value || finished.value) return;
-    loading.value = true;
+    if (finished.value) return;
     const currentLength = displayedRides.value.length;
     const nextChunk = allRides.value.slice(currentLength, currentLength + limit);
     if (nextChunk.length > 0) displayedRides.value.push(...nextChunk);
-    loading.value = false;
     if (displayedRides.value.length >= allRides.value.length) finished.value = true;
 };
 
@@ -95,7 +94,7 @@ const fetchAllRides = async () => {
     try {
         const res = await fetch('/api/rides');
         if (res.ok) { const data = await res.json(); allRides.value = data.results || []; loadMoreRides(); }
-    } catch (e) { finished.value = true; }
+    } catch (e) { finished.value = true; } finally { loading.value = false; }
 };
 
 const handleBannerClick = (url) => {
@@ -121,7 +120,6 @@ onMounted(async () => {
     const wxCode = urlParams.get('code');
     let cachedUser = localStorage.getItem('user_profile');
 
-    // 🚀 核心修复：后台轻量化静默验证登录，彻底解决白屏死循环卡慢问题
     if (wxCode && !cachedUser) {
         try {
             const res = await fetch(`/api/login?code=${wxCode}`);
@@ -130,8 +128,8 @@ onMounted(async () => {
                 localStorage.setItem('user_profile', JSON.stringify(data));
                 cachedUser = JSON.stringify(data);
                 window.history.replaceState({}, document.title, '/');
-                Toast.success('验证成功');
-            } else { Toast.fail(data.error || '验证失败'); }
+                Toast.success('身份同步成功');
+            }
         } catch (e) {}
     }
 
