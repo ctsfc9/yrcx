@@ -149,7 +149,7 @@ const loadMapScript = () => {
 };
 
 const openMapSelector = (f) => { 
-    if (!window.AMap) { showToast('地图正在初始化或后台未配置高德密钥'); return; }
+    if (!window.AMap) { showFailToast('地图正在初始化或后台未配置高德密钥'); return; }
     currentMapField.value = f; showMap.value = true; mapSearchKeyword.value = ''; 
 };
 
@@ -172,7 +172,7 @@ const confirmMapSelection = (directValue) => {
         else postForm.destination = finalVal; 
         showMap.value = false;
     } else {
-        showToast('请选择有效位置'); 
+        showFailToast('请选择有效位置'); 
     }
 };
 
@@ -180,7 +180,6 @@ const onPreSubmit = () => {
     if(!postForm.origin || !postForm.destination) { showFailToast('请完善起点和终点'); return; } 
     if(!/^\d{11}$/.test(postForm.contact)) { showFailToast('请填写11位手机号'); return; }
     
-    // 强制验证并唤起绑定 UI
     if(!(store.userProfile && store.userProfile.phone)) { showAuth.value = true; return; } 
     handlePublish(); 
 };
@@ -188,6 +187,7 @@ const onPreSubmit = () => {
 const handlePublish = async () => { 
     submitLoading.value = true; 
     
+    // 🌟 强制拒绝旧版假 ID 写入
     const cachedStr = localStorage.getItem('user_profile');
     if (!cachedStr) {
         showFailToast('登录失效，请返回首页重新授权');
@@ -197,7 +197,7 @@ const handlePublish = async () => {
     const cachedUser = JSON.parse(cachedStr);
     if (!cachedUser.id || String(cachedUser.id).startsWith('user_')) {
         localStorage.removeItem('user_profile');
-        showFailToast('账号异常，请回首页刷新');
+        showFailToast('账号数据异常，请重新授权');
         setTimeout(() => { window.location.href = '/'; }, 1500);
         return;
     }
@@ -213,9 +213,10 @@ const handlePublish = async () => {
         const res = await fetch('/api/rides', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newRide) }); 
         const result = await res.json();
         
+        // 🌟 拦截已被后台删除的幽灵用户
         if (res.status === 401 || result.error === 'USER_DELETED') {
             localStorage.removeItem('user_profile');
-            showFailToast('账号数据被清理，请重新授权');
+            showFailToast('账号信息过期或被管理员清理，请重新授权');
             setTimeout(() => { window.location.href = '/'; }, 1500);
             return;
         }
@@ -284,7 +285,6 @@ const toggleRemark = (t) => {
   else postForm.remark.push(t); 
 };
 
-// 🌟 核心增量：真实调取后端 API 将号码绑死入库，彻底切断发布失败死循环
 const submitAuth = async () => {
     if(!/^\d{11}$/.test(registerForm.phone)) { showFailToast('请输入11位数字手机号'); return; }
     
@@ -308,24 +308,135 @@ const submitAuth = async () => {
             showAuth.value = false;
             postForm.contact = registerForm.phone;
             closeToast();
-            // 直接衔接发布
             handlePublish();
         } else {
-            showFailToast('写入手机号失败，请重试');
+            closeToast();
+            showFailToast('绑定失败');
         }
     } catch (e) {
+        closeToast();
         showFailToast('网络链接中断');
     }
 };
 </script>
 
+<template>
+  <div style="padding-bottom: 140px; background: #f7f8fa; min-height: 100vh; position: relative;">
+    <van-nav-bar :title="postForm.old_id ? '重新编辑行程' : '发布行程'" left-arrow @click-left="router.back()" />
+    
+    <van-popup v-model:show="showTypeSelector" position="bottom" round style="padding: 30px 20px; background: #f2f3f5;" :close-on-click-overlay="false">
+      <div style="font-size: 20px; font-weight: bold; text-align: center; margin-bottom: 20px;">请选择身份</div>
+      <div @click="selectPostType('driver')" style="background: #fff; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 15px; border: 2px solid #1989fa;">
+         <div style="font-size: 32px; margin-bottom: 10px;">🚗</div><div style="font-size: 18px; font-weight: bold; color: #1989fa;">车主找人</div>
+      </div>
+      <div @click="selectPostType('passenger')" style="background: #fff; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 20px; border: 2px solid #ff7700;">
+         <div style="font-size: 32px; margin-bottom: 10px;">🙋‍♂️</div><div style="font-size: 18px; font-weight: bold; color: #ff7700;">乘客找车</div>
+      </div>
+      <van-button block round plain @click="cancelPostType">返回大厅</van-button>
+    </van-popup>
+
+    <div v-show="!showTypeSelector && postForm.type" style="padding: 15px;">
+        <div style="background:#fff; border-radius:12px; padding:15px; margin-bottom:15px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+          <div style="display:flex; align-items:center; border-bottom:1px solid #f5f5f5; padding-bottom:15px; margin-bottom:15px;">
+            <div style="width:30px; height:30px; border-radius:50%; background:#07c160; color:#fff; text-align:center; line-height:30px; font-weight:bold; margin-right:10px;">起</div>
+            <div style="flex:1; font-size:18px; font-weight:bold;" @click="openMapSelector('origin')">{{ postForm.origin || '点击定位起点' }}</div>
+          </div>
+          <div style="display:flex; align-items:center;">
+            <div style="width:30px; height:30px; border-radius:50%; background:#ee0a24; color:#fff; text-align:center; line-height:30px; font-weight:bold; margin-right:10px;">终</div>
+            <div style="flex:1; font-size:18px; font-weight:bold;" @click="openMapSelector('destination')">{{ postForm.destination || '点击选择终点' }}</div>
+          </div>
+        </div>
+
+        <div style="background:#fff; border-radius:12px; padding:5px 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); margin-bottom: 15px;">
+          <van-field v-model="postForm.dateDisplay" label="出发时间" readonly is-link @click="showDate = true" label-width="80px" style="font-size: 17px; font-weight: bold;" />
+          
+          <div style="display: flex; align-items: center; padding: 10px 16px;">
+            <div style="font-weight: bold; color: #333; width: 80px; font-size: 17px;">座位数</div>
+            <div style="flex: 1; display: flex; gap: 8px; overflow-x: auto; padding: 5px 0;">
+                <div v-for="n in 6" :key="n" @click="postForm.seats = n" class="seat-box" :class="{active: postForm.seats === n}">
+                    {{ n }}
+                </div>
+            </div>
+          </div>
+
+          <van-field v-if="postForm.type==='driver'" label="车型" readonly label-width="80px" style="font-size: 17px; font-weight: bold;">
+            <template #input>
+              <van-radio-group v-model="postForm.car_model" direction="horizontal">
+                <van-radio name="油车" style="margin-right: 15px;">油车</van-radio>
+                <van-radio name="电车" style="margin-right: 15px;">电车</van-radio>
+                <van-radio name="混动">混动</van-radio>
+              </van-radio-group>
+            </template>
+          </van-field>
+          <van-field v-model="postForm.contact" type="tel" label="联系电话" placeholder="请输入手机号" label-width="80px" style="font-size: 17px; font-weight: bold;" />
+          <van-field v-model="postForm.price" type="text" label="拼车费用" placeholder="不填则为面议" label-width="80px" style="font-size: 17px; font-weight: bold;" />
+        </div>
+
+        <div style="background:#fff; border-radius:12px; padding:15px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+          <div style="font-weight: bold; color: #333; margin-bottom: 12px; font-size: 17px;">快捷备注标签</div>
+          <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+            <div v-for="t in currentRemarkOptions" :key="t" @click="toggleRemark(t)" class="tag" :class="{active: postForm.remark.includes(t)}">
+              {{ t }}
+            </div>
+          </div>
+        </div>
+    </div>
+
+    <div v-if="!showTypeSelector" class="float-btn-wrapper" @click="!submitLoading && onPreSubmit()">
+        <div class="float-btn-circle">
+            <span v-if="submitLoading">处理中...</span>
+            <span v-else>{{ postForm.old_id ? '保存并更新' : '确认发布' }}</span>
+        </div>
+    </div>
+
+    <van-popup v-model:show="showPayModal" position="bottom" round style="padding: 20px; text-align: center;">
+      <h3 style="margin: 0 0 15px;">服务费</h3>
+      <div style="font-size: 36px; font-weight: bold; margin-bottom: 20px;">¥ {{ requiredFee }}</div>
+      <van-button block round type="primary" size="large" color="#07c160" @click="executePayment">微信安全支付</van-button>
+      <van-button block round plain style="margin-top: 15px; border:none; color:#999;" @click="showPayModal = false">取消</van-button>
+    </van-popup>
+
+    <van-popup v-model:show="showMap" position="bottom" :style="{height:'90%'}" round @opened="initMapInstance">
+        <div style="display:flex;flex-direction:column;height:100%;">
+          <van-search v-model="mapSearchKeyword" show-action placeholder="输入地点精准搜索" @search="confirmMapSelection()"><template #action><div @click="showMap=false">取消</div></template></van-search>
+          <div id="picker-map-container" style="width:100%; height:280px; position:relative;"></div>
+          
+          <div style="padding:15px; flex:1; display:flex; flex-direction:column; background:#fff;">
+            <div style="margin-bottom:12px;font-size:14px;font-weight:bold;color:#333;">当前选定：<span style="color:#ff6600;">{{ mapSelectionText }}</span></div>
+            
+            <template v-if="backendHotCities.length > 0">
+                <div style="font-size:13px; color:#666; margin-bottom:8px; font-weight:bold;">快捷预设热门城市：</div>
+                <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:20px; max-height:120px; overflow-y:auto;">
+                    <div v-for="c in backendHotCities" :key="c" @click="confirmMapSelection(c)" style="padding:6px 12px; background:#f5f5f5; border-radius:6px; font-size:13px; color:#333; border:1px solid #eee; cursor: pointer;">
+                        {{ c }}
+                    </div>
+                </div>
+            </template>
+            
+            <van-button block type="primary" color="#1989fa" round @click="confirmMapSelection()">确定当前位置</van-button>
+          </div>
+        </div>
+    </van-popup>
+
+    <van-popup v-model:show="showDate" position="bottom">
+        <van-picker v-model="currentDateValues" :columns="dateColumns" @confirm="onConfirmDate" @cancel="showDate=false"/>
+    </van-popup>
+    
+    <van-popup v-model:show="showAuth" position="bottom" round style="padding: 30px 20px; text-align:center;" :close-on-click-overlay="false">
+        <h3 style="margin-bottom: 20px;">补充联系方式</h3>
+        <van-field v-model="registerForm.phone" type="tel" placeholder="请输入11位手机号" style="background: #f5f5f5; border-radius: 8px;" />
+        <van-button block round type="primary" color="#ff6600" @click="submitAuth" style="margin-top:20px;">确认绑定</van-button>
+    </van-popup>
+  </div>
+</template>
+
 <style scoped>
 :deep(.van-field__label) { font-weight: bold; color: #333; width: 4.5em; }
 
-.seat-box { flex-shrink: 0; width: 36px; height: 36px; border-radius: 8px; background: #f2f3f5; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: bold; color: #666; border: 1px solid transparent; transition: all 0.2s; cursor: pointer; }
+.seat-box { flex-shrink: 0; width: 38px; height: 38px; border-radius: 8px; background: #f2f3f5; display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: bold; color: #666; border: 1px solid transparent; transition: all 0.2s; cursor: pointer; }
 .seat-box.active { background: #1989fa; color: #fff; box-shadow: 0 4px 8px rgba(25,137,250,0.3); }
 
-/* 🌟 增量：将标签字号放大至 15px，加粗，提升点击舒适度 */
+/* 🌟 标签放大了 */
 .tag { padding: 8px 16px; background: #f2f3f5; border-radius: 6px; font-size: 15px; font-weight: bold; border: 1px solid transparent; transition: all 0.15s; color:#555; cursor: pointer; }
 .tag.active { background: #eaf5ff; color: #1989fa; border-color: #1989fa; font-weight: 900; }
 
