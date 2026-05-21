@@ -1,4 +1,4 @@
-// 行程记录核心接口：增加用户身份强校验与头像联查
+// 行程记录核心接口：带被删用户拦截与手机号兜底自动绑定
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -40,10 +40,15 @@ export async function onRequest(context) {
       const data = await request.json();
       if (!data.user_id || !data.origin) return new Response(JSON.stringify({ error: '参数缺失' }), { status: 400 });
 
-      // 🌟 核心拦截：如果该用户在数据库里已被管理员删除，直接抛出 401，通知前端强制重新授权
       const user = await db.prepare("SELECT phone, balance FROM users WHERE id = ?").bind(data.user_id).first();
       if (!user) {
           return new Response(JSON.stringify({ error: 'USER_DELETED' }), { status: 401 });
+      }
+
+      // 🌟 增量兜底：如果用户数据库没手机号，但发布传了联系电话，自动无感帮他绑定
+      if (!user.phone && data.contact) {
+          await db.prepare("UPDATE users SET phone = ? WHERE id = ?").bind(data.contact, data.user_id).run();
+          user.phone = data.contact;
       }
 
       if (data.old_id) {
@@ -52,7 +57,7 @@ export async function onRequest(context) {
           return new Response(JSON.stringify({ success: true, ride_id: data.old_id }));
       }
 
-      if (!user.phone) return new Response(JSON.stringify({ error: '请先绑定手机' }), { status: 403 });
+      if (!user.phone) return new Response(JSON.stringify({ error: '系统校验未发现您的手机号，请重新提交绑定' }), { status: 403 });
 
       const config = await db.prepare("SELECT publish_fee FROM system_config LIMIT 1").first();
       const fee = config?.publish_fee ? parseFloat(config.publish_fee) : 0;
