@@ -24,11 +24,15 @@
                 <div v-else>
                     
                     <div v-show="activeTab === 'base'">
-                        <h3 class="section-title">基础通信密钥参数</h3>
+                        <h3 class="section-title">基础通信与收费参数</h3>
                         <div class="form-group"><label>高德地图 Key</label><input v-model="config.amap_key" type="text" class="input-ctrl" /></div>
-                        <div class="form-group"><label>行程置顶推荐服务费 (元)</label><input v-model="config.top_fee" type="number" class="input-ctrl" /></div>
                         
-                        <h3 class="section-title" style="margin-top:30px; border-left-color:#1989fa;">公众号与微信支付设置 (明文显示)</h3>
+                        <div style="display:flex; gap:15px;">
+                            <div class="form-group" style="flex:1;"><label>行程发布基础服务费 (元)</label><input v-model="config.publish_fee" type="number" class="input-ctrl" placeholder="填 0 则免费发布" /></div>
+                            <div class="form-group" style="flex:1;"><label>行程置顶推荐服务费 (元)</label><input v-model="config.top_fee" type="number" class="input-ctrl" placeholder="填 0 则免费置顶" /></div>
+                        </div>
+
+                        <h3 class="section-title" style="margin-top:30px; border-left-color:#1989fa;">公众号与微信支付设置</h3>
                         <div class="form-group"><label>请输入公众号AppID：</label><input v-model="secrets.wx_appid" type="text" class="input-ctrl" /></div>
                         <div class="form-group"><label>请输入公众号AppSecret：</label><input v-model="secrets.wx_appsecret" type="text" class="input-ctrl" /></div>
                         <div class="form-group"><label>请输入微信商户号：</label><input v-model="secrets.wx_mchid" type="text" class="input-ctrl" /></div>
@@ -83,7 +87,6 @@
                                 </td>
                                 <td style="padding:10px; border:1px solid #eef0f1; text-align: center;">
                                     <button @click="deleteRide(r.id)" style="background:#ff4d4f; color:#fff; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; margin-bottom: 6px; width: 100%;">下架</button>
-                                    <button @click="quickBanUser(r.user_id)" style="background:#222; color:#fff; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; width: 100%;">封禁用户</button>
                                 </td>
                             </tr>
                         </table>
@@ -99,6 +102,9 @@
                         <div class="form-group" style="margin-bottom:30px;"><label>乘客快捷标签</label><input v-model="config.tags_passenger" class="input-ctrl" /></div>
                         
                         <h4 style="margin:25px 0 12px; color:#222; font-weight:bold; font-size:15px;">👤 授权用户身份及解封管理</h4>
+                        <div style="font-size: 13px; color: #ff6600; margin-bottom: 15px; background: #fff5eb; padding: 10px; border-radius: 6px;">
+                            提示：如果您看到了以 "user_wx_" 开头的账号，这是未授权产生的错误假数据，请直接点击删除。
+                        </div>
                         <div v-for="u in users" :key="u.id" style="display:flex; justify-content:space-between; align-items:center; padding:15px; background: #fafafa; border-radius: 8px; margin-bottom: 10px; border: 1px solid #eee;">
                             <div style="display:flex; align-items:center; gap:14px;">
                                 <img :src="u.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" style="width:44px; height:44px; border-radius:50%; object-fit:cover;" />
@@ -142,7 +148,7 @@ const isAdmin = ref(false);
 const isLoading = ref(false);
 const activeTab = ref('base');
 
-const config = ref({ amap_key: '', top_fee: 0, hot_cities: '', notice: '', banners: '[]' });
+const config = ref({ amap_key: '', top_fee: 0, publish_fee: 0, hot_cities: '', notice: '', banners: '[]' });
 const secrets = ref({ wx_appid: '', wx_appsecret: '', wx_mchid: '', wx_paykey: '' });
 const bannerItems = ref([]);
 const rides = ref([]);
@@ -164,7 +170,7 @@ const fetchAdminAssets = async () => {
         const res = await fetch('/api/config');
         if (res.ok) {
             const data = await res.json();
-            config.value = Object.assign({ amap_key: '', top_fee: 0, hot_cities: '', notice: '', banners: '[]' }, data);
+            config.value = Object.assign({ amap_key: '', top_fee: 0, publish_fee: 0, hot_cities: '', notice: '', banners: '[]' }, data);
             try { bannerItems.value = JSON.parse(config.value.banners || '[]'); } catch(e) { bannerItems.value = []; }
         }
         
@@ -204,21 +210,13 @@ const deleteRide = async (id) => {
     }
 };
 
-const quickBanUser = async (userId) => {
-    if(!userId) return;
-    if(window.confirm(`确认封禁该用户吗？`)) {
-        await fetch(`/api/users/ban`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: userId, is_banned: 1 }) });
-        Toast.success('账号已封禁'); fetchAdminAssets();
-    }
-};
-
 const toggleBanUser = async (user, targetStatus) => {
     const res = await fetch(`/api/users/ban`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: user.id, is_banned: targetStatus }) });
     if(res.ok) { user.is_banned = targetStatus; Toast.success(targetStatus ? '已拉黑封禁' : '已解封'); }
 };
 
 const deleteUser = async (userId) => {
-    if(window.confirm('⚠️ 彻底删除用户将同时删除其所有数据！确认操作吗？')) {
+    if(window.confirm('⚠️ 彻底删除用户将清除其所有数据！确认操作吗？')) {
         const res = await fetch(`/api/users?id=${userId}`, { method: 'DELETE' });
         if(res.ok) { Toast.success('用户已彻底删除'); fetchAdminAssets(); }
     }
