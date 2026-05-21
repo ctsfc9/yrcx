@@ -1,4 +1,4 @@
-// 后台用户管理接口：支持拉黑与彻底删除
+// 后台用户管理接口：支持拉黑、彻底删除与补充手机号
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -19,6 +19,20 @@ export async function onRequest(context) {
     }
   }
 
+  // 🌟 增量：前端用户自主绑定手机号接口
+  if (request.method === 'PUT') {
+    try {
+      const data = await request.json();
+      if (data.action === 'bind_phone' && data.id && data.phone) {
+          await db.prepare("UPDATE users SET phone = ? WHERE id = ?").bind(data.phone, data.id).run();
+          return new Response(JSON.stringify({ success: true }));
+      }
+      return new Response(JSON.stringify({ error: '无效的绑定请求' }), { status: 400 });
+    } catch (e) {
+      return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+    }
+  }
+
   if (request.method === 'POST' && url.pathname.endsWith('/ban')) {
     try {
       const data = await request.json();
@@ -32,7 +46,6 @@ export async function onRequest(context) {
     }
   }
 
-  // 🚀 新增：彻底删除用户及名下所有行程
   if (request.method === 'DELETE') {
     const id = url.searchParams.get('id');
     if (id) {
