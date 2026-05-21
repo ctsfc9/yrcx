@@ -1,4 +1,4 @@
-// 行程记录核心接口：带被删用户拦截
+// 行程记录核心接口：增加用户身份强校验与头像联查
 export async function onRequest(context) {
   const { request, env } = context;
   const db = env.DB;
@@ -22,15 +22,27 @@ export async function onRequest(context) {
     }
   }
 
+  if (request.method === 'PUT') {
+    try {
+        const data = await request.json();
+        if (data.action === 'top' && data.id) {
+            await db.prepare("UPDATE rides SET is_top = 1 WHERE id = ?").bind(data.id).run();
+            return new Response(JSON.stringify({ success: true }));
+        }
+        return new Response(JSON.stringify({ error: '无效指令' }), { status: 400 });
+    } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+    }
+  }
+
   if (request.method === 'POST') {
     try {
       const data = await request.json();
       if (!data.user_id || !data.origin) return new Response(JSON.stringify({ error: '参数缺失' }), { status: 400 });
 
-      // 🌟 核心修复：查验发布人是否已被后台管理员删除
+      // 🌟 核心拦截：如果该用户在数据库里已被管理员删除，直接抛出 401，通知前端强制重新授权
       const user = await db.prepare("SELECT phone, balance FROM users WHERE id = ?").bind(data.user_id).first();
       if (!user) {
-          // 如果已被删除，抛出 401 状态码，通知前端强制退出重登
           return new Response(JSON.stringify({ error: 'USER_DELETED' }), { status: 401 });
       }
 
