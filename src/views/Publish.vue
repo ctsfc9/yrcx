@@ -5,7 +5,7 @@ import { showToast, showSuccessToast, showFailToast, showLoadingToast, closeToas
 import { useAppStore } from '../store';
 
 const router = useRouter();
-const route = useRoute();
+const route = useRoute(); // 🌟 增量：引入 route 用于获取编辑 ID
 const store = useAppStore();
 
 const getNowDate = () => {
@@ -27,7 +27,8 @@ const postForm = reactive({
   origin: '', destination: '', 
   date: defaultDateInfo.value, dateDisplay: defaultDateInfo.display, 
   seats: 1, price: '', remark: [], car_model: '油车', 
-  contact: (store.userProfile && store.userProfile.phone) ? store.userProfile.phone : '', old_id: null 
+  contact: (store.userProfile && store.userProfile.phone) ? store.userProfile.phone : '', 
+  old_id: null // 🌟 增量：用于重新编辑
 });
 
 const showTypeSelector = ref(false);
@@ -49,7 +50,6 @@ const mapSelectionText = ref('定位中...');
 let mapInstance = null;
 const userLocation = ref(null); 
 
-// 👉 完全由后端自定义的热门城市列表
 const backendHotCities = ref([]);
 
 const currentRemarkOptions = computed(() => {
@@ -75,7 +75,6 @@ onMounted(async () => {
         await store.loadConfig();
     }
     
-    // 👉 核心：严格只读取后端的 system_config.hot_cities
     if (store && store.sysConfig && store.sysConfig.hot_cities) {
         const rawCities = store.sysConfig.hot_cities;
         if (typeof rawCities === 'string' && rawCities.trim() !== '') {
@@ -83,7 +82,25 @@ onMounted(async () => {
         }
     }
 
-    if (route.query && route.query.type) {
+    // 🌟 增量：如果携带了 id 参数，说明是“重新编辑”模式，拉取旧数据覆盖
+    if (route.query.id) {
+        postForm.old_id = route.query.id;
+        try {
+            const res = await fetch(`/api/rides?id=${route.query.id}`);
+            if (res.ok) {
+                const oldData = await res.json();
+                postForm.type = oldData.type;
+                postForm.origin = oldData.origin;
+                postForm.destination = oldData.destination;
+                postForm.seats = oldData.seats;
+                postForm.price = oldData.price;
+                postForm.car_model = oldData.car_model;
+                postForm.contact = oldData.contact;
+                postForm.date = oldData.date;
+                if (oldData.remark) postForm.remark = oldData.remark.split('，');
+            }
+        } catch (e) {}
+    } else if (route.query && route.query.type) {
         postForm.type = route.query.type;
     } else {
         showTypeSelector.value = true;
@@ -169,13 +186,14 @@ const onPreSubmit = () => {
 };
 
 const handlePublish = async () => { 
-    submitLoading.value = true; 
-    let currentUserId = (store.userProfile && store.userProfile.id) ? store.userProfile.id : ('user_' + Date.now());
-    
-    if(!(store.userProfile && store.userProfile.id) && store && typeof store.saveUser === 'function') {
-        store.saveUser(Object.assign({}, store.userProfile, { id: currentUserId }));
+    // 🌟 增量：彻底封堵假 ID 漏洞！强制使用真实的微信 OpenID
+    let currentUserId = store.userProfile?.id;
+    if (!currentUserId || String(currentUserId).startsWith('user_')) {
+        showFailToast('登录状态异常，请返回首页刷新重新授权');
+        return;
     }
 
+    submitLoading.value = true; 
     const newRide = Object.assign({}, postForm, { 
         user_id: currentUserId, 
         date: postForm.date, 
@@ -191,12 +209,12 @@ const handlePublish = async () => {
             const topFee = Number(store.sysConfig && store.sysConfig.top_fee) || 0;
             if (topFee > 0) { 
                 showDialog({
-                    title: '发布成功', message: `信息已发布！是否支付 ${topFee} 元置顶增加曝光？`,
+                    title: postForm.old_id ? '修改成功' : '发布成功', message: `是否支付 ${topFee} 元置顶增加曝光？`,
                     showCancelButton: true, confirmButtonText: '马上置顶', cancelButtonText: '暂不需要', confirmButtonColor: '#ff6600'
                 }).then(() => {
                     requiredFee.value = topFee; payType.value = 'top'; currentPayRideId.value = result.ride_id; showPayModal.value = true;
-                }).catch(() => { router.replace('/'); });
-            } else { showSuccessToast('发布成功'); router.replace('/'); }
+                }).catch(() => { router.replace('/me'); }); // 🌟 发布成功去个人中心看记录
+            } else { showSuccessToast('成功'); router.replace('/me'); }
         } else if (res.status === 402) {
             requiredFee.value = result.fee || 0; payType.value = 'publish'; showPayModal.value = true;
         } else { showFailToast(result.error || '发布失败'); }
@@ -224,7 +242,7 @@ const executePayment = async () => {
                 if (res.err_msg === "get_brand_wcpay_request:ok") {
                     showSuccessToast('支付成功'); showPayModal.value = false;
                     if (payType.value === 'publish') await handlePublish(); 
-                    else { await fetch('/api/rides', { method: 'PUT', body: JSON.stringify({ action: 'top', id: currentPayRideId.value }) }); router.replace('/'); }
+                    else { await fetch('/api/rides', { method: 'PUT', body: JSON.stringify({ action: 'top', id: currentPayRideId.value }) }); router.replace('/me'); }
                 } else if (res.err_msg !== "get_brand_wcpay_request:cancel") { alert(`支付失败：\n${res.err_msg}`); }
             });
         } else { showFailToast('请在微信内打开'); }
@@ -257,7 +275,7 @@ const submitAuth = async () => {
 
 <template>
   <div style="padding-bottom: 140px; background: #f7f8fa; min-height: 100vh; position: relative;">
-    <van-nav-bar title="发布行程" left-arrow @click-left="router.back()" />
+    <van-nav-bar :title="postForm.old_id ? '重新编辑行程' : '发布行程'" left-arrow @click-left="router.back()" />
     
     <van-popup v-model:show="showTypeSelector" position="bottom" round style="padding: 30px 20px; background: #f2f3f5;" :close-on-click-overlay="false">
       <div style="font-size: 20px; font-weight: bold; text-align: center; margin-bottom: 20px;">请选择身份</div>
@@ -319,8 +337,8 @@ const submitAuth = async () => {
 
     <div v-if="!showTypeSelector" class="float-btn-wrapper" @click="!submitLoading && onPreSubmit()">
         <div class="float-btn-circle">
-            <span v-if="submitLoading">发布中...</span>
-            <span v-else>确认发布</span>
+            <span v-if="submitLoading">处理中...</span>
+            <span v-else>{{ postForm.old_id ? '保存并更新' : '确认发布' }}</span>
         </div>
     </div>
 
@@ -367,13 +385,10 @@ const submitAuth = async () => {
 
 <style scoped>
 :deep(.van-field__label) { font-weight: bold; color: #333; width: 4.5em; }
-
 .seat-box { flex-shrink: 0; width: 36px; height: 36px; border-radius: 8px; background: #f2f3f5; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: bold; color: #666; border: 1px solid transparent; transition: all 0.2s; cursor: pointer; }
 .seat-box.active { background: #1989fa; color: #fff; box-shadow: 0 4px 8px rgba(25,137,250,0.3); }
-
 .tag { padding: 6px 14px; background: #f2f3f5; border-radius: 6px; font-size: 13px; border: 1px solid transparent; transition: all 0.15s; color:#555; cursor: pointer; }
 .tag.active { background: #eaf5ff; color: #1989fa; border-color: #1989fa; font-weight: bold; }
-
 .float-btn-wrapper { position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; justify-content: center; width: 100%; pointer-events: none; }
 .float-btn-circle { pointer-events: auto; width: 240px; height: 56px; background: linear-gradient(135deg, #07c160, #06ad56); border-radius: 28px; display: flex; align-items: center; justify-content: center; color: white; font-size: 20px; font-weight: 900; letter-spacing: 2px; box-shadow: 0 8px 24px rgba(7, 193, 96, 0.45); transition: transform 0.1s; cursor: pointer; border: 2px solid rgba(255,255,255,0.2); }
 .float-btn-circle:active { transform: scale(0.95); }
