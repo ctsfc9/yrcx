@@ -9,7 +9,10 @@
         <img :src="localUser.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" style="width: 60px; height: 60px; border-radius: 50%; border: 2px solid #fff; object-fit: cover; background: #fff;" />
         <div style="margin-left: 15px;">
           <div style="font-size: 19px; font-weight: bold; letter-spacing: 0.3px;">{{ localUser.nickname || '微信用户' }}</div>
-          <div style="font-size: 13px; margin-top: 6px; opacity: 0.95;">📱 绑定手机: {{ localUser.phone || '未绑定手机号' }}</div>
+          <div style="font-size: 13px; margin-top: 6px; opacity: 0.95; display: flex; align-items: center; gap: 8px;">
+             <span>📱 绑定手机: {{ localUser.phone || '未绑定' }}</span>
+             <span v-if="!localUser.phone" @click="showPhoneBind = true" style="background: rgba(255,255,255,0.25); padding: 3px 8px; border-radius: 4px; cursor: pointer; text-decoration: underline;">马上绑定</span>
+          </div>
         </div>
       </template>
     </div>
@@ -41,6 +44,12 @@
     <div v-if="localUser.id" style="margin: 30px 16px;">
         <button @click="logout" style="width: 100%; height: 46px; background: #fff; color: #ff4d4f; border: 1px solid #ff4d4f; border-radius: 8px; font-size: 15px; font-weight: bold; cursor: pointer; box-shadow: 0 2px 8px rgba(255,77,79,0.05);">退出当前微信账户</button>
     </div>
+
+    <van-popup v-model:show="showPhoneBind" round style="padding: 30px 20px; width: 85%; text-align: center;">
+        <div style="font-size: 18px; font-weight: bold; margin-bottom: 20px; color: #333;">绑定联系方式</div>
+        <van-field v-model="bindPhone" type="tel" placeholder="请输入11位手机号" style="background: #f5f5f5; border-radius: 8px;" />
+        <van-button block round type="primary" color="#07c160" @click="submitPhoneBind" style="margin-top:20px; font-size: 16px; font-weight: bold;">确认绑定</van-button>
+    </van-popup>
     
     <TabBar />
   </div>
@@ -49,6 +58,7 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
+import { Toast } from 'vant';
 import { useAppStore } from '../store';
 import TabBar from '../components/TabBar.vue';
 
@@ -57,6 +67,9 @@ const router = useRouter();
 const myRides = ref([]);
 const loading = ref(true);
 const localUser = ref({ id: '', nickname: '', avatar: '', phone: '' });
+
+const showPhoneBind = ref(false);
+const bindPhone = ref('');
 
 onMounted(async () => {
   try {
@@ -67,7 +80,6 @@ onMounted(async () => {
         localUser.value = { id: store.userProfile.id || '', nickname: store.userProfile.nickname || '', avatar: store.userProfile.avatar || '', phone: store.userProfile.phone || '' };
     }
     
-    // 🌟 核心修复：只有当使用真实的微信 ID 过滤请求时，个人中心的资产才能全部完美显现
     if (localUser.value.id) {
       const res = await fetch('/api/rides');
       if (res.ok) {
@@ -82,6 +94,25 @@ onMounted(async () => {
     loading.value = false; 
   }
 });
+
+const submitPhoneBind = async () => {
+    if(!/^\d{11}$/.test(bindPhone.value)) { Toast.fail('请输入11位数字手机号'); return; }
+    try {
+        Toast.loading({ message: '绑定中...', forbidClick: true });
+        const res = await fetch('/api/users', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ action: 'bind_phone', id: localUser.value.id, phone: bindPhone.value })
+        });
+        if(res.ok) {
+            localUser.value.phone = bindPhone.value;
+            localStorage.setItem('user_profile', JSON.stringify(localUser.value));
+            if(store && typeof store.saveUser === 'function') store.saveUser(localUser.value);
+            showPhoneBind.value = false;
+            Toast.success('绑定成功');
+        } else { Toast.fail('绑定失败，请重试'); }
+    } catch(e) { Toast.fail('网络错误'); }
+};
 
 const formatDate = (str) => {
   if (!str) return '';
