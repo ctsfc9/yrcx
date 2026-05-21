@@ -1,5 +1,5 @@
 <template>
-  <div style="min-height: 100vh; background: #f7f8fa; padding-bottom: 80px; box-sizing: border-box;">
+  <div style="min-height: 100vh; background: #f7f8fa; padding-bottom: 80px; box-sizing: border-box; position: relative;">
     
     <van-notice-bar v-if="noticeText" left-icon="volume-o" :text="noticeText" />
 
@@ -115,6 +115,20 @@ const goToAuth = () => {
   window.location.href = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_userinfo&state=STATE#wechat_redirect`;
 };
 
+// 🌟 修复：加入严格的路由层级判断，防止在详情页/发布页触发拦截导致退出
+let clickTime = 0;
+const handlePopstate = () => {
+    if (window.location.pathname !== '/') return; // 只有在首页点击返回才触发退出逻辑
+    const now = new Date().getTime();
+    if (now - clickTime < 2000) {
+        if (typeof WeixinJSBridge !== 'undefined') WeixinJSBridge.call('closeWindow');
+    } else {
+        clickTime = now;
+        Toast('再按一次退出平台');
+        history.pushState(null, null, document.URL);
+    }
+};
+
 onMounted(async () => {
     const urlParams = new URLSearchParams(window.location.search);
     const wxCode = urlParams.get('code');
@@ -138,10 +152,17 @@ onMounted(async () => {
 
     if (store && typeof store.loadConfig === 'function') store.loadConfig().catch(()=>{});
     fetchAllRides();
+    
+    // 初始化返回键拦截
+    history.pushState(null, null, document.URL);
     window.addEventListener('scroll', handleScroll);
+    window.addEventListener('popstate', handlePopstate, false);
 });
 
-onUnmounted(() => { window.removeEventListener('scroll', handleScroll); });
+onUnmounted(() => { 
+    window.removeEventListener('scroll', handleScroll); 
+    window.removeEventListener('popstate', handlePopstate, false);
+});
 </script>
 
 <style scoped>
