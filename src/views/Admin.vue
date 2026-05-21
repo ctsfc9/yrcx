@@ -20,7 +20,7 @@
 
         <div style="flex: 1; padding: 30px; overflow-y: auto; box-sizing: border-box;">
             <div style="background: #fff; padding: 30px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.03); max-width: 1000px; margin: 0 auto;">
-                <div v-if="isLoading" style="text-align: center; padding: 50px; color: #999;">平台资产数据同步中...</div>
+                <div v-if="isLoading" style="text-align: center; padding: 50px; color: #999;">数据同步中...</div>
                 <div v-else>
                     
                     <div v-show="activeTab === 'base'">
@@ -28,11 +28,11 @@
                         <div class="form-group"><label>高德地图 Key</label><input v-model="config.amap_key" type="text" class="input-ctrl" /></div>
                         
                         <div style="display:flex; gap:15px;">
-                            <div class="form-group" style="flex:1;"><label>行程发布基础服务费 (元)</label><input v-model="config.publish_fee" type="number" class="input-ctrl" placeholder="填 0 则免费发布" /></div>
-                            <div class="form-group" style="flex:1;"><label>行程置顶推荐服务费 (元)</label><input v-model="config.top_fee" type="number" class="input-ctrl" placeholder="填 0 则免费置顶" /></div>
+                            <div class="form-group" style="flex:1;"><label>基础发布收费开关 (元/填0免费)</label><input v-model="config.publish_fee" type="number" class="input-ctrl" /></div>
+                            <div class="form-group" style="flex:1;"><label>行程置顶推荐服务费 (元/填0免费)</label><input v-model="config.top_fee" type="number" class="input-ctrl" /></div>
                         </div>
 
-                        <h3 class="section-title" style="margin-top:30px; border-left-color:#1989fa;">公众号与微信支付设置</h3>
+                        <h3 class="section-title" style="margin-top:30px; border-left-color:#1989fa;">公众号与微信支付设置 (全部明文)</h3>
                         <div class="form-group"><label>请输入公众号AppID：</label><input v-model="secrets.wx_appid" type="text" class="input-ctrl" /></div>
                         <div class="form-group"><label>请输入公众号AppSecret：</label><input v-model="secrets.wx_appsecret" type="text" class="input-ctrl" /></div>
                         <div class="form-group"><label>请输入微信商户号：</label><input v-model="secrets.wx_mchid" type="text" class="input-ctrl" /></div>
@@ -41,19 +41,8 @@
 
                     <div v-show="activeTab === 'ui'">
                         <h3 class="section-title">动态公告与多图配置</h3>
-                        <div class="form-group"><label style="color:#07c160;">📢 首页滚动公告内容</label><input v-model="config.notice" class="input-ctrl" /></div>
-                        <div style="border: 1px dashed #07c160; padding: 15px; border-radius: 8px; margin-top: 20px; background:#fafafa;">
-                            <div style="display:flex; justify-content:space-between; margin-bottom:15px; align-items:center;">
-                                <span style="font-weight:bold; color:#07c160;">📸 首页多张轮播图</span>
-                                <button @click="addBanner" style="font-size:12px; background:#07c160; color:#fff; border:none; padding:5px 12px; border-radius:4px; cursor:pointer;">+ 增加图片</button>
-                            </div>
-                            <div v-for="(b, idx) in bannerItems" :key="idx" style="background:#fff; padding:10px; border-radius:6px; margin-bottom:10px; border:1px solid #ddd; position:relative;">
-                                <input v-model="b.img" class="input-ctrl" style="margin-bottom:6px;" placeholder="图片URL" />
-                                <input v-model="b.url" class="input-ctrl" placeholder="跳转URL" />
-                                <span @click="removeBanner(idx)" style="position:absolute; right:12px; top:12px; color:#ff4d4f; cursor:pointer; font-weight:bold; font-size: 16px;">×</span>
-                            </div>
+                        <div class="form-group"><label style="color:#07c160;">📢 首页滚动公告</label><input v-model="config.notice" class="input-ctrl" /></div>
                         </div>
-                    </div>
 
                     <div v-show="activeTab === 'rides'">
                         <h3 class="section-title">全网详细行程单据</h3>
@@ -71,22 +60,18 @@
                                 </td>
                                 <td style="padding:10px; border:1px solid #eef0f1;">
                                     <div style="font-weight:bold; font-size:14px; color:#333; margin-bottom:4px;">{{ r.origin }} ➡️ {{ r.destination }}</div>
-                                    <div style="color:#666; margin-bottom:8px;">📅 {{ formatDate(r.date) }}</div>
                                     <div style="display:flex; align-items:center; gap:6px; background:#f9f9f9; padding:6px; border-radius:6px; border:1px solid #eee;">
                                         <img :src="r.publisher_avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" style="width:26px; height:26px; border-radius:50%; object-fit:cover;" />
-                                        <div style="font-size:12px; color:#333; font-weight:bold; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:120px;">
-                                            {{ r.publisher_nickname || '未知用户' }}
-                                        </div>
+                                        <div style="font-size:12px; color:#333; font-weight:bold;">{{ r.publisher_nickname || '未知用户' }}</div>
                                     </div>
-                                    <div style="color:#aaa; font-size:11px; margin-top:4px; font-family:monospace;">账号ID: {{ r.user_id }}</div>
+                                    <div style="color:#aaa; font-size:11px; margin-top:4px;">UID: {{ r.user_id }}</div>
                                 </td>
-                                <td style="padding:10px; border:1px solid #eef0f1; color:#555; line-height: 1.6;">
-                                    <div>💺 {{ r.seats }}座 | 💰 {{ r.price || '面议' }} {{ r.car_model ? ' | 🚘 ' + r.car_model : '' }}</div>
-                                    <div>📞 电话: {{ r.contact }}</div>
-                                    <div style="color:#888; font-size:12px;">📝 备注: {{ r.remark || '无' }}</div>
+                                <td style="padding:10px; border:1px solid #eef0f1; color:#555;">
+                                    <div>💺 {{ r.seats }}座 | 💰 {{ r.price || '面议' }}</div>
+                                    <div>📞 {{ r.contact }}</div>
                                 </td>
                                 <td style="padding:10px; border:1px solid #eef0f1; text-align: center;">
-                                    <button @click="deleteRide(r.id)" style="background:#ff4d4f; color:#fff; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; margin-bottom: 6px; width: 100%;">下架</button>
+                                    <button @click="deleteRide(r.id)" style="background:#ff4d4f; color:#fff; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; width: 100%;">下架</button>
                                 </td>
                             </tr>
                         </table>
@@ -94,35 +79,18 @@
 
                     <div v-show="activeTab === 'users'">
                         <h3 class="section-title">会员权限控制与封禁管理</h3>
-                        <div class="form-group" style="margin-bottom: 25px;">
-                            <label style="color:#ff6600;">🏙️ 发布页预设热门城市</label>
-                            <textarea v-model="config.hot_cities" rows="2" class="input-ctrl" style="resize:none;"></textarea>
-                        </div>
-                        <div class="form-group"><label>车主快捷标签</label><input v-model="config.tags_driver" class="input-ctrl" /></div>
-                        <div class="form-group" style="margin-bottom:30px;"><label>乘客快捷标签</label><input v-model="config.tags_passenger" class="input-ctrl" /></div>
-                        
-                        <h4 style="margin:25px 0 12px; color:#222; font-weight:bold; font-size:15px;">👤 授权用户身份及解封管理</h4>
-                        <div style="font-size: 13px; color: #ff6600; margin-bottom: 15px; background: #fff5eb; padding: 10px; border-radius: 6px;">
-                            提示：如果您看到了以 "user_wx_" 开头的账号，这是未授权产生的错误假数据，请直接点击删除。
-                        </div>
                         <div v-for="u in users" :key="u.id" style="display:flex; justify-content:space-between; align-items:center; padding:15px; background: #fafafa; border-radius: 8px; margin-bottom: 10px; border: 1px solid #eee;">
                             <div style="display:flex; align-items:center; gap:14px;">
                                 <img :src="u.avatar || 'https://fastly.jsdelivr.net/npm/@vant/assets/cat.jpeg'" style="width:44px; height:44px; border-radius:50%; object-fit:cover;" />
                                 <div>
                                     <div style="font-weight:bold; font-size: 15px; color: #111;">{{ u.nickname || '微信用户' }}</div>
-                                    <div style="font-size: 12px; color: #666; margin-top: 5px; font-family: monospace;">ID: {{ u.id }} | 📱 <span style="color:#ff5500; font-weight:bold;">{{ u.phone || '未留存' }}</span></div>
+                                    <div style="font-size: 12px; color: #666; margin-top: 5px;">ID: {{ u.id }} | 📱 <span style="color:#ff5500; font-weight:bold;">{{ u.phone || '未留存' }}</span></div>
                                 </div>
                             </div>
                             <div style="display:flex; gap: 8px;">
-                                <button v-if="!u.is_banned" @click="toggleBanUser(u, 1)" style="background:#ff976a; color:#fff; border:none; padding:8px 12px; border-radius:6px; cursor: pointer; font-weight:bold;">
-                                    🚫 封禁
-                                </button>
-                                <button v-else @click="toggleBanUser(u, 0)" style="background:#07c160; color:#fff; border:none; padding:8px 12px; border-radius:6px; cursor: pointer; font-weight:bold;">
-                                    ✅ 解封
-                                </button>
-                                <button @click="deleteUser(u.id)" style="background: #ee0a24; color:#fff; border:none; padding:8px 12px; border-radius:6px; cursor: pointer; font-weight:bold;">
-                                    🗑️ 删除
-                                </button>
+                                <button v-if="!u.is_banned" @click="toggleBanUser(u, 1)" style="background:#ff976a; color:#fff; border:none; padding:8px 12px; border-radius:6px; cursor: pointer; font-weight:bold;">🚫 封禁</button>
+                                <button v-else @click="toggleBanUser(u, 0)" style="background:#07c160; color:#fff; border:none; padding:8px 12px; border-radius:6px; cursor: pointer; font-weight:bold;">✅ 解封</button>
+                                <button @click="deleteUser(u.id)" style="background: #ee0a24; color:#fff; border:none; padding:8px 12px; border-radius:6px; cursor: pointer; font-weight:bold;">🗑️ 删除</button>
                             </div>
                         </div>
                     </div>
@@ -139,7 +107,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue';
-import { Toast } from 'vant';
+import { showSuccessToast, showFailToast } from 'vant'; // 🌟 必须引入 Toast
 import { useAppStore } from '../store';
 
 const store = useAppStore();
@@ -153,12 +121,6 @@ const secrets = ref({ wx_appid: '', wx_appsecret: '', wx_mchid: '', wx_paykey: '
 const bannerItems = ref([]);
 const rides = ref([]);
 const users = ref([]);
-
-const formatDate = (str) => {
-  if (!str) return '';
-  const match = String(str).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})[T\s](\d{1,2}):(\d{1,2})/);
-  return match ? `${match[2]}-${match[3]} ${match[4]}:${match[5]}` : str;
-};
 
 const doLogin = () => {
     if (pwd.value === 'yb644300') { localStorage.setItem('admin_token', 'true'); isAdmin.value = true; fetchAdminAssets(); }
@@ -188,37 +150,41 @@ const fetchAdminAssets = async () => {
     } catch (e) {} finally { isLoading.value = false; }
 };
 
-const addBanner = () => { bannerItems.value.push({ img: '', url: '' }); };
-const removeBanner = (idx) => { bannerItems.value.splice(idx, 1); };
-
 const saveConfig = async () => {
     config.value.banners = JSON.stringify(bannerItems.value);
     try {
         await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config.value) });
         await fetch('/api/secret', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(secrets.value) });
-        Toast.success('保存成功');
+        showSuccessToast('配置保存成功！'); // 🌟 修复：秒显成功提示
         if (store && typeof store.loadConfig === 'function') store.loadConfig();
-    } catch (e) { Toast.fail('保存失败'); }
+    } catch (e) { showFailToast('保存失败'); }
 };
 
 const deleteRide = async (id) => {
     if(window.confirm('确认下架删除该记录吗？')) {
-        try {
-            const res = await fetch(`/api/rides?id=${id}&admin=true`, { method: 'DELETE' });
-            if(res.ok) { rides.value = rides.value.filter(r => r.id !== id); Toast.success('已下架'); }
-        } catch(e){}
+        const res = await fetch(`/api/rides?id=${id}&admin=true`, { method: 'DELETE' });
+        if(res.ok) { 
+            rides.value = rides.value.filter(r => r.id !== id); 
+            showSuccessToast('行程已下架！'); // 🌟 修复：秒删秒提示，不需刷新
+        }
     }
 };
 
 const toggleBanUser = async (user, targetStatus) => {
     const res = await fetch(`/api/users/ban`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: user.id, is_banned: targetStatus }) });
-    if(res.ok) { user.is_banned = targetStatus; Toast.success(targetStatus ? '已拉黑封禁' : '已解封'); }
+    if(res.ok) { 
+        user.is_banned = targetStatus; 
+        showSuccessToast(targetStatus ? '已封禁拉黑！' : '解封成功！'); // 🌟 修复
+    }
 };
 
 const deleteUser = async (userId) => {
-    if(window.confirm('⚠️ 彻底删除用户将清除其所有数据！确认操作吗？')) {
+    if(window.confirm('⚠️ 彻底删除用户将同时清除其所有行程数据！确认操作吗？')) {
         const res = await fetch(`/api/users?id=${userId}`, { method: 'DELETE' });
-        if(res.ok) { Toast.success('用户已彻底删除'); fetchAdminAssets(); }
+        if(res.ok) { 
+            users.value = users.value.filter(u => u.id !== userId); // 🌟 核心：从数组里剔除，页面瞬间消失
+            showSuccessToast('用户已彻底删除！'); 
+        }
     }
 };
 
