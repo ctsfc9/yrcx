@@ -58,7 +58,8 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { Toast } from 'vant';
+// 🌟 修复：严谨对接 Vant 4 语法，彻底解决点不动的问题
+import { showToast, showSuccessToast, showFailToast, showLoadingToast, closeToast } from 'vant';
 import { useAppStore } from '../store';
 import TabBar from '../components/TabBar.vue';
 
@@ -96,22 +97,24 @@ onMounted(async () => {
 });
 
 const submitPhoneBind = async () => {
-    if(!/^\d{11}$/.test(bindPhone.value)) { Toast.fail('请输入11位数字手机号'); return; }
+    // 🌟 修复：使用 showFailToast
+    if(!/^\d{11}$/.test(bindPhone.value)) { showFailToast('请输入11位数字手机号'); return; }
     try {
-        Toast.loading({ message: '绑定中...', forbidClick: true });
+        showLoadingToast({ message: '绑定中...', forbidClick: true, duration: 0 });
         const res = await fetch('/api/users', {
             method: 'PUT',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ action: 'bind_phone', id: localUser.value.id, phone: bindPhone.value })
         });
+        closeToast();
         if(res.ok) {
             localUser.value.phone = bindPhone.value;
             localStorage.setItem('user_profile', JSON.stringify(localUser.value));
             if(store && typeof store.saveUser === 'function') store.saveUser(localUser.value);
             showPhoneBind.value = false;
-            Toast.success('绑定成功');
-        } else { Toast.fail('绑定失败，请重试'); }
-    } catch(e) { Toast.fail('网络错误'); }
+            showSuccessToast('绑定成功');
+        } else { showFailToast('绑定失败，请重试'); }
+    } catch(e) { closeToast(); showFailToast('网络错误'); }
 };
 
 const formatDate = (str) => {
